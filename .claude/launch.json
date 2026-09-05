@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "anki-web",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "anki-web"],
+      "port": 5070
+    },
+    {
+      "name": "review-ui-prototype",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "prototype/review_ui/app.py"],
+      "port": 5099
+    }
+  ]
+}

@@ -3,6 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  /* Stamp the resolved theme before the stylesheet paints, so a reload never flashes
+     the other one. Stored choice wins over the OS; static/state.js uses the same key. */
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("anki-theme"); } catch (e) { /* private mode */ }
+    if (t !== "light" && t !== "dark") {
+      t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    }
+    document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
 <title>Anki — revue des cartes flaguées</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>

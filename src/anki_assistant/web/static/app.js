@@ -369,6 +369,9 @@ document.addEventListener("click", (e) => {
 
   if (act === "deck") {
     selectDeck(el.getAttribute("data-deck"));
+  } else if (act === "theme") {
+    toggleTheme();
+    draw();
   } else if (act === "alldecks") {
     S.showAllDecks = !S.showAllDecks;
     draw();

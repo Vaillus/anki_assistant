@@ -53,9 +53,25 @@ function deckColumn() {
     '<div class="col-head"><h2>Decks</h2><span class="grow"></span>' +
     '<button class="ghost" data-act="alldecks">' +
     (S.showAllDecks ? "flagués seuls" : "tous") +
-    "</button></div>" +
+    "</button>" +
+    themeButton() +
+    "</div>" +
     rows +
     "</div>"
+  );
+}
+
+/* specs/review.md#theme — shows the theme you would switch to. */
+function themeButton() {
+  const dark = currentTheme() === "dark";
+  return (
+    '<button class="ghost" data-act="theme" title="' +
+    (dark ? "Passer en clair" : "Passer en sombre") +
+    '" aria-label="' +
+    (dark ? "Passer en clair" : "Passer en sombre") +
+    '">' +
+    (dark ? "☀" : "☾") +
+    "</button>"
   );
 }
 

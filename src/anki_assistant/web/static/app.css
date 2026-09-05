@@ -1,19 +1,95 @@
-/* anki-assistant — review UI. Light theme, three columns (layout validated by prototype variant A). */
+/* anki-assistant — review UI. Three columns (layout validated by prototype variant A).
+   Light + dark themes (specs/review.md#theme): every colour is a token below, nothing
+   else in this file hardcodes one. The resolved theme is stamped on <html> as
+   data-theme by the inline script in index.html, so there is exactly one dark block. */
 
 :root {
+  color-scheme: light;
   --bg: #f6f5f1;
   --panel: #fff;
+  --raised: #faf9f6;       /* excerpts, previews */
+  --hover: #f3f2ee;
   --ink: #1d1c1a;
+  --ink-dim: #444;
   --muted: #7a7772;
+  --dim: #aaa;          /* deck with no flag left */
   --line: #e4e1da;
+  --line-strong: #bbb;     /* hovered control border */
   --flag: #e08a2c;
   --flagbg: #fff3e4;
+  --clozehidden: #fff1d6;
+  --on-flag: #fff;
   --accent: #2f5fd0;
   --accentbg: #e9efff;
+  --accentline: #c9d8fb;
+  --clozebg: #dfe9ff;
+  --on-accent: #fff;
   --danger: #a12626;
   --dangerline: #f0c9c9;
+  --dangerbg: #fdecec;
+  --on-danger: #fff;
   --ok: #1f7a4d;
+  --okline: #bfe0cd;
+  --okbg: #f4fbf7;
+  --diffokbg: #edf8f1;
+  --neutralbg: #eee;       /* `kind` pill and friends */
+  --neutralink: #555;
+  --zerobg: #ddd;
+  --zeroink: #666;
+  --obsidianbg: #eadff7;
+  --obsidianink: #5b2d91;
+  --pdfbg: #fde2e2;
+  --pdfink: #a12626;
+  --noteselbg: #f4f7ff;
+  --notehover: #fbfaf7;
+  --assistantbg: #f0efeb;
+  --shadow: rgba(0, 0, 0, .25);
+  --backdrop: rgba(0, 0, 0, .35);
   --mono: ui-monospace, Menlo, Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #161513;
+  --panel: #201f1d;
+  --raised: #1a1917;
+  --hover: #2a2825;
+  --ink: #e9e7e2;
+  --ink-dim: #bdb9b1;
+  --muted: #97938b;
+  --dim: #6d6963;
+  --line: #35332f;
+  --line-strong: #565248;
+  --flag: #e6a44e;
+  --flagbg: #392a16;
+  --clozehidden: #392a16;
+  --on-flag: #2a1c08;
+  --accent: #8aa9ff;
+  --accentbg: #232c46;
+  --accentline: #3d4a6b;
+  --clozebg: #26314f;
+  --on-accent: #131a2c;
+  --danger: #f08b8b;
+  --dangerline: #6b3838;
+  --dangerbg: #33201f;
+  --on-danger: #2a1010;
+  --ok: #6cc79a;
+  --okline: #2f5c46;
+  --okbg: #1c2a23;
+  --diffokbg: #1c2a23;
+  --neutralbg: #31302c;
+  --neutralink: #b4b0a8;
+  --zerobg: #3a3835;
+  --zeroink: #8e8a83;
+  --obsidianbg: #352748;
+  --obsidianink: #c7aef0;
+  --pdfbg: #422323;
+  --pdfink: #f0a8a8;
+  --noteselbg: #232c46;
+  --notehover: #262421;
+  --assistantbg: #2a2825;
+  --shadow: rgba(0, 0, 0, .6);
+  --backdrop: rgba(0, 0, 0, .55);
 }
 
 * { box-sizing: border-box; }
@@ -40,19 +116,19 @@ button {
   border-radius: 6px;
   padding: 4px 10px;
 }
-button:hover:not(:disabled) { border-color: #bbb; }
+button:hover:not(:disabled) { border-color: var(--line-strong); }
 button:disabled { opacity: .5; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
 button.danger { color: var(--danger); border-color: var(--dangerline); }
-button.danger.solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+button.danger.solid { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
 
 input, textarea, select {
   font: inherit;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 8px;
-  background: #fff;
+  background: var(--panel);
   color: var(--ink);
 }
 textarea { resize: vertical; }
@@ -75,15 +151,15 @@ a { color: var(--accent); }
   font-weight: 600;
   text-align: center;
   background: var(--flag);
-  color: #fff;
+  color: var(--on-flag);
 }
-.badge.zero { background: #ddd; color: #666; }
+.badge.zero { background: var(--zerobg); color: var(--zeroink); }
 .badge.sub { background: transparent; color: var(--flag); border: 1px solid var(--flag); }
 
 .tag { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
 .cloze {
-  background: #dfe9ff;
+  background: var(--clozebg);
   border-bottom: 2px solid var(--accent);
   padding: 0 3px;
   border-radius: 3px;
@@ -101,7 +177,7 @@ a { color: var(--accent); }
 }
 /* question state: the flagged cloze as Anki showed it when the flag was set */
 .cloze.hidden {
-  background: #fff1d6;
+  background: var(--clozehidden);
   border-bottom-color: var(--flag);
   color: var(--flag);
   font-weight: 600;
@@ -115,11 +191,11 @@ a { color: var(--accent); }
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #eee;
-  color: #555;
+  background: var(--neutralbg);
+  color: var(--neutralink);
 }
-.kind.obsidian { background: #eadff7; color: #5b2d91; }
-.kind.pdf { background: #fde2e2; color: #a12626; }
+.kind.obsidian { background: var(--obsidianbg); color: var(--obsidianink); }
+.kind.pdf { background: var(--pdfbg); color: var(--pdfink); }
 
 .chip {
   display: inline-flex;
@@ -142,7 +218,7 @@ a { color: var(--accent); }
   margin-top: 8px;
 }
 .field-val { font-size: 15px; overflow-wrap: anywhere; }
-.field-val.small { font-size: 13px; color: #444; }
+.field-val.small { font-size: 13px; color: var(--ink-dim); }
 
 .reason {
   background: var(--flagbg);
@@ -172,11 +248,11 @@ a { color: var(--accent); }
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  background: #fdecec;
+  background: var(--dangerbg);
   border: 1px solid var(--dangerline);
   color: var(--danger);
 }
-.banner.info { background: var(--accentbg); border-color: #c9d8fb; color: var(--accent); }
+.banner.info { background: var(--accentbg); border-color: var(--accentline); color: var(--accent); }
 .banner button { padding: 0 6px; }
 
 /* ---------- layout ---------- */
@@ -218,16 +294,16 @@ a { color: var(--accent); }
   white-space: nowrap;
   overflow: hidden;
 }
-.deck:hover { background: #f3f2ee; }
+.deck:hover { background: var(--hover); }
 .deck.sel { background: var(--accentbg); }
-.deck.dim { color: #aaa; }
+.deck.dim { color: var(--dim); }
 .deck .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- column 2: queue ---------- */
 
 .note { border-bottom: 1px solid var(--line); padding: 12px 16px; cursor: pointer; }
-.note:hover { background: #fbfaf7; }
-.note.sel { background: #f4f7ff; box-shadow: inset 3px 0 0 var(--accent); }
+.note:hover { background: var(--notehover); }
+.note.sel { background: var(--noteselbg); box-shadow: inset 3px 0 0 var(--accent); }
 .note.unflagged { opacity: .55; }
 .note-top { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
 .note-top button { white-space: nowrap; }
@@ -260,8 +336,8 @@ a { color: var(--accent); }
   white-space: pre-wrap;
   font-family: var(--mono);
   font-size: 12px;
-  color: #444;
-  background: #faf9f6;
+  color: var(--ink-dim);
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px;
@@ -284,7 +360,7 @@ a { color: var(--accent); }
 
 .msg { padding: 8px 10px; border-radius: 8px; margin: 6px 0; max-width: 95%; white-space: pre-wrap; }
 .msg.user { background: var(--accentbg); margin-left: auto; }
-.msg.assistant { background: #f0efeb; }
+.msg.assistant { background: var(--assistantbg); }
 .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
 .cursor { opacity: .5; }
 
@@ -295,7 +371,7 @@ a { color: var(--accent); }
   padding: 8px 10px;
   margin: 8px 0;
 }
-.proposal.applied { border-color: #bfe0cd; background: #f4fbf7; }
+.proposal.applied { border-color: var(--okline); background: var(--okbg); }
 .proposal-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .pkind {
   font-family: var(--mono);
@@ -308,8 +384,8 @@ a { color: var(--accent); }
 }
 .rationale { font-size: 13px; margin-bottom: 6px; }
 .diff { border-top: 1px dashed var(--line); padding-top: 6px; }
-.diff .before { background: #fdecec; border-left: 3px solid var(--dangerline); padding: 4px 8px; border-radius: 0 4px 4px 0; }
-.diff .after { background: #edf8f1; border-left: 3px solid #bfe0cd; padding: 4px 8px; border-radius: 0 4px 4px 0; margin-top: 4px; }
+.diff .before { background: var(--dangerbg); border-left: 3px solid var(--dangerline); padding: 4px 8px; border-radius: 0 4px 4px 0; }
+.diff .after { background: var(--diffokbg); border-left: 3px solid var(--okline); padding: 4px 8px; border-radius: 0 4px 4px 0; margin-top: 4px; }
 .diff details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 6px; }
 .applied-mark { color: var(--ok); font-size: 13px; font-weight: 600; }
 
@@ -322,9 +398,9 @@ dialog {
   width: min(900px, 94vw);
   color: var(--ink);
   background: var(--panel);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+  box-shadow: 0 12px 40px var(--shadow);
 }
-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+dialog::backdrop { background: var(--backdrop); }
 dialog .dlg-head {
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
@@ -351,7 +427,7 @@ dialog .dlg-foot {
 .preview {
   margin-top: 4px;
   padding: 6px 8px;
-  background: #faf9f6;
+  background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 6px;
   font-size: 14px;
@@ -361,5 +437,5 @@ dialog .dlg-foot {
 
 .deck-list { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 8px; }
 .deck-list .opt { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.deck-list .opt:hover { background: #f3f2ee; }
+.deck-list .opt:hover { background: var(--hover); }
 .deck-list .opt.on { background: var(--accentbg); color: var(--accent); }

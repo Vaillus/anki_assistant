@@ -3,6 +3,57 @@
 
 "use strict";
 
+/* ---------- theme (specs/review.md#theme) ---------- */
+
+const THEME_KEY = "anki-theme"; // same key as the inline script in index.html
+
+function storedTheme() {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === "light" || t === "dark" ? t : null;
+  } catch (e) {
+    return null; // private mode: the toggle works for this session only
+  }
+}
+
+function systemTheme() {
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+/* The theme actually painted: the user's stored choice if any, else the OS preference. */
+function currentTheme() {
+  return S.theme || systemTheme();
+}
+
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", currentTheme());
+}
+
+function toggleTheme() {
+  S.theme = currentTheme() === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_KEY, S.theme);
+  } catch (e) {
+    /* not stored, still applied */
+  }
+  applyTheme();
+}
+
+/* Follow the OS while the user has expressed no preference of their own. */
+if (window.matchMedia) {
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  const onChange = () => {
+    if (!S.theme) {
+      applyTheme();
+      draw();
+    }
+  };
+  if (mq.addEventListener) mq.addEventListener("change", onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+}
+
 const S = {
   // column 1
   decks: [],
@@ -30,6 +81,7 @@ const S = {
   // misc
   models: null, // { modelName: [fieldNames] }
   refocus: null,
+  theme: storedTheme(), // "light" | "dark" once chosen; null = follow the OS
 };
 
 const ACTIONS = [

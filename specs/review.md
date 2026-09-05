@@ -112,6 +112,16 @@ Keyboard: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `
 
 Dialogs (edit, split, create, move, delete-confirm) are plain `<dialog>` elements. The note editor inside edit/split/create shows one `<textarea>` per field holding the **raw** value, with a live preview underneath rendered client-side with the same rules as `render.py` (a small JS port is acceptable; it is display-only).
 
+### Theme
+
+The UI has a **light** and a **dark** theme. Every colour is a CSS custom property defined on `:root`; nothing else in `app.css` hardcodes a colour.
+
+- Default: the OS preference (`prefers-color-scheme`).
+- A toggle in the head of column 1 (☾ / ☀︎) switches theme and stores the choice in `localStorage` under `anki-theme` (`"light"` | `"dark"`). A stored choice wins over the OS preference, in both directions.
+- The resolved theme (`"light"` | `"dark"`) is stamped on `<html>` as `data-theme` by a tiny inline script in `index.html`, **before** the stylesheet, so a reload never flashes the other theme. `app.css` therefore holds exactly two palettes: `:root` (light) and `:root[data-theme="dark"]`, each setting `color-scheme` so native widgets (scrollbars, `<select>`, checkboxes, `::backdrop`) match.
+- With no stored choice the page follows the OS live, through a `matchMedia` listener.
+- `localStorage` may throw (private mode); the toggle then works for the session only.
+
 ## Module `review.py`
 
 Pure functions over `AnkiClient`, no FastAPI imports, so they can be unit-tested with a fake client:

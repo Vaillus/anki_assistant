@@ -102,6 +102,7 @@ class FakeNote:
         }
     )
     reason: str = "For a given sensor ?"
+    flagged_cards: list[Any] = field(default_factory=lambda: [SimpleNamespace(ord=1)])
 
 
 def make_corpus(*texts: str) -> list[chat.CorpusText]:
@@ -159,6 +160,7 @@ def test_build_system_includes_notes_fields_reason_and_source_headers() -> None:
     assert "1732375559262" in context
     assert "{{c1::disjoint}}" in context  # raw fields, cloze markers kept
     assert "raison du flag : For a given sensor ?" in context
+    assert "carte(s) flaguée(s) : c2" in context
 
     corpus = blocks[1]["text"]
     assert "obsidian : Allocation sur des angles disjoints" in corpus

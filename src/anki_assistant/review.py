@@ -25,6 +25,7 @@ REASON_FIELD = "Back Extra"
 __all__ = [
     "DeckNotes",
     "DeckSummary",
+    "FlaggedCard",
     "NoteNotFound",
     "NoteView",
     "SplitResult",
@@ -60,6 +61,15 @@ class DeckSummary:
 
 
 @dataclass
+class FlaggedCard:
+    """One flagged card of a note. `ord` is Anki's card ordinal: cloze c{ord+1} on a Cloze note."""
+
+    card_id: int
+    ord: int
+    flag_color: str
+
+
+@dataclass
 class NoteView:
     """One note as the UI needs it: raw fields to edit, rendered fields to display."""
 
@@ -70,6 +80,7 @@ class NoteView:
     card_ids: list[int]
     flagged: bool
     flag_colors: list[str]
+    flagged_cards: list[FlaggedCard]
     fields: dict[str, str]
     fields_html: dict[str, str]
     reason: str
@@ -118,6 +129,10 @@ def _build_view(note: Note, cards: Sequence[Card]) -> NoteView:
         card_ids=list(note.card_ids) or [c.card_id for c in cards],
         flagged=flagged,
         flag_colors=sorted({c.flag_name for c in flagged_cards}),
+        flagged_cards=[
+            FlaggedCard(card_id=c.card_id, ord=c.ord, flag_color=c.flag_name)
+            for c in sorted(flagged_cards, key=lambda c: c.ord)
+        ],
         fields=fields,
         fields_html={name: render_field(value) for name, value in fields.items()},
         reason=strip_html(fields.get(REASON_FIELD, "")) if flagged else "",

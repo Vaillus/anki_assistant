@@ -53,6 +53,15 @@ class NoteLike(Protocol):
     fields: dict[str, str]
     reason: str
 
+    @property
+    def flagged_cards(self) -> Sequence[FlaggedCardLike]: ...
+
+
+class FlaggedCardLike(Protocol):
+    """One flagged card of a note; `ord` + 1 is the cloze number on a Cloze note."""
+
+    ord: int
+
 
 @dataclass
 class CorpusText:
@@ -119,6 +128,11 @@ def _fmt_note(note: NoteLike) -> str:
     ]
     reason = (note.reason or "").strip()
     lines.append(f"- raison du flag : {reason}" if reason else "- raison du flag : (aucune)")
+    if note.flagged_cards:
+        labels = ", ".join(f"c{c.ord + 1}" for c in note.flagged_cards)
+        lines.append(
+            f"- carte(s) flaguée(s) : {labels} (le flag a été posé en voyant ce cloze masqué)"
+        )
     lines.append("- champs bruts :")
     for name, value in note.fields.items():
         lines.append(f"  - {name} : {value}")

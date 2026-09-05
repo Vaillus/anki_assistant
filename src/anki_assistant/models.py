@@ -69,6 +69,7 @@ class Card:
     question: str
     answer: str
     flag: int
+    ord: int  # card ordinal within the note; for a Cloze note, card `ord` hides cloze c{ord+1}
     interval: int
     due: int
     reps: int
@@ -87,6 +88,7 @@ class Card:
             question=raw.get("question", ""),
             answer=raw.get("answer", ""),
             flag=int(raw.get("flags", 0)),
+            ord=int(raw.get("ord", 0)),
             interval=int(raw.get("interval", 0)),
             due=int(raw.get("due", 0)),
             reps=int(raw.get("reps", 0)),

@@ -27,12 +27,14 @@ Column 1 shows by default only decks with `flagged_total > 0`, indented by depth
 { "note_id": 1732375559262, "deck": "courant::00-Thèse", "model": "Cloze",
   "tags": ["phd"], "card_ids": [1732375559263, 1732375559264],
   "flagged": true, "flag_colors": ["orange"],
+  "flagged_cards": [{ "card_id": 1732375559264, "ord": 1, "flag_color": "orange" }],
   "fields": { "Text": "<raw anki html>", "Back Extra": "<raw>" },
   "fields_html": { "Text": "<display html>", "Back Extra": "…" },
   "reason": "For a given sensor ?" }
 ```
 
 - `fields` is what the user edits and what goes back to Anki. `fields_html` is display-only (see [Rendering](#rendering)).
+- `flagged_cards` — the cards of the note that carry a flag, sorted by `ord` (Anki's card ordinal, 0-based). For a Cloze note, card `ord` is the card that hides cloze `c{ord+1}`. Empty when the note is not flagged. This is what lets the UI show *which* card was flagged and replay its question side (see [Question state](#question-state)).
 - `reason` — plain text of `Back Extra` if the model has that field and the note is flagged, else `""`. The UI shows it in an orange callout at the top of the note, above the fields, labelled « raison du flag ». The `Back Extra` field itself is still shown among the fields.
 - Queue order: flagged notes first, then unflagged; within each group by `note_id` ascending (creation order). Column 2 shows flagged only by default; a toggle « voir toutes » shows the whole deck, unflagged notes at 55% opacity.
 - A deck query returns notes of the deck **and its sub-decks** (Anki's `deck:"X"` semantics). `deck` on each note says where it actually lives.
@@ -68,10 +70,20 @@ Rules:
 1. `<br>`, `</p>`, `</div>`, `</li>` → newline.
 2. `<img … alt="…">` → the alt text (Anki's LaTeX images carry the source as alt). Other `<img>` → `[image]`.
 3. Strip remaining tags, unescape entities, then escape for HTML.
-4. Cloze markers `{{cN::answer::hint}}` → `<span class="cloze" data-n="N">answer</span>` (hint dropped).
+4. Cloze markers `{{cN::answer::hint}}` → `<span class="cloze" data-n="N" data-hint="hint">answer</span>` (`data-hint` omitted when there is no hint). The UI shows the cloze number as a small `cN` label in front of every cloze span (CSS, from `data-n`), since most notes carry several clozes and the flag is per card.
 5. Newlines → `<br>`.
 
 MathJax delimiters (`\(…\)`, `\[…\]`, `[$]…[/$]`) are left as text in v1.
+
+### Question state
+
+When Hugo flags a card he is looking at its **question side**: the flagged cloze is hidden, the others are visible. Seeing the whole note at once often makes the reason for the flag unreadable, so a flagged note is first shown in the same informational state:
+
+- A flagged note whose fields contain cloze spans is shown **hidden** by default: every cloze `c{ord+1}` of a card in `flagged_cards` is replaced by `[…]` (or `[hint]` when the marker has a hint), keeping its `cN` label. Other clozes stay visible, as they would in Anki.
+- The note header names the flagged cards: « ⚑ c2 » (one label per flagged card).
+- « Révéler » (button in the note, `Espace` on the selected note, or clicking a hidden cloze) switches the note to its full view; the same control switches back. The state is per note, kept in browser memory, and reset when the deck changes or the queue is refetched after a decision (the note is gone anyway).
+- Unflagged notes, notes with no cloze span, and notes whose flagged cards match no cloze (numbering gap) are shown in full, with no reveal control.
+- The `reason` callout is shown in both states: it is the note *about* the flag, not part of the card.
 
 ## API
 
@@ -96,7 +108,7 @@ All under `/api`. Errors from AnkiConnect surface as HTTP 502 `{ "detail": "<mes
 
 Single page, vanilla JS in `app.js`, one in-memory state object, full re-render on change (same approach as the prototype). Layout and classes may start from `prototype/review_ui/static/*` variant A, rewritten properly (the prototype is not imported).
 
-Keyboard: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `p` = Passer; `Esc` closes a dialog. Keys are ignored while an input, textarea or select is focused.
+Keyboard: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `p` = Passer; `Espace` reveals / hides the selected note's flagged clozes (see [Question state](#question-state)); `Esc` closes a dialog. Keys are ignored while an input, textarea or select is focused.
 
 Dialogs (edit, split, create, move, delete-confirm) are plain `<dialog>` elements. The note editor inside edit/split/create shows one `<textarea>` per field holding the **raw** value, with a live preview underneath rendered client-side with the same rules as `render.py` (a small JS port is acceptable; it is display-only).
 

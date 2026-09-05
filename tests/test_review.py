@@ -55,13 +55,14 @@ class FakeAnkiClient(AnkiClient):
         """Put a note in the collection with one card per entry of `flags`."""
         note_id = next(self._ids)
         card_ids = []
-        for flag in flags:
+        for ord_, flag in enumerate(flags):
             card_id = next(self._ids)
             self.cards[card_id] = {
                 "cardId": card_id,
                 "note": note_id,
                 "deckName": deck,
                 "flags": flag,
+                "ord": ord_,
             }
             card_ids.append(card_id)
         self.notes[note_id] = {
@@ -291,6 +292,17 @@ def test_note_is_flagged_when_any_card_is(anki: FakeAnkiClient):
     assert views[clean].flag_colors == []
 
 
+def test_flagged_cards_carry_the_card_ordinal(anki: FakeAnkiClient):
+    """The flag is per card; the view keeps which, by ordinal, so the UI can replay c{ord+1}."""
+    note_id = anki.add("d", flags=(0, 2, 1))  # c2 and c3 flagged, c1 not
+
+    view = review.get_note(anki, note_id)
+
+    assert [(c.ord, c.flag_color) for c in view.flagged_cards] == [(1, "orange"), (2, "red")]
+    assert view.flagged_cards[0].card_id == anki.notes[note_id]["cards"][1]
+    assert review.get_note(anki, anki.add("d", flags=(0, 0))).flagged_cards == []
+
+
 def test_queue_lists_sub_decks_flagged_first_then_by_id(anki: FakeAnkiClient):
     first_clean = anki.add("d", flags=(0,))
     flagged_sub = anki.add("d::sub", flags=(1,))
@@ -497,7 +509,7 @@ def test_render_field_cloze_markers():
         'The <span class="cloze" data-n="1">answer</span> here'
     )
     assert render_field("{{c12::answer::the hint}}") == (
-        '<span class="cloze" data-n="12">answer</span>'
+        '<span class="cloze" data-n="12" data-hint="the hint">answer</span>'
     )
     assert render_field("{{c1::a}} and {{c2::b}}") == (
         '<span class="cloze" data-n="1">a</span> and <span class="cloze" data-n="2">b</span>'
@@ -536,6 +548,9 @@ def test_api_decks_and_notes(api: TestClient, anki: FakeAnkiClient):
     assert note["fields"]["Text"] == "a{{c1::b}}", "raw value for editing"
     assert note["fields_html"]["Text"] == 'a<span class="cloze" data-n="1">b</span>'
     assert note["reason"] == "why"
+    assert note["flagged_cards"] == [
+        {"card_id": anki.notes[note_id]["cards"][0], "ord": 0, "flag_color": "orange"}
+    ]
 
 
 def test_api_decisions(api: TestClient, anki: FakeAnkiClient):

@@ -54,6 +54,7 @@ async function selectDeck(name) {
   S.deck = name;
   S.notes = null;
   S.selNote = null;
+  S.revealed = {};
   S.corpus = null;
   S.srcForm = null;
   S.srcExpanded = {};
@@ -113,6 +114,7 @@ async function afterDecision(opts) {
     const res = await Promise.all([API.notes(S.deck), API.decks()]);
     S.notes = res[0] || S.notes;
     S.decks = res[1] || S.decks;
+    S.revealed = {};
     S.error = "";
   } catch (e) {
     S.error = e.message;
@@ -375,7 +377,13 @@ document.addEventListener("click", (e) => {
     if (!noteById(S.selNote)) selectFirstFlagged();
     draw();
   } else if (act === "note") {
+    const cloze = e.target.closest(".cloze.hidden");
+    if (cloze) toggleReveal(noteId);
     S.selNote = noteId;
+    draw();
+  } else if (act === "reveal") {
+    e.stopPropagation();
+    toggleReveal(noteId);
     draw();
   } else if (act === "decision") {
     e.stopPropagation();
@@ -472,6 +480,13 @@ document.addEventListener("keydown", (e) => {
     if (S.selNote) applyDecision("keep", S.selNote);
   } else if (e.key === "p") {
     if (S.selNote) applyDecision("skip", S.selNote);
+  } else if (e.key === " ") {
+    const sel = selectedNote();
+    if (sel && hasHiddenClozes(sel)) {
+      e.preventDefault();
+      toggleReveal(sel.note_id);
+      draw();
+    }
   }
 });
 

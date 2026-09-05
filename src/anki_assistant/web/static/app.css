@@ -88,6 +88,27 @@ a { color: var(--accent); }
   padding: 0 3px;
   border-radius: 3px;
 }
+/* cloze number label, since most notes carry several clozes and the flag is per card */
+.cloze::before {
+  content: "c" attr(data-n);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+  vertical-align: super;
+  margin-right: 2px;
+  opacity: 0.8;
+}
+/* question state: the flagged cloze as Anki showed it when the flag was set */
+.cloze.hidden {
+  background: #fff1d6;
+  border-bottom-color: var(--flag);
+  color: var(--flag);
+  font-weight: 600;
+  cursor: pointer;
+}
+.cloze.hidden::before { color: var(--flag); }
+.reveal { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 
 .kind {
   font-family: var(--mono);

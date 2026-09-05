@@ -12,7 +12,7 @@ Each request carries the whole conversation (stateless server). The server rebui
 
 1. **Deck**: name, count of flagged notes.
 2. **Corpus**: for each source of `SourceStore.corpus(deck)`, its header (kind, target, pages) and `Source.text()`. Total corpus text is capped at 150 000 characters (sources in order, the last one truncated); the cap and any per-source warning are stated in the prompt so Claude knows what it cannot see.
-3. **Notes in context**: the selected note plus the notes the user attached with « → chat ». For each: `note_id`, model, tags, raw fields, and the `reason`. Raw fields (with `{{c1::…}}` markers and HTML) — Claude must produce fields in the same syntax.
+3. **Notes in context**: the selected note plus the notes the user attached with « → chat ». For each: `note_id`, model, tags, the flagged cards (as cloze labels, « c2 »), raw fields, and the `reason`. Raw fields (with `{{c1::…}}` markers and HTML) — Claude must produce fields in the same syntax.
 4. **Standing instructions**: reply in the user's language (French by default); be terse; when suggesting a concrete change use the tools rather than describing it; keep cloze syntax valid; never invent facts absent from the corpus — say when the corpus does not cover the point; one note = one idea; prefer several short notes over a long one; when a note has a `reason`, address it first.
 
 The frontend keeps the conversation in memory per deck and clears it when the deck changes. Attached notes (`→ chat`) are sent as `note_ids` alongside the selected note, and stay attached across turns until removed (×) or the deck changes.

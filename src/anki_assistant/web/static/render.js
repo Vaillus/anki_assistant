@@ -139,7 +139,7 @@ function noteCard(n) {
     '">' +
     '<div class="note-top">' +
     (n.flagged
-      ? '<span class="badge" title="' + esc(flagInfo) + '">⚑</span>'
+      ? '<span class="badge" title="' + esc(flagInfo) + '">⚑' + flaggedLabels(n) + "</span>"
       : '<span class="badge zero">·</span>') +
     '<span class="tag">' +
     short(n.note_id) +
@@ -156,7 +156,32 @@ function noteCard(n) {
     "</div>" +
     reasonHtml(n) +
     fieldsHtml(n) +
+    revealHtml(n) +
     (sel ? actionsHtml(n) : "") +
+    "</div>"
+  );
+}
+
+/* « c2 » per flagged card, appended to the flag badge. Empty for non-cloze models with one card. */
+function flaggedLabels(n) {
+  const ns = flaggedClozes(n);
+  if (!ns.length || (ns.length === 1 && nCards(n) <= 1)) return "";
+  return " " + ns.map((k) => "c" + k).join(" ");
+}
+
+/* Question state toggle (specs/review.md#question-state). */
+function revealHtml(n) {
+  if (!hasHiddenClozes(n)) return "";
+  const hidden = isHidden(n);
+  return (
+    '<div class="reveal"><button class="ghost" data-act="reveal" data-note="' +
+    n.note_id +
+    '" title="Espace">' +
+    (hidden ? "Révéler la réponse" : "Masquer à nouveau") +
+    "</button>" +
+    (hidden
+      ? '<span class="muted small">la note telle que vue au moment du flag</span>'
+      : "") +
     "</div>"
   );
 }
@@ -173,9 +198,11 @@ function reasonHtml(n) {
 function fieldsHtml(n) {
   const html = n.fields_html || {};
   const names = Object.keys(html);
+  const hidden = isHidden(n);
+  const ns = hidden ? flaggedClozes(n) : [];
   return names
     .map((name) => {
-      const v = html[name];
+      const v = hidden ? hideClozes(html[name], ns) : html[name];
       if (!v) return "";
       return (
         '<div class="field-name">' +

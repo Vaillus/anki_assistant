@@ -12,6 +12,7 @@ const S = {
   notes: null, // { deck, total, flagged, notes: Note[] }
   onlyFlagged: true,
   selNote: null,
+  revealed: {}, // note id -> true once its flagged clozes are shown (specs/review.md#question-state)
   busy: false,
   error: "",
   // column 3
@@ -72,9 +73,45 @@ function renderField(raw) {
   t = esc(t.trim());
   t = t.replace(
     /\{\{c(\d+)::([\s\S]*?)(?:::([\s\S]*?))?\}\}/g,
-    (_m, n, answer) => `<span class="cloze" data-n="${n}">${answer}</span>`,
+    (_m, n, answer, hint) =>
+      `<span class="cloze" data-n="${n}"${hint ? ` data-hint="${hint}"` : ""}>${answer}</span>`,
   );
   return t.replace(/\n/g, "<br>");
+}
+
+/* ---------- question state (specs/review.md#question-state) ---------- */
+
+/* Cloze numbers of the flagged cards: card `ord` is the card hiding cloze c{ord+1}. */
+function flaggedClozes(n) {
+  return ((n && n.flagged_cards) || []).map((c) => (c.ord || 0) + 1);
+}
+
+const _CLOZE_SPAN = /<span class="cloze" data-n="(\d+)"( data-hint="([^"]*)")?>[\s\S]*?<\/span>/g;
+
+/* Rendered field HTML with the given clozes replaced by `[…]` / `[hint]`, as on Anki's question side. */
+function hideClozes(html, ns) {
+  return String(html || "").replace(_CLOZE_SPAN, (m, n, _attr, hint) => {
+    if (ns.indexOf(Number(n)) < 0) return m;
+    return `<span class="cloze hidden" data-n="${n}">[${hint || "…"}]</span>`;
+  });
+}
+
+/* True when the note has something to hide: flagged, and a flagged cloze exists in its fields. */
+function hasHiddenClozes(n) {
+  if (!n || !n.flagged) return false;
+  const ns = flaggedClozes(n);
+  if (!ns.length) return false;
+  const html = Object.values(n.fields_html || {}).join("");
+  return ns.some((k) => html.indexOf(`<span class="cloze" data-n="${k}"`) >= 0);
+}
+
+function isHidden(n) {
+  return hasHiddenClozes(n) && !S.revealed[n.note_id];
+}
+
+function toggleReveal(noteId) {
+  if (S.revealed[noteId]) delete S.revealed[noteId];
+  else S.revealed[noteId] = true;
 }
 
 /* Plain text (no markup at all), used for the reason callout and previews. */

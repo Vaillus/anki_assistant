@@ -35,15 +35,21 @@ def _img_to_text(match: re.Match[str]) -> str:
 
 
 def _cloze_to_span(match: re.Match[str]) -> str:
-    """`{{cN::answer::hint}}` -> a span carrying the cloze number. The hint is dropped."""
-    return f'<span class="cloze" data-n="{match.group(1)}">{match.group(2)}</span>'
+    """`{{cN::answer::hint}}` -> a span carrying the cloze number and, if any, the hint.
+
+    The hint lives in an attribute so the UI can show `[hint]` when it hides the answer
+    (question state). The text was already escaped, quotes included, so it is attribute-safe.
+    """
+    number, answer, hint = match.group(1), match.group(2), match.group(3)
+    hint_attr = f' data-hint="{hint}"' if hint else ""
+    return f'<span class="cloze" data-n="{number}"{hint_attr}>{answer}</span>'
 
 
 def render_field(raw: str) -> str:
     """Turn one raw Anki field value into display HTML.
 
     Escaped first, so nothing from the note can inject markup; the only tags in the output are
-    `<br>` and `<span class="cloze" data-n="N">`.
+    `<br>` and `<span class="cloze" data-n="N" data-hint="…">`.
     """
     if not raw:
         return ""

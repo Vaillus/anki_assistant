@@ -54,6 +54,8 @@ class EditBody(BaseModel):
     fields: dict[str, str] | None = None
     tags: list[str] | None = None
     unflag: bool = True
+    #: Card ids to flag again (chat undo, specs/chat.md#undo).
+    reflag: list[int] | None = None
 
 
 class OriginalBody(BaseModel):
@@ -119,6 +121,7 @@ def edit_note(request: Request, note_id: int, body: EditBody) -> NoteView:
             fields=body.fields,
             tags=body.tags,
             unflag=body.unflag,
+            reflag=body.reflag,
         )
 
 

@@ -170,7 +170,16 @@ def test_build_system_includes_notes_fields_reason_and_source_headers() -> None:
 
 def test_standing_instructions_state_the_rules() -> None:
     text = chat.build_system("d", [], [])[0]["text"]
-    for needle in ("français", "outils", "cloze", "corpus", "raison du flag"):
+    for needle in (
+        "français",
+        "outils",
+        "cloze",
+        "corpus",
+        "raison du flag",
+        "list_deck_notes",
+        "propose_create",
+        'class="context"',
+    ):
         assert needle in text
 
 
@@ -201,18 +210,28 @@ def test_build_system_relays_source_warning_and_truncation() -> None:
 # ------------------------------------------------------------------------------- tools
 
 
-def test_tools_cover_the_four_proposals() -> None:
+def test_tools_cover_the_five_proposals_then_the_read_tools() -> None:
     defs = chat.tools()
     names = [tool["name"] for tool in defs]
-    assert names == ["propose_edit", "propose_split", "propose_create", "propose_move"]
-    assert set(names) == set(chat.TOOL_KINDS)
+    proposals = [
+        "propose_edit",
+        "propose_split",
+        "propose_create",
+        "propose_move",
+        "propose_bulk_edit",
+    ]
+    assert names[: len(proposals)] == proposals
+    assert set(proposals) == set(chat.TOOL_KINDS)
+    assert tuple(names[len(proposals) :]) == chat.READ_TOOLS
+    assert not (set(chat.READ_TOOLS) & set(chat.TOOL_KINDS))
     for tool in defs:
         schema = tool["input_schema"]
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
-        assert schema["required"]
         assert set(schema["required"]) <= set(schema["properties"])
         assert tool["description"]
+    for tool in chat.proposal_tools():
+        assert tool["input_schema"]["required"]  # every proposal carries a rationale at least
 
 
 def test_tool_schemas_take_raw_field_maps() -> None:
@@ -223,6 +242,71 @@ def test_tool_schemas_take_raw_field_maps() -> None:
     assert by_name["propose_move"]["required"] == ["note_id", "deck", "rationale"]
     split_new = by_name["propose_split"]["properties"]["new_notes"]
     assert split_new["items"]["required"] == ["fields"]
+    bulk = by_name["propose_bulk_edit"]
+    assert bulk["required"] == ["edits", "rationale"]
+    assert bulk["properties"]["edits"]["items"]["required"] == ["note_id", "fields"]
+    assert by_name["get_notes"]["required"] == ["note_ids"]
+    assert by_name["list_decks"]["required"] == []
+
+
+# ---------------------------------------------------------------------- read tool output
+
+
+def test_format_deck_index_is_one_compact_line_per_note() -> None:
+    long_note = FakeNote(
+        note_id=2, fields={"Text": "x" * 300, "Back Extra": ""}, reason="", flagged_cards=[]
+    )
+    text = chat.format_deck_index([FakeNote(), long_note], "courant::00-Thèse")
+    lines = text.splitlines()
+    assert lines[0] == "# Index — 2 note(s) du deck courant::00-Thèse"
+    row1 = next(line for line in lines if line.startswith("#1732375559262"))
+    assert "⚑" in row1
+    assert "Text: L'angle est {{c1::disjoint}} du précédent." in row1
+    assert "courant::00-Thèse" not in row1  # same deck as asked: omitted
+    row2 = next(line for line in lines if line.startswith("#2"))
+    assert "⚑" not in row2
+    assert "Back Extra" not in row2  # empty fields are skipped
+    assert "x" * (chat.INDEX_FIELD_CHARS - 1) + "…" in row2
+    assert "x" * chat.INDEX_FIELD_CHARS not in row2
+
+
+def test_format_deck_index_names_the_deck_when_it_differs() -> None:
+    text = chat.format_deck_index([FakeNote()], "autre::deck")
+    assert "#1732375559262 · courant::00-Thèse · ⚑ · " in text
+    assert "(aucune note)" in chat.format_deck_index([], "d")
+
+
+def test_format_decks_indents_by_depth_and_keeps_full_names() -> None:
+    decks = [
+        SimpleNamespace(name="courant", depth=0, flagged_own=0, flagged_total=7),
+        SimpleNamespace(name="courant::00-Thèse", depth=1, flagged_own=7, flagged_total=7),
+    ]
+    text = chat.format_decks(decks)
+    assert "\n- [courant]  ⚑ 0 / 7\n" in text
+    assert "\n  - [courant::00-Thèse]  ⚑ 7 / 7" in text
+
+
+def test_format_notes_reuses_the_context_layout() -> None:
+    text = chat.format_notes([FakeNote()])
+    assert "### Note 1732375559262" in text
+    assert "raison du flag : For a given sensor ?" in text
+    assert "aucune note" in chat.format_notes([])
+
+
+def test_format_note_type_lists_fields_templates_and_css() -> None:
+    note_type = SimpleNamespace(
+        name="Cloze",
+        fields=["Text", "Back Extra"],
+        templates={
+            "Cloze": {"Front": "{{cloze:Text}}", "Back": "{{cloze:Text}}<br>{{Back Extra}}"}
+        },
+        css=".card { color: black; }",
+    )
+    text = chat.format_note_type(note_type)
+    assert "# Type de note Cloze" in text
+    assert "Champs : Text, Back Extra" in text
+    assert "### Recto\n```html\n{{cloze:Text}}\n```" in text
+    assert "## CSS\n```css\n.card { color: black; }\n```" in text
 
 
 # ------------------------------------------------------------------------- stream_chat
@@ -244,12 +328,12 @@ def test_text_deltas_stream_then_done() -> None:
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 1234, "output_tokens": 210},
     }
-    # The request carries the cached system prompt and the four tools.
+    # The request carries the cached system prompt and every tool (proposals + reads).
     call = client.messages.calls[0]
     assert call["model"] == "test-model"
     assert call["max_tokens"] == 8192
     assert call["system"][1]["cache_control"] == {"type": "ephemeral"}
-    assert len(call["tools"]) == 4
+    assert [t["name"] for t in call["tools"]] == [t["name"] for t in chat.tools()]
 
 
 def test_tool_use_emits_a_proposal_and_the_loop_continues() -> None:
@@ -296,6 +380,95 @@ def test_several_proposals_in_one_turn() -> None:
         "edit",
         "move",
     ]
+
+
+def test_bulk_edit_is_a_proposal_kind() -> None:
+    block = tool_use_block(
+        "toolu_b", "propose_bulk_edit", {"edits": [{"note_id": 1, "fields": {"Text": "x"}}]}
+    )
+    client = FakeAnthropic(
+        [([], final_message([block], "tool_use")), ([], final_message([], "end_turn"))]
+    )
+    events = run_chat(client)
+    assert events[0].type == "proposal"
+    assert events[0].data["kind"] == "bulk_edit"
+    assert events[0].data["input"]["edits"][0]["note_id"] == 1
+
+
+def test_read_tool_is_executed_and_its_text_fed_back() -> None:
+    block = tool_use_block("toolu_r", "list_deck_notes", {})
+    client = FakeAnthropic(
+        [
+            ([], final_message([block], "tool_use")),
+            ([text_delta("Deux notes.")], final_message([], "end_turn")),
+        ]
+    )
+    index = "# Index — 2 note(s) du deck d\n\n#1 · ⚑ · Text: a\n#2 · Text: b"
+    seen: list[dict[str, Any]] = []
+
+    def list_deck_notes(inp: dict[str, Any]) -> str:
+        seen.append(inp)
+        return index
+
+    events = run_chat(client, read_tools={"list_deck_notes": list_deck_notes})
+    assert [event.type for event in events] == ["reading", "text", "done"]
+    assert events[0].data == {
+        "id": "toolu_r",
+        "tool": "list_deck_notes",
+        "input": {},
+        "summary": "Index — 2 note(s) du deck d",
+    }
+    assert seen == [{}]
+    convo = client.messages.calls[1]["messages"]
+    assert convo[2] == {
+        "role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": "toolu_r", "content": index}],
+    }
+
+
+def test_read_tool_failure_becomes_an_error_tool_result_not_a_chat_error() -> None:
+    block = tool_use_block("toolu_r", "get_notes", {"note_ids": [1]})
+    client = FakeAnthropic(
+        [([], final_message([block], "tool_use")), ([], final_message([], "end_turn"))]
+    )
+
+    def get_notes(inp: dict[str, Any]) -> str:
+        raise LookupError("No note with id 1")
+
+    events = run_chat(client, read_tools={"get_notes": get_notes})
+    assert [event.type for event in events] == ["reading", "done"]
+    assert events[0].data["summary"].startswith("erreur : ")
+    result = client.messages.calls[1]["messages"][2]["content"][0]
+    assert result["is_error"] is True
+    assert "No note with id 1" in result["content"]
+
+
+def test_unknown_tool_gets_an_error_result_and_no_event() -> None:
+    block = tool_use_block("toolu_x", "frobnicate", {})
+    client = FakeAnthropic(
+        [([], final_message([block], "tool_use")), ([], final_message([], "end_turn"))]
+    )
+    events = run_chat(client, read_tools={})
+    assert [event.type for event in events] == ["done"]
+    result = client.messages.calls[1]["messages"][2]["content"][0]
+    assert result["is_error"] is True
+    assert "frobnicate" in result["content"]
+
+
+def test_proposal_and_read_in_one_turn_keep_their_order() -> None:
+    blocks = [
+        tool_use_block("toolu_a", "propose_edit", {"note_id": 1, "fields": {}, "rationale": "r"}),
+        tool_use_block("toolu_b", "list_decks", {}),
+    ]
+    client = FakeAnthropic(
+        [([], final_message(blocks, "tool_use")), ([], final_message([], "end_turn"))]
+    )
+    events = run_chat(client, read_tools={"list_decks": lambda inp: "# Decks\n\n- [d]  ⚑ 1 / 1"})
+    assert [event.type for event in events] == ["proposal", "reading", "done"]
+    results = client.messages.calls[1]["messages"][2]["content"]
+    assert [r["tool_use_id"] for r in results] == ["toolu_a", "toolu_b"]
+    assert results[0]["content"] == "ok"
+    assert results[1]["content"].startswith("# Decks")
 
 
 def test_tool_loop_is_capped() -> None:

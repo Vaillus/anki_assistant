@@ -11,7 +11,7 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Any
 
-from anki_assistant.models import Card, Note
+from anki_assistant.models import Card, Note, NoteType
 
 DEFAULT_URL = "http://localhost:8765"
 API_VERSION = 6
@@ -235,3 +235,29 @@ class AnkiClient:
         names = self.model_names()
         fields = self.invoke_multi([("modelFieldNames", {"modelName": n}) for n in names])
         return {name: list(f or []) for name, f in zip(names, fields, strict=True)}
+
+    def model_styling(self, model: str) -> str:
+        """The note type's stylesheet."""
+        raw = self.invoke("modelStyling", modelName=model)
+        return str((raw or {}).get("css", ""))
+
+    def model_templates(self, model: str) -> dict[str, dict[str, str]]:
+        """Card name -> {"Front": html, "Back": html}."""
+        raw = self.invoke("modelTemplates", modelName=model)
+        return {name: dict(sides or {}) for name, sides in (raw or {}).items()}
+
+    def note_type(self, model: str) -> NoteType:
+        """Fields, card templates and CSS of a note type, in one round trip."""
+        fields, templates, styling = self.invoke_multi(
+            [
+                ("modelFieldNames", {"modelName": model}),
+                ("modelTemplates", {"modelName": model}),
+                ("modelStyling", {"modelName": model}),
+            ]
+        )
+        return NoteType(
+            name=model,
+            fields=list(fields or []),
+            templates={name: dict(sides or {}) for name, sides in (templates or {}).items()},
+            css=str((styling or {}).get("css", "")),
+        )

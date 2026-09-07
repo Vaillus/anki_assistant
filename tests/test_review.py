@@ -181,6 +181,14 @@ class FakeAnkiClient(AnkiClient):
     def _do_modelFieldNames(self, modelName: str) -> list[str]:
         return list(self.models[modelName])
 
+    def _do_modelTemplates(self, modelName: str) -> dict[str, dict[str, str]]:
+        first, last = self.models[modelName][0], self.models[modelName][-1]
+        front = "{{" + first + "}}"
+        return {modelName: {"Front": front, "Back": front + "<br>{{" + last + "}}"}}
+
+    def _do_modelStyling(self, modelName: str) -> dict[str, str]:
+        return {"css": ".card { color: black; }"}
+
     def _note(self, note_id: int) -> dict[str, Any]:
         note = self.notes.get(note_id)
         if note is None:
@@ -599,3 +607,46 @@ def test_api_maps_anki_failures(api: TestClient, anki: FakeAnkiClient, monkeypat
     response = api.get("/api/decks")
     assert response.status_code == 502
     assert "collection is not available" in response.json()["detail"]
+
+
+# ------------------------------------------------------------- reading for the chat
+
+
+def test_get_notes_batches_round_trips_and_drops_unknown_ids(anki: FakeAnkiClient):
+    a = anki.add("d", fields={"Text": "a"}, flags=(1,))
+    b = anki.add("d", fields={"Text": "b"})
+    anki.calls.clear()
+    views = review.get_notes(anki, [a, 999_999, b])
+    assert [v.note_id for v in views] == [a, b]
+    assert views[0].flagged and views[0].deck == "d"
+    assert not views[1].flagged
+    assert anki.calls == ["notesInfo", "cardsInfo"]
+
+
+def test_search_notes_caps_and_puts_flagged_first(anki: FakeAnkiClient):
+    plain = [anki.add("d", fields={"Text": str(i)}) for i in range(3)]
+    flagged = anki.add("d", fields={"Text": "f"}, flags=(2,))
+    views = review.search_notes(anki, "deck:d")
+    assert [v.note_id for v in views] == [flagged, *plain]
+    assert len(review.search_notes(anki, "deck:d", limit=2)) == 2
+    assert review.search_notes(anki, "deck:nope") == []
+
+
+def test_edit_reflag_puts_a_flag_back_for_undo(anki: FakeAnkiClient):
+    note_id = anki.add("d", flags=(1, 0))
+    first_card = anki.notes[note_id]["cards"][0]
+    review.edit(anki, note_id, fields={"Text": "y"})
+    assert anki.flags_of(note_id) == [0, 0]
+    view = review.edit(anki, note_id, fields={"Text": "x"}, unflag=False, reflag=[first_card])
+    assert anki.flags_of(note_id) == [1, 0]
+    assert view.flagged and view.fields["Text"] == "x"
+
+
+def test_client_note_type_reads_fields_templates_and_css(anki: FakeAnkiClient):
+    note_type = anki.note_type("Cloze")
+    assert note_type.name == "Cloze"
+    assert note_type.fields == ["Text", "Back Extra"]
+    assert note_type.templates == {
+        "Cloze": {"Front": "{{Text}}", "Back": "{{Text}}<br>{{Back Extra}}"}
+    }
+    assert ".card" in note_type.css

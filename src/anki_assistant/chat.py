@@ -14,8 +14,16 @@ step-downs if the corpus grows or latency matters; set `ANKI_CHAT_MODEL` rather 
 Note: on Opus 5 thinking is on by default, and thinking tokens count against `max_tokens`
 (8192 per the spec). If replies ever come back truncated, lower the effort or raise `max_tokens`.
 
-Notes and corpus are not fetched here: `stream_chat` takes two injectable callables
-(`load_note`, `load_corpus`) so this module does not import `review.py` or `sources.py`.
+Notes and corpus are not fetched here: `stream_chat` takes injectable callables (`load_note`,
+`load_corpus`, and the `read_tools` map) so this module does not import `review.py` or
+`sources.py`. It only imports `models.strip_html`, a pure function.
+
+Two kinds of tools (specs/chat.md):
+- **proposal tools** (`propose_*`): the call is streamed to the client as a `proposal` event and
+  answered with "ok"; applying is the user's click, never Claude's.
+- **read tools** (`list_decks`, `list_deck_notes`, `search_notes`, `get_notes`,
+  `get_note_type`): executed here through the injected callables, the text they return is the
+  tool result. A `reading` event tells the client what was read.
 """
 
 from __future__ import annotations
@@ -25,14 +33,18 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from anki_assistant.models import strip_html
+
 # --------------------------------------------------------------------------- config
 
 DEFAULT_MODEL = "claude-opus-5"
 MAX_TOKENS = 8192
 #: Total budget for all corpus text injected in the system prompt.
 MAX_CORPUS_CHARS = 150_000
-#: Safety net on the tool-use loop: one turn per proposal round, then we stop.
-MAX_TOOL_LOOPS = 6
+#: Model calls per turn. Reads count: index -> get_notes -> propose -> comment is four calls.
+MAX_TOOL_LOOPS = 8
+#: Characters kept per field in a deck index line.
+INDEX_FIELD_CHARS = 120
 
 
 def default_model() -> str:
@@ -81,13 +93,33 @@ class CorpusText:
     n_pages: int | None = None
 
 
+class DeckLike(Protocol):
+    """The shape `review.DeckSummary` exposes; only what `format_decks` needs."""
+
+    name: str
+    depth: int
+    flagged_own: int
+    flagged_total: int
+
+
+class NoteTypeLike(Protocol):
+    """The shape `models.NoteType` exposes."""
+
+    name: str
+    fields: list[str]
+    templates: dict[str, dict[str, str]]
+    css: str
+
+
 NoteLoader = Callable[[int], NoteLike]
 CorpusLoader = Callable[[str], list[CorpusText]]
+#: A read tool: takes the tool input as given by the model, returns the text Claude will read.
+ReadTool = Callable[[Mapping[str, Any]], str]
 
 
 @dataclass
 class ChatEvent:
-    """One SSE event. `type` is one of "text", "proposal", "done", "error"."""
+    """One SSE event. `type` is one of "text", "reading", "proposal", "done", "error"."""
 
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -115,7 +147,15 @@ un cloze dans une note Cloze.
 explicitement plutôt que de combler.
 - Une note = une idée. Préfère plusieurs notes courtes à une note longue.
 - Quand une note porte une « raison du flag », traite-la en premier : c'est la question à \
-laquelle il faut répondre.\
+laquelle il faut répondre.
+- Tu ne vois que les notes en contexte. Dès que la question touche d'autres notes (doublons, \
+notes sœurs, le reste du deck, un autre deck), **lis-les** avec les outils de lecture \
+(list_deck_notes, search_notes, get_notes, list_decks, get_note_type) au lieu de deviner. \
+Avant propose_create, vérifie dans l'index du deck qu'une note sur la même idée n'existe pas déjà.
+- En-tête de contexte : une courte étiquette qui nomme le sujet (ex. « Stone's Model - FAB and \
+KKT Conditions: ») se met en première ligne du champ dans `<div class="context">…</div>`, \
+jamais dans la phrase. Une première ligne qui est le début grammatical de la phrase (« There \
+are several ways to: ») n'est pas un en-tête : on la laisse telle quelle.\
 """
 
 
@@ -230,6 +270,79 @@ def build_system(
     ]
 
 
+# ------------------------------------------------------------------- read tool output
+
+
+def _trunc(text: str, limit: int = INDEX_FIELD_CHARS) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def format_decks(decks: Sequence[DeckLike]) -> str:
+    """The deck tree: one line per deck, indented by depth, full name kept (needed by move)."""
+    lines = [
+        "# Decks",
+        "",
+        "Un deck par ligne, indenté selon la hiérarchie. Nom complet entre crochets, puis notes "
+        "flaguées : propres / avec sous-decks.",
+        "",
+    ]
+    for deck in decks:
+        indent = "  " * deck.depth
+        lines.append(f"{indent}- [{deck.name}]  ⚑ {deck.flagged_own} / {deck.flagged_total}")
+    if not decks:
+        lines.append("(aucun deck)")
+    return "\n".join(lines)
+
+
+def format_deck_index(notes: Sequence[NoteLike], deck: str = "") -> str:
+    """One line per note: id, deck if it differs, flag, fields as truncated plain text."""
+    where = f" du deck {deck}" if deck else ""
+    lines = [
+        f"# Index — {len(notes)} note(s){where}",
+        "",
+        f"Une ligne par note : #id · deck (si différent) · ⚑ si flaguée · champs en texte brut "
+        f"tronqués à {INDEX_FIELD_CHARS} caractères. get_notes donne le contenu complet.",
+        "",
+    ]
+    for note in notes:
+        bits = [f"#{note.note_id}"]
+        if note.deck and note.deck != deck:
+            bits.append(note.deck)
+        if note.flagged_cards:
+            bits.append("⚑")
+        fields = " | ".join(
+            f"{name}: {_trunc(strip_html(value))}"
+            for name, value in note.fields.items()
+            if strip_html(value)
+        )
+        bits.append(fields or "(champs vides)")
+        lines.append(" · ".join(bits))
+    if not notes:
+        lines.append("(aucune note)")
+    return "\n".join(lines)
+
+
+def format_notes(notes: Sequence[NoteLike]) -> str:
+    """Full notes, same layout as the notes in context."""
+    if not notes:
+        return "(aucune note trouvée pour ces identifiants)"
+    return "\n\n".join(_fmt_note(note) for note in notes)
+
+
+def format_note_type(note_type: NoteTypeLike) -> str:
+    lines = [
+        f"# Type de note {note_type.name}",
+        "",
+        f"Champs : {', '.join(note_type.fields) if note_type.fields else '(aucun)'}",
+    ]
+    for card, sides in note_type.templates.items():
+        lines += ["", f"## Carte {card}"]
+        for side, label in (("Front", "Recto"), ("Back", "Verso")):
+            lines += ["", f"### {label}", "```html", sides.get(side, ""), "```"]
+    lines += ["", "## CSS", "```css", note_type.css, "```"]
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------------------- tools
 
 #: tool name -> the `kind` carried by the `proposal` SSE event.
@@ -238,7 +351,17 @@ TOOL_KINDS: dict[str, str] = {
     "propose_split": "split",
     "propose_create": "create",
     "propose_move": "move",
+    "propose_bulk_edit": "bulk_edit",
 }
+
+#: Read tools, executed server-side through the `read_tools` map given to `stream_chat`.
+READ_TOOLS: tuple[str, ...] = (
+    "list_decks",
+    "list_deck_notes",
+    "search_notes",
+    "get_notes",
+    "get_note_type",
+)
 
 _FIELDS_DESC = (
     "Valeurs de champ Anki brutes, par nom de champ. HTML autorisé, marqueurs de cloze conservés."
@@ -268,7 +391,12 @@ _TAGS = {
 
 
 def tools() -> list[dict[str, Any]]:
-    """The four proposal tools. Each call becomes one `proposal` event for the client."""
+    """Every tool definition sent to the model: the proposal tools, then the read tools."""
+    return proposal_tools() + read_tool_defs()
+
+
+def proposal_tools() -> list[dict[str, Any]]:
+    """The five proposal tools. Each call becomes one `proposal` event for the client."""
     return [
         {
             "name": "propose_edit",
@@ -388,10 +516,144 @@ def tools() -> list[dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
+        {
+            "name": "propose_bulk_edit",
+            "description": (
+                "Proposer la même modification sur plusieurs notes à la fois (ex. ajouter un "
+                "en-tête de contexte à vingt notes). Une seule carte, un seul clic pour tout "
+                "appliquer. Pour chaque note, ne renvoyer que les champs qui changent, en valeur "
+                "brute complète."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "note_id": {
+                                    "type": "integer",
+                                    "description": "Identifiant de la note à modifier.",
+                                },
+                                "fields": _fields_schema(
+                                    "Champs modifiés uniquement, valeurs brutes complètes. "
+                                    + _FIELDS_DESC
+                                ),
+                            },
+                            "required": ["note_id", "fields"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "rationale": _RATIONALE,
+                },
+                "required": ["edits", "rationale"],
+                "additionalProperties": False,
+            },
+        },
+    ]
+
+
+def read_tool_defs() -> list[dict[str, Any]]:
+    """The read tools. Executed by the server; their text output is the tool result."""
+
+    def obj(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": list(required),
+            "additionalProperties": False,
+        }
+
+    return [
+        {
+            "name": "list_decks",
+            "description": (
+                "Lire l'arborescence des decks avec le nombre de notes flaguées de chacun. "
+                "À utiliser pour situer le deck courant ou choisir une destination de déplacement."
+            ),
+            "input_schema": obj({}),
+        },
+        {
+            "name": "list_deck_notes",
+            "description": (
+                "Lire l'index compact d'un deck (et de ses sous-decks) : une ligne par note, "
+                "flaguées d'abord, champs tronqués. Par défaut le deck courant. Point de départ "
+                "pour repérer doublons, notes sœurs ou motifs récurrents."
+            ),
+            "input_schema": obj(
+                {
+                    "deck": {
+                        "type": "string",
+                        "description": "Nom complet du deck (avec `::`). Omettre = deck courant.",
+                    }
+                }
+            ),
+        },
+        {
+            "name": "search_notes",
+            "description": (
+                "Chercher des notes avec la syntaxe de recherche Anki (ex. "
+                '`"deck:courant::00-Thèse" Text:*Stone*`, `tag:leech`, `-flag:0`). Renvoie un '
+                "index compact."
+            ),
+            "input_schema": obj(
+                {
+                    "query": {"type": "string", "description": "Requête Anki."},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Nombre maximal de notes (défaut 50).",
+                    },
+                },
+                required=["query"],
+            ),
+        },
+        {
+            "name": "get_notes",
+            "description": (
+                "Lire des notes en entier (champs bruts, tags, flags, raison), dans le même "
+                "format que les notes en contexte."
+            ),
+            "input_schema": obj(
+                {
+                    "note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 1,
+                        "description": "Identifiants des notes.",
+                    }
+                },
+                required=["note_ids"],
+            ),
+        },
+        {
+            "name": "get_note_type",
+            "description": (
+                "Lire un type de note (modèle) : ses champs, ses templates de carte et son CSS."
+            ),
+            "input_schema": obj(
+                {"model": {"type": "string", "description": "Nom du type de note."}},
+                required=["model"],
+            ),
+        },
     ]
 
 
 # ------------------------------------------------------------------------------ streaming
+
+
+def _tool_result(tool_use_id: str, content: str, is_error: bool = False) -> dict[str, Any]:
+    block: dict[str, Any] = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+    if is_error:
+        block["is_error"] = True
+    return block
+
+
+def _summary(text: str) -> str:
+    """First line of a read result, without its Markdown heading marker."""
+    first = text.strip().split("\n", 1)[0] if text.strip() else ""
+    return first.lstrip("#").strip()
 
 
 def _usage_dict(message: Any) -> dict[str, Any]:
@@ -418,14 +680,17 @@ async def stream_chat(
     messages: Sequence[Mapping[str, Any]],
     load_note: NoteLoader,
     load_corpus: CorpusLoader,
+    read_tools: Mapping[str, ReadTool] | None = None,
     model: str | None = None,
     flagged_count: int | None = None,
 ) -> AsyncIterator[ChatEvent]:
     """Run one chat turn (with its tool loop) and yield the events the client should receive.
 
-    `messages` are plain `{role, content: str}` turns. Tool calls are surfaced as `proposal`
+    `messages` are plain `{role, content: str}` turns. Proposal calls are surfaced as `proposal`
     events and answered with a `"ok"` tool result so Claude can keep talking; applying a
-    proposal is the user's decision, made later through the review endpoints.
+    proposal is the user's decision, made later through the review endpoints. Read calls are
+    executed through `read_tools`, surfaced as `reading` events, and answered with the text the
+    tool returned (or an error tool result, so Claude can react instead of the turn failing).
     """
     try:
         notes = [load_note(int(note_id)) for note_id in note_ids]
@@ -469,22 +734,41 @@ async def stream_chat(
                 return
 
             calls = [block for block in final.content if getattr(block, "type", None) == "tool_use"]
+            results: list[dict[str, Any]] = []
             for block in calls:
                 kind = TOOL_KINDS.get(block.name)
-                if kind is None:
+                if kind is not None:
+                    yield ChatEvent(
+                        "proposal", {"id": block.id, "kind": kind, "input": block.input}
+                    )
+                    results.append(_tool_result(block.id, "ok"))
                     continue
-                yield ChatEvent("proposal", {"id": block.id, "kind": kind, "input": block.input})
-            # Feed the tool results back so Claude can comment on what it just proposed.
+                tool = (read_tools or {}).get(block.name)
+                if tool is None:
+                    results.append(
+                        _tool_result(block.id, f"Outil inconnu : {block.name}", is_error=True)
+                    )
+                    continue
+                tool_input = dict(block.input or {})
+                try:
+                    text = tool(tool_input)
+                except Exception as exc:  # noqa: BLE001 — Claude gets the error, not the UI
+                    text, failed = f"{type(exc).__name__}: {exc}", True
+                else:
+                    failed = False
+                results.append(_tool_result(block.id, text, is_error=failed))
+                yield ChatEvent(
+                    "reading",
+                    {
+                        "id": block.id,
+                        "tool": block.name,
+                        "input": tool_input,
+                        "summary": ("erreur : " if failed else "") + _summary(text),
+                    },
+                )
+            # Feed the tool results back so Claude can comment on what it just proposed or read.
             convo.append({"role": "assistant", "content": final.content})
-            convo.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "tool_result", "tool_use_id": block.id, "content": "ok"}
-                        for block in calls
-                    ],
-                }
-            )
+            convo.append({"role": "user", "content": results})
 
         yield ChatEvent("done", {"stop_reason": "max_tool_loops", "usage": _usage_dict(final)})
     except Exception as exc:  # noqa: BLE001 — the SSE stream reports, it does not crash

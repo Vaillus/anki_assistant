@@ -7,14 +7,27 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from anki_assistant.chat import ChatEvent, CorpusText, default_model, stream_chat
+from anki_assistant import review
+from anki_assistant.chat import (
+    ChatEvent,
+    CorpusText,
+    ReadTool,
+    default_model,
+    format_deck_index,
+    format_decks,
+    format_note_type,
+    format_notes,
+    stream_chat,
+)
+from anki_assistant.client import AnkiClient
+from anki_assistant.sources import SourceStore
 
 router = APIRouter()
 
@@ -62,6 +75,51 @@ def get_client() -> Any | None:
     return client
 
 
+# ------------------------------------------------------------------------ read tools
+
+
+def read_tools_for(anki: AnkiClient, store: SourceStore, deck: str) -> dict[str, ReadTool]:
+    """The read tools of one turn (specs/chat.md#reading-tools), closed over the current deck.
+
+    Each takes the tool input as the model sent it and returns the text Claude reads. Input
+    problems raise ValueError; `stream_chat` turns any exception into an error tool result.
+    """
+
+    def list_decks(_inp: Mapping[str, Any]) -> str:
+        return format_decks(review.list_decks(anki, store))
+
+    def list_deck_notes(inp: Mapping[str, Any]) -> str:
+        target = str(inp.get("deck") or deck)
+        return format_deck_index(review.list_notes(anki, target).notes, target)
+
+    def search_notes(inp: Mapping[str, Any]) -> str:
+        query = str(inp.get("query") or "").strip()
+        if not query:
+            raise ValueError("query manquante")
+        limit = int(inp.get("limit") or 50)
+        return format_deck_index(review.search_notes(anki, query, limit))
+
+    def get_notes(inp: Mapping[str, Any]) -> str:
+        ids = [int(i) for i in inp.get("note_ids") or []]
+        if not ids:
+            raise ValueError("note_ids vide")
+        return format_notes(review.get_notes(anki, ids))
+
+    def get_note_type(inp: Mapping[str, Any]) -> str:
+        model = str(inp.get("model") or "").strip()
+        if not model:
+            raise ValueError("model manquant")
+        return format_note_type(anki.note_type(model))
+
+    return {
+        "list_decks": list_decks,
+        "list_deck_notes": list_deck_notes,
+        "search_notes": search_notes,
+        "get_notes": get_notes,
+        "get_note_type": get_note_type,
+    }
+
+
 # ------------------------------------------------------------------------------- sse
 
 
@@ -93,8 +151,6 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
     store = request.app.state.store
 
     def load_note(note_id: int) -> Any:
-        from anki_assistant import review
-
         return review.get_note(anki, note_id)
 
     def load_corpus(deck: str) -> list[CorpusText]:
@@ -123,6 +179,7 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
             [message.model_dump() for message in body.messages],
             load_note,
             load_corpus,
+            read_tools=read_tools_for(anki, store, body.deck),
             flagged_count=body.flagged_count,
         )
         async for event in events:

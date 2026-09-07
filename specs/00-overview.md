@@ -13,9 +13,10 @@ Hugo flags a card during a review when something is wrong with it (too vague, wr
 - **Card** — what Anki schedules. A Cloze note with three clozes yields three cards.
 - **Note** — the editable object (fields + tags). **The review unit is the note**: a note is *flagged* when any of its cards carries a flag; *resolving* a note clears the flag on all its cards. Flag colours carry no meaning here — any flag means "to review".
 - **Reason** — the plain text of the `Back Extra` field of a flagged note (when the model has such a field). Displayed prominently as "why this was flagged"; Claude reads it; resolving a note offers to clear it.
-- **Source** — a document a deck was made from: an Obsidian note in the vault, or a PDF on disk (optionally restricted to a page range). A deck has a **corpus**: an ordered list of sources. A deck with no corpus of its own inherits its nearest ancestor's corpus (`a::b::c` → `a::b` → `a`).
+- **Source** — a document a deck was made from: an Obsidian note in the vault, or a PDF on disk (optionally restricted to a page range). A deck has a **corpus**: an ordered list of sources. A deck with no corpus of its own inherits its nearest ancestor's corpus (`a::b::c` → `a::b` → `a`). Every source has a stable **id**.
+- **Anchor** — a source of its deck's corpus a note was made from; a note can have several. Stored in `sources.json` (note id → list of source ids), never in Anki. Opens the Source tab on the right documents and lets the chat load those alone. See [sources.md](./sources.md#anchors).
 - **Decision** — what the user does with a flagged note: keep, edit, split, create a sibling, move, delete, skip. See [review.md](./review.md#decisions).
-- **Proposal** — a structured change suggested by Claude in the chat (edit / split / create / move) that the user applies with one click. See [chat.md](./chat.md).
+- **Proposal** — a structured change suggested by Claude in the chat (edit / split / create / move / bulk edit) that the user applies with one click, and can undo for edits. Claude can also **read** the collection (deck tree, deck index, notes, note types) and the sources through read tools; **no source text is in its context unless the user attaches it or Claude reads it**, both visibly. Two proposals write into the vault (create a note, replace a passage). See [chat.md](./chat.md).
 
 ## Surfaces
 
@@ -41,12 +42,13 @@ graph LR
     UI["Browser · vanilla JS · /static"] --> API["FastAPI · port 5070"]
     API --> Client["AnkiClient (client.py)"] --> AC["AnkiConnect · localhost:8765"]
     API --> Sources["SourceStore (sources.py) · sources.json"]
-    Sources --> Vault["~/Documents/Vault/*.md"]
+    Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
     Sources --> PDF["PDF files · pypdf"]
     API --> Chat["chat.py · Anthropic API"]
 ```
 
-- **No database.** Anki is the store for notes; `sources.json` is the store for the deck→corpus mapping; the chat conversation lives in browser memory and is dropped when the deck changes.
+- **No database.** Anki is the store for notes; `sources.json` is the store for the deck→corpus mapping and the note→source anchors; the chat conversation lives in browser memory and is dropped when the deck changes.
+- **The vault is written in two bounded ways only.** Create a new note (refused if the file exists) and replace a passage that occurs exactly once. Always behind a user click. See [sources.md](./sources.md#writing-to-the-vault).
 - **No undo, no journal.** Writes go straight to Anki (decision from 2026-09-05). Destructive actions (delete, split-with-delete) get a confirm step in the UI, nothing more.
 - **Single user, local only.** No auth. Bind to `127.0.0.1`.
 
@@ -56,7 +58,7 @@ graph LR
 |---|---|---|
 | `src/anki_assistant/client.py` | Thin typed client over AnkiConnect | — |
 | `src/anki_assistant/models.py` | `Card`, `Note` dataclasses, HTML → plain text | — |
-| `src/anki_assistant/sources.py` | `SourceStore`, `Source`, corpus inheritance, excerpt extraction | [sources.md](./sources.md) |
+| `src/anki_assistant/sources.py` | `SourceStore`, `Source`, corpus inheritance, anchors, excerpt extraction, vault writes | [sources.md](./sources.md) |
 | `src/anki_assistant/review.py` | Note-level view of a deck + the decisions (keep/edit/split/create/move/delete) | [review.md](./review.md) |
 | `src/anki_assistant/chat.py` | Prompt assembly, Anthropic call, proposal tools, SSE events | [chat.md](./chat.md) |
 | `src/anki_assistant/web/main.py` | FastAPI app factory, static mount, router includes, `run()` | — |

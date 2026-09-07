@@ -33,10 +33,12 @@ __all__ = [
     "delete",
     "edit",
     "get_note",
+    "get_notes",
     "keep",
     "list_decks",
     "list_notes",
     "move",
+    "search_notes",
     "split",
 ]
 
@@ -200,6 +202,23 @@ def get_note(client: AnkiClient, note_id: int) -> NoteView:
     return _build_view(note, client.cards_info(list(note.card_ids)))
 
 
+def get_notes(client: AnkiClient, note_ids: Sequence[int]) -> list[NoteView]:
+    """Several notes in two round trips. Ids unknown to Anki are dropped; order is preserved."""
+    notes = client.notes_info([int(note_id) for note_id in note_ids])
+    cards_by_note: dict[int, list[Card]] = defaultdict(list)
+    for card in client.cards_info([cid for note in notes for cid in note.card_ids]):
+        cards_by_note[card.note_id].append(card)
+    return [_build_view(note, cards_by_note.get(note.note_id, [])) for note in notes]
+
+
+def search_notes(client: AnkiClient, query: str, limit: int = 50) -> list[NoteView]:
+    """Notes matching an Anki search, capped at `limit`, flagged first then by note id."""
+    ids = client.find_note_ids(query)[: max(0, int(limit))]
+    views = get_notes(client, ids)
+    views.sort(key=lambda v: (not v.flagged, v.note_id))
+    return views
+
+
 # --------------------------------------------------------------------- decisions
 
 
@@ -216,8 +235,13 @@ def edit(
     fields: Mapping[str, str] | None = None,
     tags: Sequence[str] | None = None,
     unflag: bool = True,
+    reflag: Sequence[int] | None = None,
 ) -> NoteView:
-    """Modifier: write fields and/or tags back to Anki, then resolve the note."""
+    """Modifier: write fields and/or tags back to Anki, then resolve the note.
+
+    `reflag` puts a (red) flag back on the given cards — the chat's undo uses it to return a
+    reverted note to the queue. Colours carry no meaning here (specs/00-overview.md).
+    """
     note = _fetch_note(client, note_id)
     if fields is not None or tags is not None:
         client.update_note(
@@ -227,6 +251,8 @@ def edit(
         )
     if unflag:
         client.unflag_note(note.note_id)
+    if reflag:
+        client.set_flag([int(card_id) for card_id in reflag], 1)
     return get_note(client, note_id)
 
 

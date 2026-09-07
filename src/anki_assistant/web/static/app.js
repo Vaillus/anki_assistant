@@ -235,20 +235,24 @@ function chatContextIds() {
   return ids;
 }
 
-/* Prior proposals are not replayed; they are summarised into the assistant text. */
+/* Prior proposals and reads are not replayed; they are summarised into the assistant text
+   (specs/chat.md#api). */
 function historyForServer() {
   const out = [];
   S.chat.forEach((m) => {
-    const summary = (m.proposals || [])
-      .map(
-        (p) =>
-          "[proposition: " +
-          (p.kind || "?") +
-          ((p.input || {}).note_id ? " " + short(p.input.note_id) : "") +
-          "]",
-      )
+    const reads = (m.reads || [])
+      .map((r) => "[lecture: " + (r.tool || "?") + (r.summary ? " → " + r.summary : "") + "]")
       .join(" ");
-    const content = [m.text || "", summary].filter((x) => x && x.trim()).join("\n");
+    const summary = (m.proposals || [])
+      .map((p) => {
+        const input = p.input || {};
+        let what = p.kind || "?";
+        if (p.kind === "bulk_edit") what += " ×" + ((input.edits || []).length || 0);
+        else if (input.note_id) what += " " + short(input.note_id);
+        return "[proposition: " + what + "]";
+      })
+      .join(" ");
+    const content = [m.text || "", reads, summary].filter((x) => x && x.trim()).join("\n");
     if (!content.trim()) return;
     out.push({ role: m.who === "user" ? "user" : "assistant", content });
   });
@@ -265,6 +269,17 @@ function scheduleLogRefresh() {
   });
 }
 
+/* Drop the conversation and start a fresh one on the same deck
+   (specs/chat.md#conversation-lifetime). */
+function newChat() {
+  if (S.chatBusy) return;
+  S.chat = [];
+  S.chatRefs = [];
+  S.chatDraft = "";
+  S.refocus = "chat";
+  draw();
+}
+
 async function sendChat() {
   const text = String(S.chatDraft || "").trim();
   if (!text || S.chatBusy || !S.deck) return;
@@ -274,7 +289,14 @@ async function sendChat() {
   messages.push({ role: "user", content: text });
 
   S.chat.push({ who: "user", text, refs: ids });
-  const reply = { who: "assistant", text: "", proposals: [], streaming: true, error: "" };
+  const reply = {
+    who: "assistant",
+    text: "",
+    reads: [],
+    proposals: [],
+    streaming: true,
+    error: "",
+  };
   S.chat.push(reply);
   S.chatDraft = "";
   S.chatBusy = true;
@@ -291,6 +313,9 @@ async function sendChat() {
       const d = data || {};
       if (name === "text") {
         reply.text += d.delta || "";
+        scheduleLogRefresh();
+      } else if (name === "reading") {
+        reply.reads.push({ tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
         scheduleLogRefresh();
       } else if (name === "proposal") {
         reply.proposals.push({
@@ -315,6 +340,18 @@ async function sendChat() {
   draw();
 }
 
+/* What undo needs to put a note back (specs/chat.md#undo): raw fields, tags, flagged cards.
+   Read from the queue when the note is in it, fetched otherwise. */
+async function snapshotOf(noteId) {
+  const n = noteById(noteId) || (await API.note(noteId));
+  return {
+    note_id: noteId,
+    fields: Object.assign({}, n.fields || {}),
+    tags: (n.tags || []).slice(),
+    flagged_card_ids: (n.flagged_cards || []).map((c) => c.card_id),
+  };
+}
+
 async function applyProposal(mi, pi) {
   const msg = S.chat[mi];
   const p = msg && msg.proposals && msg.proposals[pi];
@@ -323,11 +360,29 @@ async function applyProposal(mi, pi) {
   p.error = "";
   S.busy = true;
   draw();
+  let bulkWrote = false;
   try {
     if (p.kind === "edit") {
+      p.snapshot = [await snapshotOf(input.note_id)];
       const body = { fields: input.fields || {}, unflag: true };
       if (input.tags) body.tags = input.tags;
       await API.patch(input.note_id, body);
+    } else if (p.kind === "bulk_edit") {
+      // In order, stop at the first failure; rows already written stay written and are
+      // remembered in appliedIds so « Reprendre » finishes the rest.
+      const done = p.appliedIds || [];
+      p.appliedIds = done;
+      p.snapshot = p.snapshot || [];
+      for (const e of input.edits || []) {
+        if (done.indexOf(e.note_id) >= 0) continue;
+        if (!p.snapshot.some((snap) => snap.note_id === e.note_id)) {
+          p.snapshot.push(await snapshotOf(e.note_id));
+        }
+        await API.patch(e.note_id, { fields: e.fields || {}, unflag: true });
+        done.push(e.note_id);
+        bulkWrote = true;
+        scheduleLogRefresh();
+      }
     } else if (p.kind === "split") {
       await API.split(input.note_id, {
         original: input.original ? { fields: input.original.fields || {} } : null,
@@ -351,7 +406,58 @@ async function applyProposal(mi, pi) {
     }
     p.applied = true;
     S.busy = false;
-    await afterDecision({ resolvedId: input.note_id, keepSelection: p.kind === "create" });
+    const firstEdit = p.kind === "bulk_edit" ? ((input.edits || [])[0] || {}).note_id : null;
+    await afterDecision({
+      resolvedId: input.note_id || firstEdit,
+      keepSelection: p.kind === "create",
+    });
+  } catch (e) {
+    p.error = e.message;
+    S.busy = false;
+    // A bulk edit that failed halfway has still written some notes: show the queue as it is.
+    if (bulkWrote) await afterDecision({ keepSelection: true });
+    else draw();
+  }
+}
+
+/* Undo an applied edit / bulk edit from its snapshot (specs/chat.md#undo). Refused when a note
+   no longer holds the values the proposal wrote — it was edited since. */
+async function revertProposal(mi, pi) {
+  const msg = S.chat[mi];
+  const p = msg && msg.proposals && msg.proposals[pi];
+  if (!p || !p.applied || !p.snapshot || !p.snapshot.length || S.busy) return;
+  const input = p.input || {};
+  const written = {};
+  if (p.kind === "edit") written[input.note_id] = input.fields || {};
+  else (input.edits || []).forEach((e) => (written[e.note_id] = e.fields || {}));
+  p.error = "";
+  S.busy = true;
+  draw();
+  try {
+    for (const snap of p.snapshot) {
+      const cur = await API.note(snap.note_id);
+      const expected = written[snap.note_id] || {};
+      const changed = Object.keys(expected).some(
+        (k) => String((cur.fields || {})[k] || "") !== String(expected[k]),
+      );
+      if (changed) throw new Error(short(snap.note_id) + " modifiée depuis, annulation impossible");
+    }
+    for (const snap of p.snapshot) {
+      await API.patch(snap.note_id, {
+        fields: snap.fields,
+        tags: snap.tags,
+        unflag: false,
+        reflag: snap.flagged_card_ids,
+      });
+    }
+    const first = p.snapshot[0].note_id;
+    p.applied = false;
+    p.appliedIds = [];
+    p.snapshot = null;
+    p.reverted = true;
+    S.busy = false;
+    S.selNote = first;
+    await afterDecision({ keepSelection: true });
   } catch (e) {
     p.error = e.message;
     S.busy = false;
@@ -422,8 +528,12 @@ document.addEventListener("click", (e) => {
     saveNewSource();
   } else if (act === "send") {
     sendChat();
+  } else if (act === "newchat") {
+    newChat();
   } else if (act === "apply") {
     applyProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
+  } else if (act === "revert") {
+    revertProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
   }
 });
 

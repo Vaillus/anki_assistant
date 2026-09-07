@@ -258,6 +258,13 @@ function actionsHtml(n) {
 
 /* ---------------- column 3 — Source / Chat ---------------- */
 
+/* compose glyph for « nouvelle conversation » — drawn inline, this app has no icon font */
+const ICON_NEW_CHAT =
+  '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M13 8.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4.5"/>' +
+  '<path d="M11.3 2.2l2.5 2.5-5.3 5.3-3.1.6.6-3.1z"/></svg>';
+
 function rightColumn() {
   const head =
     '<div class="col-head"><div class="tabs">' +
@@ -267,8 +274,24 @@ function rightColumn() {
     '<button class="' +
     (S.tab === "chat" ? "on" : "") +
     '" data-act="tab" data-tab="chat">Chat</button>' +
-    "</div></div>";
+    "</div>" +
+    (S.tab === "chat" ? newChatButton() : "") +
+    "</div>";
   return '<div class="col">' + head + (S.tab === "source" ? sourcePane() : chatPane()) + "</div>";
+}
+
+/* Clears the conversation without changing deck (specs/chat.md#conversation-lifetime). */
+function newChatButton() {
+  // The draft is not part of the test: typing does not re-render, the flag would go stale.
+  const empty = !S.chat.length && !S.chatRefs.length;
+  return (
+    '<button class="ghost icon" data-act="newchat" title="Nouvelle conversation" ' +
+    'aria-label="Nouvelle conversation"' +
+    (S.chatBusy || empty ? " disabled" : "") +
+    ">" +
+    ICON_NEW_CHAT +
+    "</button>"
+  );
 }
 
 /* ---------- Source tab ---------- */
@@ -446,6 +469,15 @@ function msgHtml(m, mi) {
   const body =
     esc(m.text || "").replace(/\n/g, "<br>") +
     (m.streaming ? '<span class="cursor">▍</span>' : "");
+  const reads = (m.reads || [])
+    .map(
+      (r) =>
+        '<div class="reading">lit : ' +
+        esc(r.tool || "?") +
+        (r.summary ? " → " + esc(r.summary) : "") +
+        "</div>",
+    )
+    .join("");
   const props = (m.proposals || []).map((p, pi) => proposalHtml(p, mi, pi)).join("");
   return (
     '<div class="msg ' +
@@ -454,6 +486,7 @@ function msgHtml(m, mi) {
     who +
     refs +
     "</div>" +
+    reads +
     body +
     props +
     (m.error ? '<div class="banner">' + esc(m.error) + "</div>" : "") +
@@ -461,14 +494,26 @@ function msgHtml(m, mi) {
   );
 }
 
-const PROPOSAL_LABEL = { edit: "edit", split: "split", create: "create", move: "move" };
+const PROPOSAL_LABEL = {
+  edit: "edit",
+  split: "split",
+  create: "create",
+  move: "move",
+  bulk_edit: "bulk edit",
+};
+
+/* Once applied, the queue holds the new values; the snapshot keeps the diff honest. */
+function noteBefore(p, noteId) {
+  const snap = (p.snapshot || []).find((s) => s.note_id === noteId);
+  return snap ? { fields: snap.fields } : noteById(noteId);
+}
 
 function proposalHtml(p, mi, pi) {
   const input = p.input || {};
   const note = input.note_id ? noteById(input.note_id) : null;
   let diff = "";
   if (p.kind === "edit") {
-    diff = fieldsDiffHtml(note, input.fields || {});
+    diff = fieldsDiffHtml(noteBefore(p, input.note_id), input.fields || {});
     if (input.tags) {
       diff +=
         '<div class="muted small">tags → ' + esc((input.tags || []).join(" ")) + "</div>";
@@ -504,7 +549,28 @@ function proposalHtml(p, mi, pi) {
       '</div><div class="after">' +
       esc(input.deck || "?") +
       "</div></div>";
+  } else if (p.kind === "bulk_edit") {
+    diff = bulkTableHtml(p);
   }
+  const canUndo = p.applied && p.snapshot && p.snapshot.length;
+  const disabled = S.busy ? " disabled" : "";
+  const at = ' data-mi="' + mi + '" data-pi="' + pi + '"';
+  let applyLabel = "Appliquer";
+  if (p.kind === "bulk_edit") {
+    applyLabel = (p.appliedIds || []).length ? "Reprendre" : "Appliquer tout";
+  }
+  const head = p.applied
+    ? '<span class="applied-mark">appliqué ✓</span>' +
+      (canUndo
+        ? '<button class="revert" data-act="revert"' + at + disabled + ">Annuler</button>"
+        : "")
+    : (p.reverted ? '<span class="muted small">annulé · </span>' : "") +
+      '<button class="primary" data-act="apply"' +
+      at +
+      disabled +
+      ">" +
+      applyLabel +
+      "</button>";
   return (
     '<div class="proposal' +
     (p.applied ? " applied" : "") +
@@ -514,15 +580,7 @@ function proposalHtml(p, mi, pi) {
     "</span>" +
     (input.note_id ? '<span class="tag">' + short(input.note_id) + "</span>" : "") +
     '<span class="grow"></span>' +
-    (p.applied
-      ? '<span class="applied-mark">appliqué ✓</span>'
-      : '<button class="primary" data-act="apply" data-mi="' +
-        mi +
-        '" data-pi="' +
-        pi +
-        '"' +
-        (S.busy ? " disabled" : "") +
-        ">Appliquer</button>") +
+    head +
     "</div>" +
     (input.rationale ? '<div class="rationale">' + nl2br(input.rationale) + "</div>" : "") +
     '<div class="diff">' +
@@ -530,6 +588,50 @@ function proposalHtml(p, mi, pi) {
     "</div>" +
     (p.error ? '<div class="banner">' + esc(p.error) + "</div>" : "") +
     "</div>"
+  );
+}
+
+/* One row per note of a bulk edit: id, then each changed field as before → after, plain text. */
+function bulkTableHtml(p) {
+  const edits = (p.input || {}).edits || [];
+  const done = p.appliedIds || [];
+  const rows = edits
+    .map((e) => {
+      const base = noteBefore(p, e.note_id);
+      const cur = (base && base.fields) || {};
+      const fields = e.fields || {};
+      const cells = Object.keys(fields)
+        .map(
+          (name) =>
+            '<div class="field-name">' +
+            esc(name) +
+            '</div><div class="before">' +
+            esc(fold(plainText(cur[name] || ""), 160)) +
+            '</div><div class="after">' +
+            esc(fold(plainText(fields[name]), 160)) +
+            "</div>",
+        )
+        .join("");
+      const isDone = !p.applied && done.indexOf(e.note_id) >= 0;
+      return (
+        "<tr" +
+        (isDone ? ' class="done"' : "") +
+        '><td class="mono">' +
+        short(e.note_id) +
+        (isDone ? " ✓" : "") +
+        "</td><td>" +
+        cells +
+        "</td></tr>"
+      );
+    })
+    .join("");
+  return (
+    '<div class="muted small">' +
+    edits.length +
+    " note(s)</div>" +
+    '<table class="bulk"><tbody>' +
+    rows +
+    "</tbody></table>"
   );
 }
 

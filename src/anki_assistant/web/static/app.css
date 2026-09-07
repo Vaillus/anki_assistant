@@ -325,6 +325,10 @@ a { color: var(--accent); }
 .tabs button { border-radius: 6px 6px 0 0; }
 .tabs button.on { background: var(--accentbg); color: var(--accent); border-color: var(--accent); }
 
+/* icon-only button, e.g. « nouvelle conversation » in the column-3 header */
+button.icon { display: inline-flex; align-items: center; padding: 4px 6px; }
+button.ghost.icon:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+
 .pane { padding: 12px; overflow: auto; flex: 1; }
 
 /* ---------- source tab ---------- */
@@ -388,6 +392,13 @@ a { color: var(--accent); }
 .diff .after { background: var(--diffokbg); border-left: 3px solid var(--okline); padding: 4px 8px; border-radius: 0 4px 4px 0; margin-top: 4px; }
 .diff details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 6px; }
 .applied-mark { color: var(--ok); font-size: 13px; font-weight: 600; }
+.proposal .revert { font-size: 12px; padding: 2px 8px; margin-left: 6px; }
+.reading { font-size: 12px; color: var(--muted); font-style: italic; margin: 2px 0; }
+.bulk { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.bulk td { vertical-align: top; padding: 4px 6px; border-top: 1px solid var(--line); }
+.bulk td.mono { font-family: var(--mono); white-space: nowrap; color: var(--muted); }
+.bulk tr.done td { opacity: .6; }
+.bulk .before, .bulk .after { margin-top: 2px; }
 
 /* ---------- dialogs ---------- */
 

@@ -30,12 +30,14 @@ Column 1 shows by default only decks with `flagged_total > 0`, indented by depth
   "flagged_cards": [{ "card_id": 1732375559264, "ord": 1, "flag_color": "orange" }],
   "fields": { "Text": "<raw anki html>", "Back Extra": "<raw>" },
   "fields_html": { "Text": "<display html>", "Back Extra": "…" },
-  "reason": "For a given sensor ?" }
+  "reason": "For a given sensor ?",
+  "anchors": [{ "source_id": "r9wt4n", "kind": "obsidian", "target": "maths/différentiabilité", "status": "valid" }] }
 ```
 
 - `fields` is what the user edits and what goes back to Anki. `fields_html` is display-only (see [Rendering](#rendering)).
 - `flagged_cards` — the cards of the note that carry a flag, sorted by `ord` (Anki's card ordinal, 0-based). For a Cloze note, card `ord` is the card that hides cloze `c{ord+1}`. Empty when the note is not flagged. This is what lets the UI show *which* card was flagged and replay its question side (see [Question state](#question-state)).
 - `reason` — plain text of `Back Extra` if the model has that field and the note is flagged, else `""`. The UI shows it in an orange callout at the top of the note, above the fields, labelled « raison du flag ». The `Back Extra` field itself is still shown among the fields.
+- `anchors` — the sources the note is anchored to ([sources.md](./sources.md#anchors)), in order, `[]` when none. `status` is `"valid"` or `"dangling"` (source not in the deck's effective corpus). Shown as one chip « ⚓ différentiabilité » per anchor under the fields, plus « ⚓ ancrer… » to add one.
 - Queue order: flagged notes first, then unflagged; within each group by `note_id` ascending (creation order). Column 2 shows flagged only by default; a toggle « voir toutes » shows the whole deck, unflagged notes at 55% opacity.
 - A deck query returns notes of the deck **and its sub-decks** (Anki's `deck:"X"` semantics). `deck` on each note says where it actually lives.
 
@@ -58,7 +60,8 @@ Rules:
 - Clearing a flag = `setSpecificValueOfCard(card, ["flags"], [0])` for **every card of the note**.
 - **Splitter** default: the original note is kept and becomes the first fragment (its fields edited); the other fragments are new notes. This keeps the original's scheduling history. The split dialog offers « supprimer l'original » as an explicit checkbox instead. New notes: same deck as the original, same tags, model defaults to the original's model (the dialog can pick another model from `modelNames`).
 - **Créer** opens the same note editor as split fragments: model picker defaulting to the original's, fields from `modelFieldNames`, tags prefilled from the original. The new note goes in the **original note's own deck** (which may be a sub-deck of the selected deck), not the selected deck.
-- **Déplacer** offers the full deck list (`deckNames`) in a searchable select, current deck preselected.
+- **Déplacer** offers the full deck list (`deckNames`) in a searchable select, current deck preselected. Each anchor is kept if its source is in the destination's effective corpus, removed otherwise; the dialog says which.
+- **Anchors** follow the note ([sources.md](./sources.md#anchors)): split fragments inherit the original's anchors; **Créer** shows an anchor picker defaulting to the original's; **Supprimer** leaves the anchors to the orphan cleanup.
 - **Supprimer** and « supprimer l'original » in split require a confirm click. Nothing else does.
 - Clearing the reason: when a decision resolves a note that has a `reason`, the edit/split dialogs prefill `Back Extra` unchanged but show a « vider Back Extra » toggle, on by default. **Garder** clears nothing (the flag was a false alarm, the note is fine as is).
 - After any decision the client re-fetches the deck's notes and the deck counts (`/api/decks`), then selects the next flagged note in the visible list (or nothing if the queue is empty, showing « Rien à revoir ici »).
@@ -95,14 +98,16 @@ All under `/api`. Errors from AnkiConnect surface as HTTP 502 `{ "detail": "<mes
 | `GET /api/notes?deck=` | — | `{ deck, total, flagged, notes: Note[] }` |
 | `GET /api/notes/{id}` | — | `Note` |
 | `POST /api/notes/{id}/keep` | — | `Note` (flags cleared) |
-| `PATCH /api/notes/{id}` | `{ fields?: {…}, tags?: [...], unflag?: true }` | `Note` |
+| `PATCH /api/notes/{id}` | `{ fields?: {…}, tags?: [...], unflag?: true, reflag?: [card_id] }` | `Note` |
 | `POST /api/notes/{id}/split` | `{ original: { fields, tags? } \| null, new_notes: [{ model?, fields, tags? }] }` | `{ original: Note \| null, created: Note[] }` |
-| `POST /api/notes` | `{ deck, model, fields, tags? }` | `Note` |
+| `POST /api/notes` | `{ deck, model, fields, tags?, source_ids? }` | `Note` (anchored to `source_ids` when given) |
 | `POST /api/notes/{id}/move` | `{ deck }` | `Note` |
 | `DELETE /api/notes/{id}` | — | `204` |
 | `GET /api/models` | — | `{ "Cloze": ["Text", "Back Extra"], "Basic": ["Front", "Back"], … }` |
 
-`original: null` in split deletes the original **after** the new notes were created successfully. `PATCH` with `unflag` omitted defaults to `true`.
+Anchors are read and written through `SourceStore` by the routes: `list_notes` / `get_note` attach `anchors`; `split` copies the original's anchors onto the created notes; `move` re-checks each against the destination corpus; `POST /api/notes` writes `source_ids`.
+
+`original: null` in split deletes the original **after** the new notes were created successfully. `PATCH` with `unflag` omitted defaults to `true`. `reflag` puts a flag back on the listed cards (used by the chat's undo, [chat.md](./chat.md#undo)); the colour is red, since colours carry no meaning here.
 
 ## Frontend
 
@@ -128,10 +133,12 @@ Pure functions over `AnkiClient`, no FastAPI imports, so they can be unit-tested
 
 ```python
 def list_decks(client, store) -> list[DeckSummary]
-def list_notes(client, deck) -> DeckNotes
-def get_note(client, note_id) -> NoteView
+def list_notes(client, store, deck) -> DeckNotes                # store: anchors
+def get_note(client, store, note_id) -> NoteView
 def keep(client, note_id) -> NoteView
-def edit(client, note_id, fields=None, tags=None, unflag=True) -> NoteView
+def get_notes(client, note_ids) -> list[NoteView]        # batched, unknown ids dropped
+def search_notes(client, query, limit=50) -> list[NoteView]
+def edit(client, note_id, fields=None, tags=None, unflag=True, reflag=None) -> NoteView
 def split(client, note_id, original, new_notes) -> SplitResult
 def create(client, deck, model, fields, tags) -> NoteView
 def move(client, note_id, deck) -> NoteView

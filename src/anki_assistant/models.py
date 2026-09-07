@@ -113,3 +113,14 @@ class Card:
 
     def plain_answer(self) -> str:
         return strip_html(self.answer)
+
+
+@dataclass
+class NoteType:
+    """A note type (Anki "model"): its field names, card templates and stylesheet."""
+
+    name: str
+    fields: list[str]
+    #: card name -> {"Front": html, "Back": html}
+    templates: dict[str, dict[str, str]]
+    css: str

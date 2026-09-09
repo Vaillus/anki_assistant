@@ -1,5 +1,6 @@
-/* Full re-render of the page from S. Same approach as the prototype: one draw()
-   rebuilding #app, plus a narrower refreshChatLog() used while a reply streams in. */
+/* Full re-render of the three columns from S. Same approach as the prototype: one draw()
+   rebuilding #app; the workspace overlay (workspace.js) is appended when S.ws is set, and a
+   narrower refreshChatLog() is used while a reply streams in. */
 
 "use strict";
 
@@ -10,7 +11,7 @@ function draw() {
   if (!root) return;
   const scroll = captureScroll(root);
   root.innerHTML =
-    '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>";
+    '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>" + wsOverlay();
   restoreScroll(root, scroll);
   if (S.refocus) {
     const el = root.querySelector('[data-focus="' + S.refocus + '"]');
@@ -118,6 +119,11 @@ function queueColumn() {
         (S.onlyFlagged ? "voir toutes" : "flaguées seules") +
         "</button>"
       : "") +
+    (S.undoAvailable
+      ? '<button class="ghost small" data-act="undo" title="remettre la dernière validation en place"' +
+        (S.busy ? " disabled" : "") +
+        ">Annuler la dernière validation</button>"
+      : "") +
     "</div>";
 
   let body;
@@ -166,14 +172,18 @@ function noteCard(n) {
     " carte(s)" +
     ((n.tags || []).length ? " · " + esc((n.tags || []).join(" ")) : "") +
     "</span><span class=\"grow\"></span>" +
-    '<button class="ghost" data-act="ref" data-note="' +
-    n.note_id +
-    '" title="ajouter la note au contexte du chat">→ chat</button>' +
+    (n.flagged
+      ? '<button class="ghost" data-act="keep" data-note="' +
+        n.note_id +
+        '" title="lever le flag sans rien changer (g)"' +
+        (S.busy ? " disabled" : "") +
+        ">garder</button>"
+      : "") +
     "</div>" +
     reasonHtml(n) +
     fieldsHtml(n) +
     revealHtml(n) +
-    (sel ? actionsHtml(n) : "") +
+    '<div class="open-hint muted small">cliquer ou Entrée : ouvrir l\'espace de travail</div>' +
     "</div>"
   );
 }
@@ -233,65 +243,11 @@ function fieldsHtml(n) {
     .join("");
 }
 
-function actionsHtml(n) {
-  const dis = S.busy ? " disabled" : "";
-  return (
-    '<div class="actions">' +
-    ACTIONS.map(
-      (a) =>
-        '<button class="' +
-        a.cls +
-        '" data-act="decision" data-decision="' +
-        a.key +
-        '" data-note="' +
-        n.note_id +
-        '"' +
-        dis +
-        ">" +
-        a.label +
-        "</button>",
-    ).join("") +
-    (S.busy ? '<span class="muted small">…</span>' : "") +
-    "</div>"
-  );
-}
-
-/* ---------------- column 3 — Source / Chat ---------------- */
-
-/* compose glyph for « nouvelle conversation » — drawn inline, this app has no icon font */
-const ICON_NEW_CHAT =
-  '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" ' +
-  'stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">' +
-  '<path d="M13 8.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4.5"/>' +
-  '<path d="M11.3 2.2l2.5 2.5-5.3 5.3-3.1.6.6-3.1z"/></svg>';
+/* ---------------- column 3 — Source ---------------- */
 
 function rightColumn() {
-  const head =
-    '<div class="col-head"><div class="tabs">' +
-    '<button class="' +
-    (S.tab === "source" ? "on" : "") +
-    '" data-act="tab" data-tab="source">Source</button>' +
-    '<button class="' +
-    (S.tab === "chat" ? "on" : "") +
-    '" data-act="tab" data-tab="chat">Chat</button>' +
-    "</div>" +
-    (S.tab === "chat" ? newChatButton() : "") +
-    "</div>";
-  return '<div class="col">' + head + (S.tab === "source" ? sourcePane() : chatPane()) + "</div>";
-}
-
-/* Clears the conversation without changing deck (specs/chat.md#conversation-lifetime). */
-function newChatButton() {
-  // The draft is not part of the test: typing does not re-render, the flag would go stale.
-  const empty = !S.chat.length && !S.chatRefs.length;
-  return (
-    '<button class="ghost icon" data-act="newchat" title="Nouvelle conversation" ' +
-    'aria-label="Nouvelle conversation"' +
-    (S.chatBusy || empty ? " disabled" : "") +
-    ">" +
-    ICON_NEW_CHAT +
-    "</button>"
-  );
+  const head = '<div class="col-head"><h2>Source</h2></div>';
+  return '<div class="col">' + head + sourcePane() + "</div>";
 }
 
 /* ---------- Source tab ---------- */
@@ -404,391 +360,4 @@ function sourceForm() {
     ">Enregistrer</button>" +
     "</div></div>"
   );
-}
-
-/* ---------- Chat tab ---------- */
-
-function chatPane() {
-  const configured = !S.chatStatus || S.chatStatus.configured !== false;
-  const sel = selectedNote();
-  if (sel) ensureAnchors(sel.note_id);
-  const chips =
-    (sel ? '<span class="chip">note ' + short(sel.note_id) + " (sélection)</span>" : "") +
-    S.chatRefs
-      .filter((id) => !sel || id !== sel.note_id)
-      .map(
-        (id) =>
-          '<span class="chip">' +
-          short(id) +
-          ' <b data-act="unref" data-note="' +
-          id +
-          '">×</b></span>',
-      )
-      .join("") +
-    sourceChipsHtml(sel);
-  const box = configured
-    ? '<div class="chips">' +
-      chips +
-      "</div>" +
-      '<textarea data-input="chat" data-focus="chat" placeholder="Demande une reformulation, un split, une vérification… (⌘/Ctrl+Entrée pour envoyer)"' +
-      (S.chatBusy ? " disabled" : "") +
-      ">" +
-      esc(S.chatDraft) +
-      "</textarea>" +
-      '<div class="row" style="justify-content:flex-end;margin-top:4px">' +
-      (S.chatStatus && S.chatStatus.model
-        ? '<span class="tag grow">' + esc(S.chatStatus.model) + "</span>"
-        : '<span class="grow"></span>') +
-      '<button class="primary" data-act="send"' +
-      (S.chatBusy ? " disabled" : "") +
-      ">Envoyer</button></div>"
-    : '<div class="banner">Ajoute ANTHROPIC_API_KEY dans .env puis relance anki-web</div>' +
-      '<textarea disabled placeholder="chat indisponible"></textarea>';
-  return (
-    '<div class="chat">' +
-    '<div class="log" id="chat-log" data-scroll="chat">' +
-    chatLogHtml() +
-    "</div>" +
-    '<div class="box">' +
-    box +
-    "</div></div>"
-  );
-}
-
-/* How source text enters the context (specs/chat.md#how-source-text-enters-context): attached
-   sources as chips with ×, the selected note's anchors as « ⚓ joindre … » buttons, the rest of
-   the corpus under a « + source » menu. Per source, never the whole corpus at once. */
-function sourceChipsHtml(sel) {
-  const sources = ((S.corpus || {}).sources) || [];
-  if (!sources.length) return "";
-  const attached = S.chatSources.filter((id) => sourceById(id));
-  const anchored = sel ? anchorsOf(sel.note_id) : [];
-  const attachedHtml = attached
-    .map(
-      (id) =>
-        '<span class="chip src" title="source jointe au contexte">' +
-        esc(sourceById(id).target) +
-        ' <b data-act="detach-src" data-src="' +
-        esc(id) +
-        '">×</b></span>',
-    )
-    .join("");
-  const anchorHtml = anchored
-    .filter((id) => sourceById(id) && attached.indexOf(id) < 0)
-    .map(
-      (id) =>
-        '<button class="chip anchor" data-act="attach-src" data-src="' +
-        esc(id) +
-        '" title="ancrée à cette note — joindre son texte au contexte">⚓ joindre ' +
-        esc(sourceById(id).target) +
-        "</button>",
-    )
-    .join("");
-  const rest = sources.filter(
-    (s) => attached.indexOf(s.id) < 0 && anchored.indexOf(s.id) < 0,
-  );
-  const menu = rest.length
-    ? '<select class="chip menu" data-input="attach-src-menu" title="joindre une source du corpus">' +
-      '<option value="">+ source</option>' +
-      rest
-        .map(
-          (s) =>
-            '<option value="' +
-            esc(s.id) +
-            '">' +
-            esc(s.target) +
-            (s.exists === false ? " ⚠" : "") +
-            "</option>",
-        )
-        .join("") +
-      "</select>"
-    : "";
-  return attachedHtml + anchorHtml + menu;
-}
-
-function chatLogHtml() {
-  if (!S.chat.length) {
-    return (
-      '<div class="empty">Sélectionne une note, puis pose ta question.<br>' +
-      "« → chat » sur une note l'ajoute au contexte.</div>"
-    );
-  }
-  return S.chat.map(msgHtml).join("");
-}
-
-function msgHtml(m, mi) {
-  const who = m.who === "user" ? "toi" : "claude";
-  const refs = (m.refs || []).length ? " · " + m.refs.map(short).join(" ") : "";
-  const body =
-    esc(m.text || "").replace(/\n/g, "<br>") +
-    (m.streaming ? '<span class="cursor">▍</span>' : "");
-  const reads = (m.reads || [])
-    .map(
-      (r) =>
-        '<div class="reading">lit : ' +
-        esc(r.tool || "?") +
-        (r.summary ? " → " + esc(r.summary) : "") +
-        "</div>",
-    )
-    .join("");
-  const props = (m.proposals || []).map((p, pi) => proposalHtml(p, mi, pi)).join("");
-  return (
-    '<div class="msg ' +
-    (m.who === "user" ? "user" : "assistant") +
-    '"><div class="who">' +
-    who +
-    refs +
-    "</div>" +
-    reads +
-    body +
-    props +
-    (m.error ? '<div class="banner">' + esc(m.error) + "</div>" : "") +
-    "</div>"
-  );
-}
-
-const PROPOSAL_LABEL = {
-  edit: "edit",
-  split: "split",
-  create: "create",
-  move: "move",
-  bulk_edit: "bulk edit",
-  create_source: "nouvelle source",
-  edit_source: "source",
-};
-
-/* Once applied, the queue holds the new values; the snapshot keeps the diff honest. */
-function noteBefore(p, noteId) {
-  const snap = (p.snapshot || []).find((s) => s.note_id === noteId);
-  return snap ? { fields: snap.fields } : noteById(noteId);
-}
-
-function proposalHtml(p, mi, pi) {
-  const input = p.input || {};
-  const note = input.note_id ? noteById(input.note_id) : null;
-  let diff = "";
-  if (p.kind === "edit") {
-    diff = fieldsDiffHtml(noteBefore(p, input.note_id), input.fields || {});
-    if (input.tags) {
-      diff +=
-        '<div class="muted small">tags → ' + esc((input.tags || []).join(" ")) + "</div>";
-    }
-  } else if (p.kind === "split") {
-    diff =
-      (input.original === null
-        ? '<div class="muted small">l\'original est supprimé</div>'
-        : fieldsDiffHtml(note, (input.original && input.original.fields) || {})) +
-      (input.new_notes || [])
-        .map(
-          (nn, i) =>
-            '<div class="diff"><div class="muted small">nouvelle note ' +
-            (i + 1) +
-            (nn.model ? " · " + esc(nn.model) : "") +
-            "</div>" +
-            newFieldsHtml(nn.fields || {}) +
-            "</div>",
-        )
-        .join("");
-  } else if (p.kind === "create") {
-    diff =
-      '<div class="muted small">nouvelle note' +
-      (input.model ? " · " + esc(input.model) : "") +
-      " dans " +
-      esc(S.deck || "") +
-      "</div>" +
-      newFieldsHtml(input.fields || {});
-  } else if (p.kind === "move") {
-    diff =
-      '<div class="diff"><div class="before">' +
-      esc((note && note.deck) || "?") +
-      '</div><div class="after">' +
-      esc(input.deck || "?") +
-      "</div></div>";
-  } else if (p.kind === "bulk_edit") {
-    diff = bulkTableHtml(p);
-  } else if (p.kind === "create_source") {
-    // The name stays editable until applied (specs/chat.md#proposal-tools); the content is
-    // the Markdown as Claude wrote it.
-    const anchors = input.anchor_note_ids || [];
-    diff =
-      '<div class="muted small">note Obsidian à créer dans le vault, ajoutée au corpus de ' +
-      esc(S.deck || "") +
-      "</div>" +
-      '<input class="mono src-name" data-input="psrc-name" data-mi="' +
-      mi +
-      '" data-pi="' +
-      pi +
-      '" value="' +
-      esc(p.name != null ? p.name : input.name || "") +
-      '" placeholder="dossier/nom de la note"' +
-      (p.applied ? " disabled" : "") +
-      ">" +
-      (anchors.length
-        ? '<div class="muted small">ancre : ' + anchors.map(short).join(" ") + "</div>"
-        : "") +
-      '<pre class="excerpt">' +
-      esc(input.content || "") +
-      "</pre>";
-  } else if (p.kind === "edit_source") {
-    const src = sourceById(input.source_id);
-    diff =
-      '<div class="muted small">' +
-      (src ? esc(src.target) : "source " + esc(input.source_id || "?")) +
-      "</div>" +
-      '<div class="before"><pre class="excerpt">' +
-      esc(input.old || "") +
-      '</pre></div><div class="after"><pre class="excerpt">' +
-      esc(input.new || "") +
-      "</pre></div>";
-  }
-  const canUndo =
-    p.applied && ((p.snapshot && p.snapshot.length) || p.kind === "edit_source");
-  const disabled = S.busy ? " disabled" : "";
-  const at = ' data-mi="' + mi + '" data-pi="' + pi + '"';
-  let applyLabel = "Appliquer";
-  if (p.kind === "bulk_edit") {
-    applyLabel = (p.appliedIds || []).length ? "Reprendre" : "Appliquer tout";
-  }
-  const head = p.applied
-    ? '<span class="applied-mark">appliqué ✓</span>' +
-      (canUndo
-        ? '<button class="revert" data-act="revert"' + at + disabled + ">Annuler</button>"
-        : "")
-    : (p.reverted ? '<span class="muted small">annulé · </span>' : "") +
-      '<button class="primary" data-act="apply"' +
-      at +
-      disabled +
-      ">" +
-      applyLabel +
-      "</button>";
-  return (
-    '<div class="proposal' +
-    (p.applied ? " applied" : "") +
-    '">' +
-    '<div class="proposal-head"><span class="pkind">' +
-    esc(PROPOSAL_LABEL[p.kind] || p.kind || "?") +
-    "</span>" +
-    (input.note_id ? '<span class="tag">' + short(input.note_id) + "</span>" : "") +
-    '<span class="grow"></span>' +
-    head +
-    "</div>" +
-    (input.rationale ? '<div class="rationale">' + nl2br(input.rationale) + "</div>" : "") +
-    '<div class="diff">' +
-    diff +
-    "</div>" +
-    (p.error ? '<div class="banner">' + esc(p.error) + "</div>" : "") +
-    "</div>"
-  );
-}
-
-/* One row per note of a bulk edit: id, then each changed field as before → after, plain text. */
-function bulkTableHtml(p) {
-  const edits = (p.input || {}).edits || [];
-  const done = p.appliedIds || [];
-  const rows = edits
-    .map((e) => {
-      const base = noteBefore(p, e.note_id);
-      const cur = (base && base.fields) || {};
-      const fields = e.fields || {};
-      const cells = Object.keys(fields)
-        .map(
-          (name) =>
-            '<div class="field-name">' +
-            esc(name) +
-            '</div><div class="before">' +
-            esc(fold(plainText(cur[name] || ""), 160)) +
-            '</div><div class="after">' +
-            esc(fold(plainText(fields[name]), 160)) +
-            "</div>",
-        )
-        .join("");
-      const isDone = !p.applied && done.indexOf(e.note_id) >= 0;
-      return (
-        "<tr" +
-        (isDone ? ' class="done"' : "") +
-        '><td class="mono">' +
-        short(e.note_id) +
-        (isDone ? " ✓" : "") +
-        "</td><td>" +
-        cells +
-        "</td></tr>"
-      );
-    })
-    .join("");
-  return (
-    '<div class="muted small">' +
-    edits.length +
-    " note(s)</div>" +
-    '<table class="bulk"><tbody>' +
-    rows +
-    "</tbody></table>"
-  );
-}
-
-function newFieldsHtml(fields) {
-  return Object.keys(fields)
-    .map(
-      (name) =>
-        '<div class="field-name">' +
-        esc(name) +
-        '</div><div class="after">' +
-        renderField(fields[name]) +
-        "</div>",
-    )
-    .join("");
-}
-
-function fieldsDiffHtml(note, newFields) {
-  const cur = (note && note.fields) || {};
-  const names = Object.keys(cur).concat(
-    Object.keys(newFields).filter((n) => !(n in cur)),
-  );
-  const changed = [];
-  const same = [];
-  names.forEach((name) => {
-    if (name in newFields && String(newFields[name]) !== String(cur[name] || "")) {
-      changed.push(name);
-    } else {
-      same.push(name);
-    }
-  });
-  let out = changed
-    .map(
-      (name) =>
-        '<div class="field-name">' +
-        esc(name) +
-        '</div><div class="before">' +
-        renderField(cur[name] || "") +
-        '</div><div class="after">' +
-        renderField(newFields[name]) +
-        "</div>",
-    )
-    .join("");
-  if (!changed.length) out = '<div class="muted small">aucun champ modifié</div>';
-  if (same.length) {
-    out +=
-      "<details><summary>" +
-      same.length +
-      " champ(s) inchangé(s)</summary>" +
-      same
-        .map(
-          (name) =>
-            '<div class="field-name">' +
-            esc(name) +
-            '</div><div class="field-val small">' +
-            renderField(cur[name] || "") +
-            "</div>",
-        )
-        .join("") +
-      "</details>";
-  }
-  return out;
-}
-
-/* Narrow refresh used while a reply streams in, so the textarea keeps focus. */
-function refreshChatLog() {
-  const log = document.getElementById("chat-log");
-  if (!log) return;
-  log.innerHTML = chatLogHtml();
-  log.scrollTop = log.scrollHeight;
 }

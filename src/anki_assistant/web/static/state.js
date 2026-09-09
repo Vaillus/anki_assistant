@@ -66,35 +66,20 @@ const S = {
   revealed: {}, // note id -> true once its flagged clozes are shown (specs/review.md#question-state)
   busy: false,
   error: "",
-  // column 3
-  tab: "source",
+  // column 3 (Source)
   corpus: null, // { deck, inherited_from, sources: [] }
   corpusLoading: false,
   srcExpanded: {}, // index -> bool
   srcForm: null, // { kind, target, pages, note, copyInherited } while the add form is open
-  // chat
-  chat: [], // [{ who: "user"|"assistant", text, refs?: [], proposals?: [], streaming?: bool }]
-  chatRefs: [], // note ids attached with « → chat »
-  chatSources: [], // source ids attached to the conversation (specs/chat.md#context)
-  noteAnchors: {}, // note id -> [source id] once fetched, null while loading
-  chatDraft: "",
+  // workspace (specs/workspace.md) — null when closed; see workspace.js for the shape
+  ws: null,
+  undoAvailable: false, // « Annuler la dernière validation » (GET /api/workspace/undo)
   chatStatus: null, // { configured, model }
-  chatBusy: false,
   // misc
   models: null, // { modelName: [fieldNames] }
   refocus: null,
   theme: storedTheme(), // "light" | "dark" once chosen; null = follow the OS
 };
-
-const ACTIONS = [
-  { key: "keep", label: "Garder", cls: "primary" },
-  { key: "edit", label: "Modifier", cls: "" },
-  { key: "split", label: "Splitter", cls: "" },
-  { key: "create", label: "Créer", cls: "" },
-  { key: "move", label: "Déplacer", cls: "" },
-  { key: "delete", label: "Supprimer", cls: "danger" },
-  { key: "skip", label: "Passer", cls: "" },
-];
 
 const REASON_FIELD = "Back Extra";
 
@@ -220,11 +205,6 @@ function selectedNote() {
 
 function sourceById(id) {
   return (((S.corpus || {}).sources) || []).find((s) => s.id === id) || null;
-}
-
-/* Anchors already fetched for a note; [] while unknown or loading (see ensureAnchors). */
-function anchorsOf(noteId) {
-  return (noteId && S.noteAnchors[noteId]) || [];
 }
 
 function visibleDecks() {

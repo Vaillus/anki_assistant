@@ -30,14 +30,13 @@ Column 1 shows by default only decks with `flagged_total > 0`, indented by depth
   "flagged_cards": [{ "card_id": 1732375559264, "ord": 1, "flag_color": "orange" }],
   "fields": { "Text": "<raw anki html>", "Back Extra": "<raw>" },
   "fields_html": { "Text": "<display html>", "Back Extra": "…" },
-  "reason": "For a given sensor ?",
-  "anchors": [{ "source_id": "r9wt4n", "kind": "obsidian", "target": "maths/différentiabilité", "status": "valid" }] }
+  "reason": "For a given sensor ?" }
 ```
 
 - `fields` is what the user edits and what goes back to Anki. `fields_html` is display-only (see [Rendering](#rendering)).
 - `flagged_cards` — the cards of the note that carry a flag, sorted by `ord` (Anki's card ordinal, 0-based). For a Cloze note, card `ord` is the card that hides cloze `c{ord+1}`. Empty when the note is not flagged. Used by [Question state](#question-state).
 - `reason` — plain text of `Back Extra` if the model has that field and the note is flagged, else `""`. The UI shows it in an orange callout at the top of the note, above the fields, labelled « raison du flag ». The `Back Extra` field itself is still shown among the fields.
-- `anchors` — the sources the note is anchored to ([sources.md](./sources.md#anchors)), in order, `[]` when none. `status` is `"valid"` or `"dangling"` (source not in the deck's effective corpus). Shown as one chip « ⚓ différentiabilité » per anchor under the fields, plus « ⚓ ancrer… » to add one.
+- Anchors are not part of the note payload: the workspace fetches them per card with `GET /api/sources/anchors?note_id=` ([sources.md](./sources.md#anchors)).
 - Queue order: flagged notes first, then unflagged; within each group by `note_id` ascending (creation order). Column 2 shows flagged only by default; a toggle « voir toutes » shows the whole deck, unflagged notes at 55% opacity.
 - A deck query returns notes of the deck **and its sub-decks** (Anki's `deck:"X"` semantics). `deck` on each note says where it actually lives.
 
@@ -55,7 +54,7 @@ Rules:
 
 - Clearing a flag = `setSpecificValueOfCard(card, ["flags"], [0])` for **every card of the note**.
 - **Garder** clears nothing but the flag: the flag was a false alarm, the note is fine as is, its `Back Extra` stays. No confirmation.
-- After **Garder** and after a workspace closes (validated or discarded), the client re-fetches the deck's notes and the deck counts (`/api/decks`), then selects the next flagged note in the visible list (or nothing if the queue is empty, showing « Rien à revoir ici »).
+- After **Garder** and after a workspace validates, the client re-fetches the deck's notes and the deck counts (`/api/decks`), then selects the next flagged note in the visible list (or nothing if the queue is empty, showing « Rien à revoir ici »). A discarded workspace re-fetches too but leaves the selection where it was.
 - The queue header shows « Annuler la dernière validation » while the server holds one ([workspace.md § Undo](./workspace.md#undo)).
 
 The decisions themselves — what a split, a move or a delete writes, how anchors follow the note — are specified in [workspace.md § Validation](./workspace.md#validation); `review.py` keeps the functions that perform them (`edit`, `split`, `create`, `move`, `delete`), used by `workspace.apply`, and their HTTP routes below stay available for the CLI and the tests.
@@ -100,7 +99,7 @@ All under `/api`. Errors from AnkiConnect surface as HTTP 502 `{ "detail": "<mes
 | `DELETE /api/notes/{id}` | — | `204` |
 | `GET /api/models` | — | `{ "Cloze": ["Text", "Back Extra"], "Basic": ["Front", "Back"], … }` |
 
-Anchors are read and written through `SourceStore` by the routes: `list_notes` / `get_note` attach `anchors`; `split` copies the original's anchors onto the created notes; `move` re-checks each against the destination corpus; `POST /api/notes` writes `source_ids`.
+Anchors are read and written through `SourceStore` by the routes: `split` copies the original's anchors onto the created notes; `move` re-checks each against the destination corpus (`workspace.anchors_after_move`, shared with the workspace); `POST /api/notes` writes `source_ids`.
 
 `original: null` in split deletes the original **after** the new notes were created successfully. `PATCH` with `unflag` omitted defaults to `true`. `reflag` puts a flag back on the listed cards (used by the workspace's rollback and undo, [workspace.md](./workspace.md#undo)); the colour is red, since colours carry no meaning here. The workspace's own endpoints (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 
@@ -122,8 +121,8 @@ Pure functions over `AnkiClient`, no FastAPI imports, so they can be unit-tested
 
 ```python
 def list_decks(client, store) -> list[DeckSummary]
-def list_notes(client, store, deck) -> DeckNotes                # store: anchors
-def get_note(client, store, note_id) -> NoteView
+def list_notes(client, deck) -> DeckNotes
+def get_note(client, note_id) -> NoteView
 def keep(client, note_id) -> NoteView
 def get_notes(client, note_ids) -> list[NoteView]              # chat read tool, batched, unknown ids dropped
 def search_notes(client, query, limit=50) -> list[NoteView]    # chat read tool, see chat.md

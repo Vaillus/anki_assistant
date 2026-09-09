@@ -4,7 +4,7 @@
 
 ## What the app does
 
-A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged notes, the deck's sources (Obsidian notes, PDFs) side by side, and a Claude chat that knows the deck, the sources and the notes under review. Every decision is written straight into Anki through AnkiConnect.
+A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged notes, the deck's sources (Obsidian notes, PDFs) side by side, and, once a note is opened in its workspace, a Claude chat that knows the deck, the sources and the cards being worked on. Everything is written into Anki through AnkiConnect, in one validation per workspace.
 
 Hugo flags a card during a review when something is wrong with it (too vague, wrong deck, should be split, needs a sibling card…). The reason is often typed into the note's `Back Extra` field. This app is where those flags get resolved.
 

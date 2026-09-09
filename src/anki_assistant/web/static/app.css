@@ -310,26 +310,6 @@ a { color: var(--accent); }
 .note-top button { white-space: nowrap; }
 .note-top .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--line);
-}
-
-/* ---------- column 3: tabs ---------- */
-
-.tabs { display: flex; gap: 2px; flex: 1; }
-.tabs button { border-radius: 6px 6px 0 0; }
-.tabs button.on { background: var(--accentbg); color: var(--accent); border-color: var(--accent); }
-
-/* icon-only button, e.g. « nouvelle conversation » in the column-3 header */
-button.icon { display: inline-flex; align-items: center; padding: 4px 6px; }
-button.ghost.icon:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
-
 .pane { padding: 12px; overflow: auto; flex: 1; }
 
 /* ---------- source tab ---------- */
@@ -395,63 +375,6 @@ button.ghost.icon:hover:not(:disabled) { color: var(--ink); background: var(--ho
 .applied-mark { color: var(--ok); font-size: 13px; font-weight: 600; }
 .proposal .revert { font-size: 12px; padding: 2px 8px; margin-left: 6px; }
 .reading { font-size: 12px; color: var(--muted); font-style: italic; margin: 2px 0; }
-.bulk { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
-.bulk td { vertical-align: top; padding: 4px 6px; border-top: 1px solid var(--line); }
-.bulk td.mono { font-family: var(--mono); white-space: nowrap; color: var(--muted); }
-.bulk tr.done td { opacity: .6; }
-.bulk .before, .bulk .after { margin-top: 2px; }
-
-/* ---------- dialogs ---------- */
-
-dialog {
-  border: 0;
-  border-radius: 12px;
-  padding: 0;
-  width: min(900px, 94vw);
-  color: var(--ink);
-  background: var(--panel);
-  box-shadow: 0 12px 40px var(--shadow);
-}
-dialog::backdrop { background: var(--backdrop); }
-dialog .dlg-head {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-dialog .dlg-head h3 { margin: 0; font-size: 15px; }
-dialog .dlg-body { padding: 12px 16px; max-height: 68vh; overflow: auto; }
-dialog .dlg-foot {
-  padding: 10px 16px;
-  border-top: 1px solid var(--line);
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.editor { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
-.editor-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.editor.off { opacity: .45; }
-.field-edit { margin-bottom: 8px; }
-.field-edit textarea { width: 100%; min-height: 62px; font-family: var(--mono); font-size: 12px; }
-.preview {
-  margin-top: 4px;
-  padding: 6px 8px;
-  background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 14px;
-  min-height: 22px;
-}
-.tags-edit { width: 100%; font-family: var(--mono); font-size: 12px; }
-
-.deck-list { max-height: 46vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 8px; }
-.deck-list .opt { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.deck-list .opt:hover { background: var(--hover); }
-.deck-list .opt.on { background: var(--accentbg); color: var(--accent); }
-
 /* ---------- chat: source chips and source proposals (specs/chat.md) ---------- */
 
 .chip.src { background: var(--obsidianbg); color: var(--obsidianink); }
@@ -471,3 +394,74 @@ button.chip, select.chip {
 select.chip { appearance: none; -webkit-appearance: none; }
 .proposal input.src-name { width: 100%; font-family: var(--mono); font-size: 12px; margin: 4px 0; }
 .proposal .diff .excerpt { margin: 0; }
+
+/* ---------- workspace (specs/workspace.md) ---------- */
+
+.ws-backdrop { position: fixed; inset: 0; background: var(--backdrop); z-index: 20; }
+.ws {
+  position: fixed;
+  inset: 20px;
+  z-index: 21;
+  display: grid;
+  grid-template-columns: minmax(340px, 3fr) minmax(300px, 2fr);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px var(--shadow);
+  overflow: hidden;
+}
+.ws-cards { overflow: auto; padding: 0 18px 24px; border-right: 1px solid var(--line); }
+.ws-chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.ws-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 900px) {
+  .ws { grid-template-columns: 1fr; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); }
+  .ws-cards { border-right: 0; border-bottom: 1px solid var(--line); }
+}
+.ws-head { flex-wrap: wrap; }
+.ws-head b { font-family: var(--mono); font-size: 14px; }
+.ws-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ws-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 12px; background: var(--panel); }
+.ws-card.off { opacity: .55; }
+.ws-card.draft { border-style: dashed; }
+.ws-card.deleted .field-val { text-decoration: line-through; opacity: .6; }
+.ws-card.fragment { margin-left: 32px; position: relative; }
+.ws-card.fragment::before {
+  content: "";
+  position: absolute;
+  left: -20px;
+  top: -13px;
+  height: calc(50% + 13px);
+  width: 14px;
+  border-left: 2px solid var(--accentline);
+  border-bottom: 2px solid var(--accentline);
+  border-radius: 0 0 0 8px;
+}
+.ws-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; cursor: pointer; margin-bottom: 6px; min-height: 26px; }
+.ws-card-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.ws-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); flex: none; }
+.ws-dot.on { background: var(--accent); }
+.ws-versions { display: inline-flex; align-items: center; gap: 2px; }
+.ws-versions button { padding: 0 6px; }
+.ws-version { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.ws-card .field-val.editable { cursor: text; border-radius: 4px; padding: 2px 4px; margin: 0 -4px; }
+.ws-card .field-val.editable:hover { background: var(--hover); }
+.ws-edit { width: 100%; min-height: 90px; font-family: var(--mono); font-size: 12px; margin: 2px 0 6px; }
+.ws-move { height: auto; padding: 1px 6px; font-size: 12px; max-width: 160px; }
+.badge.state { background: var(--zerobg); color: var(--zeroink); font-weight: 500; }
+.badge.state.ok { background: var(--okbg); color: var(--ok); }
+.ws-pointer { font-size: 12px; color: var(--muted); margin: 4px 0; }
+button.dangerish { color: var(--danger); }
+.open-hint { margin-top: 6px; display: none; }
+.note.sel .open-hint { display: block; }
+

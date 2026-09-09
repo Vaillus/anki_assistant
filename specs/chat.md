@@ -152,7 +152,7 @@ System prompt layout and the `cache_control: ephemeral` placement: see [Prompt c
   "messages": [ { "role": "user", "content": "Cette carte est trop vague, tu proposes quoi ?" } ] }
 ```
 
-`cards` is the workspace, root first; `original_fields` is present only when the shown version is not v0. `source_ids` is optional (default: no attached sources). `flagged_count` is optional (the deck's flagged-note count, for the prompt header). `messages` is the prior conversation as plain `{role, content: string}` turns — assistant text only; prior proposals and reads are not replayed. The client summarises them into the assistant text as bracket notations: « [proposition: edit → w1] », « [proposition: split → w1 +2] », « [ajout: 6 notes] », « [version rejetée : w3 v2] », « [lecture: search_notes re:lagrang → 6 notes] », « [lecture: read_source → différentiabilité] ».
+`cards` is the workspace, root first; `original_fields` is present only when the shown version is not v0. `source_ids` is optional (default: no attached sources). `flagged_count` is optional (the deck's flagged-note count, for the prompt header). `messages` is the prior conversation as plain `{role, content: string}` turns — assistant text only; prior proposals and reads are not replayed. The client summarises them into the assistant text as bracket notations: « [proposition: edit → carte w1] », « [proposition: split → 3 cartes] », « [proposition: create_source (appliquée)] », « [ajout: 6 notes] », « [version rejetée : w3 v2] », « [lecture: search_notes re:lagrang → 6 notes] », « [lecture: read_source → différentiabilité] ».
 
 Response: `text/event-stream`, SSE events:
 

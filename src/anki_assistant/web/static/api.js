@@ -47,6 +47,12 @@ const API = {
   create: (body) => jfetch("/api/notes", jsonBody("POST", body)),
   move: (id, deck) => jfetch("/api/notes/" + id + "/move", jsonBody("POST", { deck })),
   remove: (id) => jfetch("/api/notes/" + id, { method: "DELETE" }),
+  lookup: (noteIds) => jfetch("/api/notes/lookup", jsonBody("POST", { note_ids: noteIds })),
+
+  // workspace (specs/workspace.md#api)
+  wsApply: (plan) => jfetch("/api/workspace/apply", jsonBody("POST", plan)),
+  wsUndo: () => jfetch("/api/workspace/undo", { method: "POST" }),
+  undoStatus: () => jfetch("/api/workspace/undo"),
 
   // sources — the deck goes in the query string, deck names contain "::"
   corpus: (deck) => jfetch("/api/sources/corpus?deck=" + q(deck)),

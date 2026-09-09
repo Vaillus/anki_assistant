@@ -1,5 +1,5 @@
-/* Event wiring, decisions, chat streaming, keyboard, boot.
-   Loaded last: state.js → api.js → render.js → dialogs.js → app.js. */
+/* Event wiring, queue decisions, keyboard, boot.
+   Loaded last: state.js → api.js → render.js → workspace.js → app.js. */
 
 "use strict";
 
@@ -50,7 +50,7 @@ async function loadCorpus() {
 }
 
 async function selectDeck(name) {
-  if (S.deck === name) return;
+  if (S.deck === name || S.ws) return;
   S.deck = name;
   S.notes = null;
   S.selNote = null;
@@ -59,14 +59,17 @@ async function selectDeck(name) {
   S.srcForm = null;
   S.srcExpanded = {};
   S.error = "";
-  // Changing deck resets the conversation (specs/chat.md#conversation-lifetime).
-  S.chat = [];
-  S.chatRefs = [];
-  S.chatSources = [];
-  S.noteAnchors = {};
-  S.chatDraft = "";
   draw();
   await Promise.all([loadNotes(), loadCorpus()]);
+}
+
+async function refreshUndoStatus() {
+  try {
+    const s = await API.undoStatus();
+    S.undoAvailable = !!(s && s.available);
+  } catch (e) {
+    S.undoAvailable = false;
+  }
 }
 
 /* ---------------- selection ---------------- */
@@ -99,9 +102,10 @@ function moveSelection(delta) {
   if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
 }
 
-/* ---------------- decisions ---------------- */
+/* ---------------- decisions (specs/review.md#decisions) ---------------- */
 
-/* Called after every write: re-fetch the queue and the deck counts, then move on. */
+/* Called after every write and after a workspace closes: re-fetch the queue and the deck
+   counts, then move on to the next flagged note. */
 async function afterDecision(opts) {
   const o = opts || {};
   const vis = visibleNotes();
@@ -126,16 +130,10 @@ async function afterDecision(opts) {
   draw();
 }
 
-async function applyDecision(key, noteId) {
+/* Garder: the flag was a false alarm; clear it, change nothing else. */
+async function keepNote(noteId) {
   const note = noteById(noteId);
-  if (!note || S.busy) return;
-  if (key === "skip") return moveSelection(1);
-  if (key === "edit") return openEditDialog(note);
-  if (key === "split") return openSplitDialog(note);
-  if (key === "create") return openCreateDialog(note);
-  if (key === "move") return openMoveDialog(note);
-  if (key === "delete") return openDeleteDialog(note);
-  if (key !== "keep") return;
+  if (!note || S.busy || S.ws) return;
   S.busy = true;
   S.error = "";
   draw();
@@ -225,341 +223,20 @@ const lookupVaultNotes = debounce(async (query) => {
   }
 }, 250);
 
-/* ---------------- chat ---------------- */
-
-function chatContextIds() {
-  const ids = [];
-  const sel = selectedNote();
-  if (sel) ids.push(sel.note_id);
-  S.chatRefs.forEach((id) => {
-    if (ids.indexOf(id) < 0) ids.push(id);
-  });
-  return ids;
-}
-
-/* Fetch a note's anchors once (specs/sources.md#anchors); the chips row needs them to offer
-   « ⚓ joindre … ». Called from the render, so it must be a no-op once the fetch is under way. */
-function ensureAnchors(noteId) {
-  if (!noteId || S.noteAnchors[noteId] !== undefined) return;
-  S.noteAnchors[noteId] = null;
-  API.anchors(noteId)
-    .then((a) => {
-      S.noteAnchors[noteId] = ((a && a.anchors) || []).map((x) => x.source_id);
-      draw();
-    })
-    .catch(() => {
-      S.noteAnchors[noteId] = [];
-    });
-}
-
-async function anchorsFor(noteId) {
-  if (!noteId) return [];
-  if (Array.isArray(S.noteAnchors[noteId])) return S.noteAnchors[noteId];
-  try {
-    const a = await API.anchors(noteId);
-    S.noteAnchors[noteId] = ((a && a.anchors) || []).map((x) => x.source_id);
-  } catch (e) {
-    S.noteAnchors[noteId] = [];
-  }
-  return S.noteAnchors[noteId];
-}
-
-function attachSource(id) {
-  if (!id || !sourceById(id) || S.chatSources.indexOf(id) >= 0) return;
-  S.chatSources.push(id);
-  draw();
-}
-
-function detachSource(id) {
-  S.chatSources = S.chatSources.filter((x) => x !== id);
-  draw();
-}
-
-/* Prior proposals and reads are not replayed; they are summarised into the assistant text
-   (specs/chat.md#api). */
-function historyForServer() {
-  const out = [];
-  S.chat.forEach((m) => {
-    const reads = (m.reads || [])
-      .map((r) => "[lecture: " + (r.tool || "?") + (r.summary ? " → " + r.summary : "") + "]")
-      .join(" ");
-    const summary = (m.proposals || [])
-      .map((p) => {
-        const input = p.input || {};
-        let what = p.kind || "?";
-        if (p.kind === "bulk_edit") what += " ×" + ((input.edits || []).length || 0);
-        else if (input.note_id) what += " " + short(input.note_id);
-        return "[proposition: " + what + "]";
-      })
-      .join(" ");
-    const content = [m.text || "", reads, summary].filter((x) => x && x.trim()).join("\n");
-    if (!content.trim()) return;
-    out.push({ role: m.who === "user" ? "user" : "assistant", content });
-  });
-  return out;
-}
-
-let logRefreshQueued = false;
-function scheduleLogRefresh() {
-  if (logRefreshQueued) return;
-  logRefreshQueued = true;
-  requestAnimationFrame(() => {
-    logRefreshQueued = false;
-    refreshChatLog();
-  });
-}
-
-/* Drop the conversation and start a fresh one on the same deck
-   (specs/chat.md#conversation-lifetime). */
-function newChat() {
-  if (S.chatBusy) return;
-  S.chat = [];
-  S.chatRefs = [];
-  S.chatSources = [];
-  S.chatDraft = "";
-  S.refocus = "chat";
-  draw();
-}
-
-async function sendChat() {
-  const text = String(S.chatDraft || "").trim();
-  if (!text || S.chatBusy || !S.deck) return;
-  if (S.chatStatus && S.chatStatus.configured === false) return;
-  const ids = chatContextIds();
-  const messages = historyForServer();
-  messages.push({ role: "user", content: text });
-
-  S.chat.push({ who: "user", text, refs: ids });
-  const reply = {
-    who: "assistant",
-    text: "",
-    reads: [],
-    proposals: [],
-    streaming: true,
-    error: "",
-  };
-  S.chat.push(reply);
-  S.chatDraft = "";
-  S.chatBusy = true;
-  draw();
-
-  try {
-    const payload = {
-      deck: S.deck,
-      note_ids: ids,
-      source_ids: S.chatSources.slice(),
-      flagged_count: (S.notes && S.notes.flagged) || 0,
-      messages,
-    };
-    await streamChat(payload, (name, data) => {
-      const d = data || {};
-      if (name === "text") {
-        reply.text += d.delta || "";
-        scheduleLogRefresh();
-      } else if (name === "reading") {
-        reply.reads.push({ tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
-        scheduleLogRefresh();
-      } else if (name === "proposal") {
-        reply.proposals.push({
-          id: d.id,
-          kind: d.kind,
-          input: d.input || {},
-          // create_source: the id the server announced to Claude, reused when applying
-          sourceId: d.source_id || null,
-          name: (d.input || {}).name || "",
-          applied: false,
-          error: "",
-        });
-        scheduleLogRefresh();
-      } else if (name === "error") {
-        reply.error = d.detail || "erreur";
-        scheduleLogRefresh();
-      }
-    });
-  } catch (e) {
-    reply.error = e.message;
-  }
-  reply.streaming = false;
-  S.chatBusy = false;
-  S.refocus = "chat";
-  draw();
-}
-
-/* What undo needs to put a note back (specs/chat.md#undo): raw fields, tags, flagged cards.
-   Read from the queue when the note is in it, fetched otherwise. */
-async function snapshotOf(noteId) {
-  const n = noteById(noteId) || (await API.note(noteId));
-  return {
-    note_id: noteId,
-    fields: Object.assign({}, n.fields || {}),
-    tags: (n.tags || []).slice(),
-    flagged_card_ids: (n.flagged_cards || []).map((c) => c.card_id),
-  };
-}
-
-async function applyProposal(mi, pi) {
-  const msg = S.chat[mi];
-  const p = msg && msg.proposals && msg.proposals[pi];
-  if (!p || p.applied || S.busy) return;
-  const input = p.input || {};
-  p.error = "";
-  S.busy = true;
-  draw();
-  let bulkWrote = false;
-  let sourceWrote = false;
-  try {
-    if (p.kind === "edit") {
-      p.snapshot = [await snapshotOf(input.note_id)];
-      const body = { fields: input.fields || {}, unflag: true };
-      if (input.tags) body.tags = input.tags;
-      await API.patch(input.note_id, body);
-    } else if (p.kind === "bulk_edit") {
-      // In order, stop at the first failure; rows already written stay written and are
-      // remembered in appliedIds so « Reprendre » finishes the rest.
-      const done = p.appliedIds || [];
-      p.appliedIds = done;
-      p.snapshot = p.snapshot || [];
-      for (const e of input.edits || []) {
-        if (done.indexOf(e.note_id) >= 0) continue;
-        if (!p.snapshot.some((snap) => snap.note_id === e.note_id)) {
-          p.snapshot.push(await snapshotOf(e.note_id));
-        }
-        await API.patch(e.note_id, { fields: e.fields || {}, unflag: true });
-        done.push(e.note_id);
-        bulkWrote = true;
-        scheduleLogRefresh();
-      }
-    } else if (p.kind === "split") {
-      await API.split(input.note_id, {
-        original: input.original ? { fields: input.original.fields || {} } : null,
-        new_notes: (input.new_notes || []).map((n) => ({
-          model: n.model,
-          fields: n.fields || {},
-        })),
-      });
-    } else if (p.kind === "create") {
-      const sel = selectedNote();
-      await API.create({
-        deck: S.deck,
-        model: input.model || (sel && sel.model),
-        fields: input.fields || {},
-        tags: (sel && sel.tags) || [],
-        // anchors default to the selected note's (specs/chat.md#proposal-tools)
-        source_ids: input.source_ids || (await anchorsFor(sel && sel.note_id)),
-      });
-    } else if (p.kind === "move") {
-      await API.move(input.note_id, input.deck);
-    } else if (p.kind === "create_source") {
-      const name = String(p.name != null ? p.name : input.name || "").trim();
-      if (!name) throw new Error("indique un nom de note");
-      await API.createSourceNote({
-        deck: S.deck,
-        name,
-        content: input.content || "",
-        anchor_note_ids: input.anchor_note_ids || [],
-        id: p.sourceId || null,
-      });
-      (input.anchor_note_ids || []).forEach((id) => delete S.noteAnchors[id]);
-      sourceWrote = true;
-    } else if (p.kind === "edit_source") {
-      await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
-      sourceWrote = true;
-    } else {
-      throw new Error("proposition inconnue : " + p.kind);
-    }
-    p.applied = true;
-    S.busy = false;
-    if (sourceWrote) {
-      // Nothing changed in Anki: refresh the corpus, not the queue. loadCorpus() redraws.
-      await loadCorpus();
-      return;
-    }
-    const firstEdit = p.kind === "bulk_edit" ? ((input.edits || [])[0] || {}).note_id : null;
-    await afterDecision({
-      resolvedId: input.note_id || firstEdit,
-      keepSelection: p.kind === "create",
-    });
-  } catch (e) {
-    p.error = e.message;
-    S.busy = false;
-    // A bulk edit that failed halfway has still written some notes: show the queue as it is.
-    if (bulkWrote) await afterDecision({ keepSelection: true });
-    else draw();
-  }
-}
-
-/* Undo an applied edit / bulk edit from its snapshot (specs/chat.md#undo). Refused when a note
-   no longer holds the values the proposal wrote — it was edited since. */
-async function revertProposal(mi, pi) {
-  const msg = S.chat[mi];
-  const p = msg && msg.proposals && msg.proposals[pi];
-  if (!p || !p.applied || S.busy) return;
-  const input = p.input || {};
-  if (p.kind === "edit_source") {
-    // Undo is the same replacement with old and new swapped; the exact-match rule refuses it
-    // when the passage changed since (specs/chat.md#undo).
-    p.error = "";
-    S.busy = true;
-    draw();
-    try {
-      await API.patchSourceText(input.source_id, { old: input.new || "", new: input.old || "" });
-      p.applied = false;
-      p.reverted = true;
-      S.busy = false;
-      await loadCorpus();
-    } catch (e) {
-      p.error = e.status === 409 ? "modifiée depuis, annulation impossible" : e.message;
-      S.busy = false;
-      draw();
-    }
-    return;
-  }
-  if (!p.snapshot || !p.snapshot.length) return;
-  const written = {};
-  if (p.kind === "edit") written[input.note_id] = input.fields || {};
-  else (input.edits || []).forEach((e) => (written[e.note_id] = e.fields || {}));
-  p.error = "";
-  S.busy = true;
-  draw();
-  try {
-    for (const snap of p.snapshot) {
-      const cur = await API.note(snap.note_id);
-      const expected = written[snap.note_id] || {};
-      const changed = Object.keys(expected).some(
-        (k) => String((cur.fields || {})[k] || "") !== String(expected[k]),
-      );
-      if (changed) throw new Error(short(snap.note_id) + " modifiée depuis, annulation impossible");
-    }
-    for (const snap of p.snapshot) {
-      await API.patch(snap.note_id, {
-        fields: snap.fields,
-        tags: snap.tags,
-        unflag: false,
-        reflag: snap.flagged_card_ids,
-      });
-    }
-    const first = p.snapshot[0].note_id;
-    p.applied = false;
-    p.appliedIds = [];
-    p.snapshot = null;
-    p.reverted = true;
-    S.busy = false;
-    S.selNote = first;
-    await afterDecision({ keepSelection: true });
-  } catch (e) {
-    p.error = e.message;
-    S.busy = false;
-    draw();
-  }
-}
-
 /* ---------------- delegated events ---------------- */
 
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act]");
-  if (!el || el.closest("dialog")) return;
+  if (!el) return;
   const act = el.getAttribute("data-act");
   const noteId = el.getAttribute("data-note") ? Number(el.getAttribute("data-note")) : null;
+
+  // Everything the workspace owns, plus the source chips it shares with nobody now.
+  if (act.indexOf("ws-") === 0 || act === "attach-src" || act === "detach-src") {
+    wsClick(act, el, e);
+    return;
+  }
+  if (S.ws) return; // the page behind the overlay is inert
 
   if (act === "deck") {
     selectDeck(el.getAttribute("data-deck"));
@@ -574,32 +251,24 @@ document.addEventListener("click", (e) => {
     if (!noteById(S.selNote)) selectFirstFlagged();
     draw();
   } else if (act === "note") {
+    // A hidden cloze reveals; anything else opens the workspace on the note.
     const cloze = e.target.closest(".cloze.hidden");
-    if (cloze) toggleReveal(noteId);
     S.selNote = noteId;
-    draw();
+    if (cloze) {
+      toggleReveal(noteId);
+      draw();
+    } else {
+      openWorkspace(noteId);
+    }
   } else if (act === "reveal") {
     e.stopPropagation();
     toggleReveal(noteId);
     draw();
-  } else if (act === "decision") {
+  } else if (act === "keep") {
     e.stopPropagation();
-    applyDecision(el.getAttribute("data-decision"), noteId);
-  } else if (act === "ref") {
-    e.stopPropagation();
-    if (S.chatRefs.indexOf(noteId) < 0) S.chatRefs.push(noteId);
-    S.tab = "chat";
-    draw();
-  } else if (act === "unref") {
-    S.chatRefs = S.chatRefs.filter((id) => id !== noteId);
-    draw();
-  } else if (act === "attach-src") {
-    attachSource(el.getAttribute("data-src"));
-  } else if (act === "detach-src") {
-    detachSource(el.getAttribute("data-src"));
-  } else if (act === "tab") {
-    S.tab = el.getAttribute("data-tab");
-    draw();
+    keepNote(noteId);
+  } else if (act === "undo") {
+    undoLastValidation();
   } else if (act === "dismiss-error") {
     S.error = "";
     draw();
@@ -618,33 +287,15 @@ document.addEventListener("click", (e) => {
     draw();
   } else if (act === "src-save") {
     saveNewSource();
-  } else if (act === "send") {
-    sendChat();
-  } else if (act === "newchat") {
-    newChat();
-  } else if (act === "apply") {
-    applyProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
-  } else if (act === "revert") {
-    revertProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
   }
 });
 
 document.addEventListener("input", (e) => {
   const el = e.target.closest("[data-input]");
-  if (!el || el.closest("dialog")) return;
+  if (!el) return;
   const key = el.getAttribute("data-input");
-  if (key === "chat") {
-    S.chatDraft = el.value;
-    return;
-  }
-  if (key === "attach-src-menu") {
-    attachSource(el.value); // redraws, which resets the menu to « + source »
-    return;
-  }
-  if (key === "psrc-name") {
-    const msg = S.chat[Number(el.getAttribute("data-mi"))];
-    const p = msg && msg.proposals && msg.proposals[Number(el.getAttribute("data-pi"))];
-    if (p) p.name = el.value;
+  if (S.ws) {
+    wsInput(key, el);
     return;
   }
   if (!S.srcForm) return;
@@ -666,23 +317,40 @@ document.addEventListener("input", (e) => {
   }
 });
 
+/* A workspace field textarea losing focus goes back to its rendered form. */
+document.addEventListener("focusout", (e) => {
+  const el = e.target;
+  if (el && el.getAttribute && el.getAttribute("data-input") === "ws-field") wsBlur(el);
+});
+
 /* ---------------- keyboard ---------------- */
 
 document.addEventListener("keydown", (e) => {
   const active = document.activeElement;
   const tag = active && active.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+  const inField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+  if (S.ws) {
+    // specs/workspace.md#keyboard
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (inField) active.blur(); // a field first gives the focus back, a second Esc closes
+      else closeWorkspace(false);
+      return;
+    }
     if (
       e.key === "Enter" &&
       (e.metaKey || e.ctrlKey) &&
+      inField &&
       active.getAttribute("data-input") === "chat"
     ) {
       e.preventDefault();
       sendChat();
     }
-    return; // every other key belongs to the field (Esc closes a dialog natively)
+    return;
   }
-  if (document.querySelector("dialog[open]")) return;
+
+  if (inField) return; // every key belongs to the field
   if (e.metaKey || e.ctrlKey || e.altKey) return;
 
   if (e.key === "j" || e.key === "ArrowDown") {
@@ -692,9 +360,14 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     moveSelection(-1);
   } else if (e.key === "g") {
-    if (S.selNote) applyDecision("keep", S.selNote);
+    if (S.selNote) keepNote(S.selNote);
   } else if (e.key === "p") {
-    if (S.selNote) applyDecision("skip", S.selNote);
+    moveSelection(1);
+  } else if (e.key === "Enter") {
+    if (S.selNote) {
+      e.preventDefault();
+      openWorkspace(S.selNote);
+    }
   } else if (e.key === " ") {
     const sel = selectedNote();
     if (sel && hasHiddenClozes(sel)) {
@@ -727,6 +400,7 @@ async function boot() {
       S.chatStatus = { configured: false };
       draw();
     });
+  refreshUndoStatus().then(draw);
 }
 
 boot();

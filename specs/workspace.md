@@ -32,7 +32,7 @@ Closing:
 - **× (top right) or `Esc`** discards everything: cards, versions, conversation. When at least one card is changed, a confirmation says how many changes will be lost. Nothing is written to Anki either way.
 - **« Valider »** writes the changes (see [Validation](#validation)) and then closes.
 
-After closing for any reason the queue and the deck counts are re-fetched and the next flagged note is selected, not opened (as after any decision, [review.md § Decisions](./review.md#decisions)).
+After closing the queue and the deck counts are re-fetched. After a validation the next flagged note is selected, not opened (as after « Garder », [review.md § Decisions](./review.md#decisions)); after a discard the selection stays on the root, which is still there.
 
 Nothing is persisted: a page reload drops an open workspace. Past workspaces are not kept (see [Out of scope](#out-of-scope)).
 
@@ -46,7 +46,7 @@ Cards are listed root first, then in order of arrival. A fragment is shown right
 
 ### Card head
 
-One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type and the deck when it differs from the current deck), the state badges (« ⚑ c2 » per flagged card as in the queue, « supprimée », « gardée », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider » (drop the shown version), « supprimer » / « restaurer », « garder » / « ne pas garder », « déplacer… » (a deck picker, same list as `list_decks`).
+One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the state badges (« ⚑ c2 » per flagged card as in the queue, « supprimée », « gardée », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider » (drop the shown version), « supprimer » / « restaurer », « garder » / « ne pas garder », « déplacer… » (a deck picker, same list as `list_decks`).
 
 The **activation toggle** is the head itself: clicking the head (outside a control) toggles the card between active and inactive. An inactive card is drawn at 55 % opacity. Every card is active when it enters the workspace.
 
@@ -70,7 +70,7 @@ Editing the shown version modifies it in place, except when the shown version is
 
 A card's versions are a list; the **shown version** is the one the arrows point at, and the one that counts for validation and for Claude ([chat.md § Context](./chat.md#context)). A new version (a proposal by Claude) is appended and becomes the shown one, wherever the arrows were.
 
-**« invalider »** drops the shown version; the previous one is shown (or the next, when the first was dropped). On an existing note's card it is offered on every version but v0. On a draft note dropping the last version removes the card — a fragment removed this way is simply gone, the parent is not touched.
+**« invalider »** drops the shown version; the previous one is shown (or the next, when a draft's first version was dropped). On an existing note's card it is offered on every version but v0. On a draft note dropping the last version removes the card — a fragment removed this way is simply gone, the parent is not touched.
 
 A dropped version is gone from the workspace. The conversation still holds the text Claude wrote with it, and the client tells Claude in the history that the version was rejected (« [version rejetée : w3 v2] », [chat.md § API](./chat.md#api)).
 
@@ -134,15 +134,15 @@ Deletion comes last so that a failure anywhere before it has lost no content. On
 
 ### Undo
 
-The server keeps the snapshot of the **last successful validation** in memory (one, overwritten by the next validation, gone when the server restarts). The queue header shows « Annuler la dernière validation » while one is available. Clicking it restores the snapshot: created notes deleted, edited notes' fields and tags put back, moves reverted, flags put back on the cards that carried one. The notes come back in the queue.
+The server keeps the snapshot of the **last successful validation** in memory (one, overwritten by the next validation, gone when the server restarts). The queue header shows « Annuler la dernière validation » while one is available (`GET /api/workspace/undo` says, at load and after each validation). Clicking it restores the snapshot: created notes deleted, edited notes' fields and tags put back, moves reverted, flags put back on the cards that carried one. The notes come back in the queue.
 
-Undo is **unavailable** when the validation deleted notes — a deleted note cannot be recreated with its history — and the button says so. It is **refused** (« modifiée depuis, annulation impossible ») when one of the notes no longer holds the values the validation wrote, which means it was edited since, in the app or in Anki; nothing is written then.
+Undo is **unavailable** when the validation deleted notes — a deleted note cannot be recreated with its history — and the button is not shown. It is **refused** (« modifiée depuis, annulation impossible ») when one of the notes no longer holds the values the validation wrote, which means it was edited since, in the app or in Anki; nothing is written then.
 
 No finer undo: a version, a card or a proposal is not a unit of writing any more. Discarding before validation is free; after validation this single step is the way back.
 
 ## Keyboard
 
-While the workspace is open the queue's keys are off. `Esc` closes (with the confirmation when there are changes, unless a textarea has the focus: then `Esc` just blurs it). `⌘/Ctrl+Entrée` sends the message. `Tab` moves between fields as in any form. No other shortcut in v1.
+While the workspace is open the queue's keys are off. `Esc` closes (with the confirmation when there are changes) — unless a field has the focus (a card's textarea, the message box, the deck picker): then `Esc` only gives the focus back, and a second `Esc` closes. `⌘/Ctrl+Entrée` sends the message. `Tab` moves between fields as in any form. No other shortcut in v1.
 
 ## API
 
@@ -153,6 +153,7 @@ All under `/api`. Errors follow [review.md § API](./review.md#api) (502 AnkiCon
 | `POST /api/notes/lookup` | `{ note_ids: [int] }` | `Note[]` (same shape as `GET /api/notes/{id}`; unknown ids dropped, order kept) |
 | `POST /api/workspace/apply` | `ApplyPlan` (below) | `ApplyReport` (below); `200` whether or not every write succeeded — `ok` says |
 | `POST /api/workspace/undo` | — | `ApplyReport`; `409` when there is nothing to undo, when the last validation deleted notes, or when a note was modified since |
+| `GET /api/workspace/undo` | — | `{ available: bool }` — whether the button should be shown |
 
 ```json
 { "deck": "courant::00-Thèse", "clear_reason": true,
@@ -180,8 +181,8 @@ Pure functions over `AnkiClient` and `SourceStore`, no FastAPI imports, reusing 
 ```python
 @dataclass class CardPlan: wid, action, note_id, fields, tags, model, deck, source_ids, move_to, parent_wid
 @dataclass class ApplyPlan: deck, clear_reason, cards
-@dataclass class NoteSnap: note_id, fields, tags, deck, card_ids, flagged_card_ids
-@dataclass class Snapshot: notes: dict[int, NoteSnap]; created: list[int]; deleted: list[int]; written: dict[int, dict[str, str]]
+@dataclass class NoteSnap: note_id, fields, tags, deck, card_ids, flags   # flags: card id -> flag, restored colour by colour
+@dataclass class Snapshot: notes: dict[int, NoteSnap]; created; deleted; moved; anchors_before; written; unflagged
 @dataclass class ApplyReport: ok, created, resolved, deleted, moved, errors, rolled_back, undo_available
 
 def validate(plan) -> list[str]
@@ -190,7 +191,7 @@ def apply(client, store, plan) -> tuple[ApplyReport, Snapshot]
 def undo(client, store, snapshot) -> ApplyReport        # raises Modified / NothingToUndo
 ```
 
-`routes_workspace.py` holds the last snapshot on `app.state.last_validation` and maps the exceptions to 409.
+`anchors_before` records a moved note's anchors, since a move can drop the ones absent from the destination corpus and moving back must restore them. `routes_workspace.py` holds the last snapshot on `app.state.last_validation`, clears it after an undo, and maps the exceptions to 409.
 
 ## Frontend
 

@@ -125,6 +125,24 @@ class FakeText:
     warning: str = ""
 
 
+def card(**overrides: Any) -> chat.WorkspaceCard:
+    """The root card of a workspace opened on the note of `FakeNote`."""
+    note = FakeNote()
+    base: dict[str, Any] = {
+        "wid": "w1",
+        "note_id": note.note_id,
+        "fields": dict(note.fields),
+        "deck": note.deck,
+        "model": note.model,
+        "tags": list(note.tags),
+        "flagged_clozes": [2],
+        "reason": note.reason,
+        "anchor_ids": ["k7q2vd"],
+    }
+    base.update(overrides)
+    return chat.WorkspaceCard(**base)
+
+
 def entry(**overrides: Any) -> chat.CorpusEntry:
     base: dict[str, Any] = {
         "id": "k7q2vd",
@@ -153,10 +171,9 @@ def drain(agen: Any) -> list[chat.ChatEvent]:
 def run_chat(client: Any, **overrides: Any) -> list[chat.ChatEvent]:
     kwargs: dict[str, Any] = {
         "deck": "courant::00-Thèse",
-        "note_ids": [NOTE_ID],
+        "cards": [card()],
         "source_ids": [],
         "messages": [{"role": "user", "content": "Cette carte est trop vague, tu proposes quoi ?"}],
-        "load_note": lambda note_id: FakeNote(note_id=note_id),
         "load_corpus": lambda deck: [entry()],
         "load_source": lambda source_id: (FakeSource(id=source_id), FakeText()),
         "model": "test-model",
@@ -173,7 +190,10 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
         "courant::00-Thèse",
         [entry(anchored_note_ids=[NOTE_ID]), entry(id="m3x8pa", kind="pdf", target="~/s.pdf")],
         [(FakeSource(), FakeText())],
-        [FakeNote()],
+        [
+            card(original_fields={"Text": "avant", "Back Extra": ""}),
+            card(wid="w2", note_id=None, parent_wid="w1", active=False, flagged_clozes=[]),
+        ],
         flagged_count=3,
     )
     assert [block["type"] for block in blocks] == ["text"] * 4
@@ -194,20 +214,28 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
     context = blocks[3]["text"]
     assert "courant::00-Thèse" in context
     assert "Notes signalées dans ce deck : 3." in context
-    assert str(NOTE_ID) in context
+    assert "Cartes dans l'espace de travail : 2, dont 1 active(s)." in context
+    assert f"### Carte w1 — note {NOTE_ID}" in context
+    assert "- état : active" in context
     assert "{{c1::disjoint}}" in context  # raw fields, cloze markers kept
+    assert "champs bruts (version affichée)" in context
+    assert "version d'origine (Anki) :\n  - Text : avant" in context
     assert "raison du flag : For a given sensor ?" in context
     assert "carte(s) flaguée(s) : c2" in context
     assert "ancres : [k7q2vd] Allocation sur des angles disjoints" in context
+    assert "### Carte w2 — brouillon, pas encore dans Anki" in context
+    assert "- état : inactive" in context
+    assert "fragment de la carte w1" in context
+    assert context.index("Carte w1") < context.index("Carte w2")
 
 
 def test_standing_instructions_say_only_what_the_spec_lists() -> None:
     text = chat.build_system("d", [], [], [])[0]["text"]
-    for needle in ("français", "propose_create_source", "propose_edit_source", "cloze"):
+    for needle in ("français", "propose_create_source", "propose_edit_source", "cloze", "actives"):
         assert needle in text
     assert 'class="context"' in text  # conventions of the collection, stated as facts
     # Not the prompt's business (specs/chat.md#what-claude-receives).
-    for absent in ("Sois bref", "Une note = une idée", "list_deck_notes", "Avant propose_create"):
+    for absent in ("Sois bref", "Une note = une idée", "propose_bulk_edit", "Avant propose_create"):
         assert absent not in text
 
 
@@ -216,7 +244,7 @@ def test_empty_index_and_no_attached_source_are_said_explicitly() -> None:
     assert "Aucune source n'est associée" in blocks[1]["text"]
     assert "Aucune source jointe" in blocks[2]["text"]
     assert "read_source" in blocks[2]["text"]
-    assert "(Aucune note sélectionnée.)" in blocks[3]["text"]
+    assert "(Aucune carte.)" in blocks[3]["text"]
 
 
 def test_attached_sources_are_capped_in_total_and_the_cap_is_stated() -> None:
@@ -246,7 +274,7 @@ def test_index_marks_missing_files() -> None:
 # ------------------------------------------------------------------------------- tools
 
 
-def test_tools_cover_the_seven_proposals_then_the_five_read_tools() -> None:
+def test_tools_cover_the_six_proposals_then_the_six_read_tools() -> None:
     defs = chat.tools()
     names = [tool["name"] for tool in defs]
     proposals = [
@@ -254,7 +282,6 @@ def test_tools_cover_the_seven_proposals_then_the_five_read_tools() -> None:
         "propose_split",
         "propose_create",
         "propose_move",
-        "propose_bulk_edit",
         "propose_create_source",
         "propose_edit_source",
     ]
@@ -265,6 +292,7 @@ def test_tools_cover_the_seven_proposals_then_the_five_read_tools() -> None:
         "list_decks",
         "search_notes",
         "get_notes",
+        "add_notes",
         "get_note_type",
         "read_source",
     )
@@ -284,13 +312,13 @@ def test_tool_schemas_match_the_spec_tables() -> None:
     assert by_name["propose_edit"]["properties"]["fields"]["additionalProperties"] == {
         "type": "string"
     }
-    assert by_name["propose_move"]["required"] == ["note_id", "deck", "rationale"]
+    assert by_name["propose_edit"]["required"] == ["target", "fields", "rationale"]
+    assert by_name["propose_edit"]["properties"]["target"]["type"] == "string"
+    assert by_name["propose_move"]["required"] == ["target", "deck", "rationale"]
+    assert "propose_bulk_edit" not in by_name
     assert "source_ids" in by_name["propose_create"]["properties"]
     split_new = by_name["propose_split"]["properties"]["new_notes"]
     assert split_new["items"]["required"] == ["fields"]
-    bulk = by_name["propose_bulk_edit"]
-    assert bulk["required"] == ["edits", "rationale"]
-    assert bulk["properties"]["edits"]["items"]["required"] == ["note_id", "fields"]
     assert by_name["propose_create_source"]["required"] == ["name", "content", "rationale"]
     assert "anchor_note_ids" in by_name["propose_create_source"]["properties"]
     assert by_name["propose_edit_source"]["required"] == ["source_id", "old", "new", "rationale"]
@@ -302,6 +330,10 @@ def test_tool_schemas_match_the_spec_tables() -> None:
     assert "limit" not in search["properties"]
     assert by_name["read_source"]["required"] == ["source_id"]
     assert by_name["get_notes"]["required"] == ["note_ids"]
+    assert by_name["add_notes"]["required"] == ["note_ids", "rationale"]
+    assert str(chat.MAX_CARDS) in next(
+        tool["description"] for tool in chat.tools() if tool["name"] == "add_notes"
+    )
     assert by_name["list_decks"]["required"] == []
 
 
@@ -419,7 +451,7 @@ def test_attached_sources_are_loaded_by_id_into_block_three() -> None:
 
 def test_tool_use_emits_a_proposal_and_the_loop_continues() -> None:
     tool_block = tool_use_block(
-        "toolu_01", "propose_split", {"note_id": 5262, "original": None, "new_notes": []}
+        "toolu_01", "propose_split", {"target": "w1", "original": None, "new_notes": []}
     )
     client = FakeAnthropic(
         [
@@ -445,8 +477,8 @@ def test_tool_use_emits_a_proposal_and_the_loop_continues() -> None:
 
 def test_several_proposals_in_one_turn() -> None:
     blocks = [
-        tool_use_block("toolu_a", "propose_edit", {"note_id": 1, "fields": {}, "rationale": "r"}),
-        tool_use_block("toolu_b", "propose_move", {"note_id": 1, "deck": "x", "rationale": "r"}),
+        tool_use_block("toolu_a", "propose_edit", {"target": "w1", "fields": {}, "rationale": "r"}),
+        tool_use_block("toolu_b", "propose_move", {"target": "w1", "deck": "x", "rationale": "r"}),
         tool_use_block("toolu_c", "propose_edit_source", {"source_id": "k7q2vd", "old": "a"}),
     ]
     client = FakeAnthropic(
@@ -481,17 +513,101 @@ def test_create_source_proposal_announces_the_future_source_id() -> None:
     assert "propose_create" in result["content"]
 
 
-def test_bulk_edit_is_a_proposal_kind() -> None:
-    block = tool_use_block(
-        "toolu_b", "propose_bulk_edit", {"edits": [{"note_id": 1, "fields": {"Text": "x"}}]}
-    )
-    client = FakeAnthropic(
+def _one_tool_turn(block: Any) -> FakeAnthropic:
+    return FakeAnthropic(
         [([], final_message([block], "tool_use")), ([], final_message([], "end_turn"))]
     )
+
+
+def _first_result(client: FakeAnthropic) -> dict[str, Any]:
+    return client.messages.calls[1]["messages"][2]["content"][0]
+
+
+def test_unknown_target_is_an_error_result_and_no_event() -> None:
+    block = tool_use_block(
+        "toolu_x", "propose_edit", {"target": "w9", "fields": {}, "rationale": "r"}
+    )
+    client = _one_tool_turn(block)
     events = run_chat(client)
-    assert events[0].type == "proposal"
-    assert events[0].data["kind"] == "bulk_edit"
-    assert events[0].data["input"]["edits"][0]["note_id"] == 1
+    assert [event.type for event in events] == ["done"]
+    result = _first_result(client)
+    assert result["is_error"] is True
+    assert "w9" in result["content"]
+
+
+def test_note_id_target_absent_from_the_workspace_is_admitted() -> None:
+    block = tool_use_block(
+        "toolu_n", "propose_edit", {"target": "424242", "fields": {}, "rationale": "r"}
+    )
+    client = _one_tool_turn(block)
+    events = run_chat(client)
+    assert [event.type for event in events] == ["proposal", "done"]
+    assert events[0].data["input"]["target"] == "424242"
+    assert _first_result(client)["content"] == "ok"
+
+
+def test_absent_target_is_refused_when_the_workspace_is_full() -> None:
+    full = [card(wid=f"w{i}", note_id=i) for i in range(1, chat.MAX_CARDS + 1)]
+    block = tool_use_block(
+        "toolu_f", "propose_edit", {"target": "424242", "fields": {}, "rationale": "r"}
+    )
+    client = _one_tool_turn(block)
+    events = run_chat(client, cards=full)
+    assert [event.type for event in events] == ["done"]
+    assert "plein" in _first_result(client)["content"]
+    # A card already in the workspace is still a valid target at the cap.
+    block2 = tool_use_block(
+        "toolu_g", "propose_edit", {"target": "w3", "fields": {}, "rationale": "r"}
+    )
+    client2 = _one_tool_turn(block2)
+    assert [e.type for e in run_chat(client2, cards=full)] == ["proposal", "done"]
+
+
+def test_add_notes_runs_get_notes_and_emits_an_added_event() -> None:
+    block = tool_use_block(
+        "toolu_add", "add_notes", {"note_ids": [7, 8], "rationale": "même défaut"}
+    )
+    client = _one_tool_turn(block)
+    seen: list[dict[str, Any]] = []
+
+    def get_notes(inp: dict[str, Any]) -> str:
+        seen.append(dict(inp))
+        return "# 2 notes\n…"
+
+    events = run_chat(client, read_tools={"get_notes": get_notes})
+    assert [event.type for event in events] == ["added", "done"]
+    assert events[0].data == {"id": "toolu_add", "note_ids": [7, 8], "rationale": "même défaut"}
+    assert seen == [{"note_ids": [7, 8], "rationale": "même défaut"}]
+    assert _first_result(client)["content"] == "# 2 notes\n…"
+
+
+def test_add_notes_over_the_cap_is_refused_without_reading() -> None:
+    full = [card(wid=f"w{i}", note_id=i) for i in range(1, chat.MAX_CARDS)]  # one seat left
+    block = tool_use_block("toolu_add", "add_notes", {"note_ids": [700, 800], "rationale": "r"})
+    client = _one_tool_turn(block)
+    calls: list[Any] = []
+    events = run_chat(client, cards=full, read_tools={"get_notes": lambda inp: calls.append(inp)})
+    assert [event.type for event in events] == ["done"]
+    assert calls == []
+    assert "plein" in _first_result(client)["content"]
+    # Notes already in the workspace do not count: re-adding w1's note is fine.
+    block2 = tool_use_block("toolu_ok", "add_notes", {"note_ids": [1, 700], "rationale": "r"})
+    client2 = _one_tool_turn(block2)
+    events2 = run_chat(client2, cards=full, read_tools={"get_notes": lambda inp: "# 2 notes"})
+    assert [event.type for event in events2] == ["added", "done"]
+
+
+def test_add_notes_failure_is_an_error_result_and_no_added_event() -> None:
+    block = tool_use_block("toolu_add", "add_notes", {"note_ids": [7], "rationale": "r"})
+    client = _one_tool_turn(block)
+
+    def boom(inp: dict[str, Any]) -> str:
+        raise KeyError("note inconnue")
+
+    events = run_chat(client, read_tools={"get_notes": boom})
+    assert [event.type for event in events] == ["reading", "done"]
+    assert events[0].data["summary"].startswith("erreur")
+    assert _first_result(client)["is_error"] is True
 
 
 def test_read_tool_is_executed_and_its_text_fed_back() -> None:
@@ -556,7 +672,7 @@ def test_unknown_tool_gets_an_error_result_and_no_event() -> None:
 
 def test_proposal_and_read_in_one_turn_keep_their_order() -> None:
     blocks = [
-        tool_use_block("toolu_a", "propose_edit", {"note_id": 1, "fields": {}, "rationale": "r"}),
+        tool_use_block("toolu_a", "propose_edit", {"target": "w1", "fields": {}, "rationale": "r"}),
         tool_use_block("toolu_b", "list_decks", {}),
     ]
     client = FakeAnthropic(
@@ -589,10 +705,10 @@ def test_api_failure_becomes_an_error_event() -> None:
 
 
 def test_context_failure_becomes_an_error_event() -> None:
-    def boom(note_id: int) -> Any:
+    def boom(deck: str) -> Any:
         raise RuntimeError("Anki injoignable")
 
-    events = run_chat(FakeAnthropic([]), load_note=boom)
+    events = run_chat(FakeAnthropic([]), load_corpus=boom)
     assert [event.type for event in events] == ["error"]
     assert "Anki injoignable" in events[0].data["detail"]
 
@@ -672,7 +788,7 @@ def test_missing_api_key_yields_a_single_error_event(monkeypatch: Any) -> None:
         "/api/chat",
         json={
             "deck": "d",
-            "note_ids": [],
+            "cards": [],
             "source_ids": ["k7q2vd"],
             "messages": [{"role": "user", "content": "salut"}],
         },

@@ -25,14 +25,16 @@ def create_app() -> FastAPI:
     app = FastAPI(title="anki-assistant")
     app.state.anki = AnkiClient(url=os.environ.get("ANKI_CONNECT_URL") or "http://localhost:8765")
     app.state.store = SourceStore()
+    app.state.last_validation = None  # snapshot of the last workspace validation (undo)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
 
-    from anki_assistant.web import routes_chat, routes_review, routes_sources
+    from anki_assistant.web import routes_chat, routes_review, routes_sources, routes_workspace
 
     app.include_router(routes_review.router, prefix="/api")
     app.include_router(routes_sources.router, prefix="/api")
     app.include_router(routes_chat.router, prefix="/api")
+    app.include_router(routes_workspace.router, prefix="/api")
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:

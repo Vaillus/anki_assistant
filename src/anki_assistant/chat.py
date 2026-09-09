@@ -12,16 +12,21 @@ overridable with `ANKI_CHAT_MODEL` — set that rather than editing this.
 Note: when thinking is enabled, thinking tokens count against `max_tokens` (8192 per the spec).
 If replies ever come back truncated, lower the effort or raise `max_tokens`.
 
-Context is not fetched here: `stream_chat` takes injectable callables (`load_note`,
-`load_corpus`, `load_source`, and the `read_tools` map) so this module imports neither
-`review.py` nor the Anki client. It only imports `models.strip_html`, a pure function.
+Context is not fetched here: the cards of the workspace arrive as the client holds them (the
+shown version may be a draft or a hand edit, so re-reading Anki would be wrong), and
+`stream_chat` takes injectable callables (`load_corpus`, `load_source`, and the `read_tools`
+map) so this module imports neither `review.py` nor the Anki client. It only imports
+`models.strip_html`, a pure function.
 
 Two kinds of tools (specs/chat.md):
 - **proposal tools** (`propose_*`): the call is streamed to the client as a `proposal` event and
-  answered with "ok"; applying is the user's click, never Claude's.
-- **read tools** (`list_decks`, `search_notes`, `get_notes`, `get_note_type`, `read_source`):
-  executed here through the injected callables, the text they return is the tool result. A
-  `reading` event tells the client what was read.
+  answered with "ok"; it lands on the workspace as a version or a card, written at validation.
+  `target` names a card by workspace id or an Anki note by id; an absent note is added to the
+  workspace by the client, within the cap of `MAX_CARDS`, which is checked here.
+- **read tools** (`list_decks`, `search_notes`, `get_notes`, `add_notes`, `get_note_type`,
+  `read_source`): executed here through the injected callables, the text they return is the tool
+  result. A `reading` event tells the client what was read; `add_notes` also sends an `added`
+  event so that the notes become cards.
 """
 
 from __future__ import annotations
@@ -46,6 +51,8 @@ MAX_FULL_RESULT_CHARS = 100_000
 MAX_TOOL_LOOPS = 8
 #: Characters kept per field in a `brief` line.
 BRIEF_FIELD_CHARS = 120
+#: Cards a workspace holds at most (specs/workspace.md#how-notes-enter).
+MAX_CARDS = 50
 
 
 def default_model() -> str:
@@ -57,7 +64,7 @@ def default_model() -> str:
 
 
 class NoteLike(Protocol):
-    """The shape `review.NoteView` exposes; only what the prompt needs."""
+    """The shape `review.NoteView` exposes; only what the read tools' output needs."""
 
     note_id: int
     deck: str
@@ -74,6 +81,32 @@ class FlaggedCardLike(Protocol):
     """One flagged card of a note; `ord` + 1 is the cloze number on a Cloze note."""
 
     ord: int
+
+
+@dataclass
+class WorkspaceCard:
+    """One card of the workspace as the client sent it (specs/chat.md#api), for block 4.
+
+    `fields` are the raw values of the shown version; `original_fields` are v0's when the shown
+    version is not v0 (None otherwise). `note_id` is None for a draft note.
+    """
+
+    wid: str
+    note_id: int | None
+    fields: dict[str, str]
+    deck: str = ""
+    model: str = ""
+    tags: list[str] = field(default_factory=list)
+    active: bool = True
+    original_fields: dict[str, str] | None = None
+    #: Cloze numbers (c{ord+1}) of the flagged cards.
+    flagged_clozes: list[int] = field(default_factory=list)
+    reason: str = ""
+    anchor_ids: list[str] = field(default_factory=list)
+    deleted: bool = False
+    keep: bool = False
+    move_to: str | None = None
+    parent_wid: str | None = None
 
 
 class SourceLike(Protocol):
@@ -139,7 +172,6 @@ class NoteTypeLike(Protocol):
     css: str
 
 
-NoteLoader = Callable[[int], NoteLike]
 CorpusLoader = Callable[[str], list[CorpusEntry]]
 #: An attached source, loaded: the source and its extracted text.
 Attached = tuple[SourceLike, SourceTextLike]
@@ -150,7 +182,7 @@ ReadTool = Callable[[Mapping[str, Any]], str]
 
 @dataclass
 class ChatEvent:
-    """One SSE event. `type` is one of "text", "reading", "proposal", "done", "error"."""
+    """One SSE event. `type` is one of "text", "reading", "added", "proposal", "done", "error"."""
 
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -162,18 +194,24 @@ class ChatEvent:
 # and the conventions of the collection stated as facts. How to reason about a card (terseness,
 # when to read, how many notes an idea deserves) is the conversation's business, not the prompt's.
 STANDING_INSTRUCTIONS = """\
-Tu assistes Hugo dans la revue de ses notes Anki signalées (« flaguées »). Ce prompt te donne le \
-deck en cours, l'index de son corpus, les sources que l'utilisateur a jointes et les notes en \
-cours d'examen. Le reste — les autres notes du deck ou de la collection, le texte d'une source \
+Tu assistes Hugo dans la revue de ses notes Anki signalées (« flaguées »). L'utilisateur \
+travaille dans un espace de travail : les cartes qu'il regarde (la note qu'il a ouverte, les \
+brouillons préparés pour elle, les notes ajoutées depuis) sont listées plus bas avec leur \
+identifiant (w1, w2…). Ce prompt te donne aussi le deck en cours, l'index de son corpus et les \
+sources jointes. Le reste — les autres notes du deck ou de la collection, le texte d'une source \
 non jointe, l'arborescence des decks, un type de note — se lit avec les outils de lecture.
 
 Règles :
 - Réponds dans la langue de l'utilisateur, français par défaut.
+- Le message de l'utilisateur porte sur les cartes **actives**. Désigne une carte par son \
+identifiant d'espace (`target: "w3"`) ; une note qui n'est pas encore dans l'espace se désigne \
+par son identifiant Anki en chiffres, elle y sera ajoutée.
 - Quand tu proposes un changement concret, utilise les outils de proposition (propose_edit, \
-propose_split, propose_create, propose_move, propose_bulk_edit, propose_create_source, \
-propose_edit_source) au lieu de le décrire en prose. Un même tour peut en contenir plusieurs. \
-L'utilisateur applique lui-même chaque proposition d'un clic : tu n'écris jamais dans Anki ni \
-dans le vault.
+propose_split, propose_create, propose_move, propose_create_source, propose_edit_source) au \
+lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; le même défaut sur \
+plusieurs notes = un propose_edit par note. Chaque proposition devient une version ou une carte \
+que l'utilisateur relit, retouche ou écarte, puis valide en bloc : tu n'écris jamais dans Anki. \
+Pour montrer des notes à l'utilisateur sans les modifier, add_notes les ajoute à l'espace.
 - Les champs sont des valeurs de champ Anki **brutes** : HTML, marqueurs de cloze \
 `{{c1::réponse}}` ou `{{c1::réponse::indice}}` conservés. Produis les tiens dans la même syntaxe \
 et garde-la valide : numéros contigus à partir de c1, accolades équilibrées, au moins un cloze \
@@ -212,6 +250,48 @@ def _fmt_note(note: NoteLike, anchors: Sequence[CorpusEntry] = ()) -> str:
     lines.append("- champs bruts :")
     for name, value in note.fields.items():
         lines.append(f"  - {name} : {value}")
+    return "\n".join(lines)
+
+
+def _fmt_card(card: WorkspaceCard, anchors: Sequence[CorpusEntry] = ()) -> str:
+    """One card of block 4: identity, states, note facts, the shown version, v0 when changed."""
+    if card.note_id is None:
+        head = f"### Carte {card.wid} — brouillon, pas encore dans Anki"
+    else:
+        head = f"### Carte {card.wid} — note {card.note_id}"
+    states = ["active" if card.active else "inactive"]
+    if card.deleted:
+        states.append("marquée supprimée")
+    if card.keep:
+        states.append("marquée à garder telle quelle")
+    if card.move_to:
+        states.append(f"à déplacer vers {card.move_to}")
+    lines = [head, f"- état : {', '.join(states)}"]
+    if card.parent_wid:
+        lines.append(f"- fragment de la carte {card.parent_wid}")
+    lines += [
+        f"- deck : {card.deck}",
+        f"- type de note : {card.model}",
+        f"- tags : {', '.join(card.tags) if card.tags else '(aucun)'}",
+    ]
+    reason = (card.reason or "").strip()
+    if card.note_id is not None:
+        lines.append(f"- raison du flag : {reason}" if reason else "- raison du flag : (aucune)")
+    if card.flagged_clozes:
+        labels = ", ".join(f"c{n}" for n in card.flagged_clozes)
+        lines.append(
+            f"- carte(s) flaguée(s) : {labels} (le flag a été posé en voyant ce cloze masqué)"
+        )
+    if anchors:
+        lines.append("- ancres : " + ", ".join(f"[{entry.id}] {entry.target}" for entry in anchors))
+    shown = "- champs bruts (version affichée)" if card.original_fields else "- champs bruts"
+    lines.append(f"{shown} :")
+    for name, value in card.fields.items():
+        lines.append(f"  - {name} : {value}")
+    if card.original_fields is not None:
+        lines.append("- version d'origine (Anki) :")
+        for name, value in card.original_fields.items():
+            lines.append(f"  - {name} : {value}")
     return "\n".join(lines)
 
 
@@ -323,33 +403,36 @@ def build_system(
     deck: str,
     corpus_index: Sequence[CorpusEntry],
     attached: Sequence[Attached],
-    notes: Sequence[NoteLike],
+    cards: Sequence[WorkspaceCard],
     flagged_count: int | None = None,
 ) -> list[dict[str, Any]]:
     """System prompt as four text blocks (specs/chat.md#context).
 
-    1. standing instructions, 2. corpus index, 3. attached sources, 4. deck + notes in context.
+    1. standing instructions, 2. corpus index, 3. attached sources, 4. deck + workspace cards.
     Block 3 carries `cache_control: ephemeral`: blocks 1–3 depend only on the deck and on what
-    the user attached, so moving to the next note (which only changes block 4) reuses the cache.
+    the user attached, so a change on the workspace (which only changes block 4) reuses the cache.
     """
-    note_ids = [note.note_id for note in notes]
+    note_ids = [card.note_id for card in cards if card.note_id is not None]
+    active = sum(1 for card in cards if card.active)
 
     header = [f"# Deck en cours\n\n{deck}"]
     if flagged_count is not None:
         header.append(f"Notes signalées dans ce deck : {flagged_count}.")
-    header.append(f"Notes en contexte : {len(notes)}.")
+    header.append(f"Cartes dans l'espace de travail : {len(cards)}, dont {active} active(s).")
 
-    notes_part = ["# Notes en cours d'examen", ""]
-    if notes:
+    notes_part = ["# Cartes de l'espace de travail", ""]
+    if cards:
         notes_part.append(
-            "La première est la note sélectionnée. Champs donnés bruts (HTML et marqueurs de "
-            "cloze compris). Produis les tiens dans la même syntaxe."
+            "La première est la note sur laquelle l'espace a été ouvert (la racine). Champs "
+            "donnés bruts (HTML et marqueurs de cloze compris), tels que l'utilisateur les voit "
+            "en ce moment — une version proposée ou retouchée, pas forcément ce qu'Anki "
+            "contient. Produis les tiens dans la même syntaxe."
         )
-        for note in notes:
-            anchors = [entry for entry in corpus_index if note.note_id in entry.anchored_note_ids]
-            notes_part += ["", _fmt_note(note, anchors)]
+        for card in cards:
+            anchors = [entry for entry in corpus_index if entry.id in card.anchor_ids]
+            notes_part += ["", _fmt_card(card, anchors)]
     else:
-        notes_part.append("(Aucune note sélectionnée.)")
+        notes_part.append("(Aucune carte.)")
 
     return [
         {"type": "text", "text": STANDING_INSTRUCTIONS},
@@ -445,16 +528,20 @@ TOOL_KINDS: dict[str, str] = {
     "propose_split": "split",
     "propose_create": "create",
     "propose_move": "move",
-    "propose_bulk_edit": "bulk_edit",
     "propose_create_source": "create_source",
     "propose_edit_source": "edit_source",
 }
 
+#: Proposal tools whose `target` names a card (or a note to add as a card).
+TARGETED: frozenset[str] = frozenset({"propose_edit", "propose_split", "propose_move"})
+
 #: Read tools, executed server-side through the `read_tools` map given to `stream_chat`.
+#: `add_notes` runs `get_notes` and additionally streams an `added` event.
 READ_TOOLS: tuple[str, ...] = (
     "list_decks",
     "search_notes",
     "get_notes",
+    "add_notes",
     "get_note_type",
     "read_source",
 )
@@ -484,7 +571,13 @@ _TAGS = {
     "items": {"type": "string"},
     "description": "Liste complète des tags après changement. Omettre pour ne pas y toucher.",
 }
-_NOTE_ID = {"type": "integer", "description": "Identifiant de la note."}
+_TARGET = {
+    "type": "string",
+    "description": (
+        "Carte visée : son identifiant d'espace de travail (« w3 »), ou l'identifiant Anki en "
+        "chiffres d'une note qui n'est pas encore dans l'espace (elle y sera ajoutée)."
+    ),
+}
 _MODEL = {
     "type": "string",
     "description": "Nom du type de note Anki. Omettre pour reprendre celui de la note de départ.",
@@ -506,36 +599,39 @@ def tools() -> list[dict[str, Any]]:
 
 
 def proposal_tools() -> list[dict[str, Any]]:
-    """The seven proposal tools. Each call becomes one `proposal` event for the client."""
+    """The six proposal tools. Each call becomes one `proposal` event for the client."""
     return [
         {
             "name": "propose_edit",
             "description": (
-                "Proposer une réécriture d'une note existante. Ne renvoyer que les champs qui "
-                "changent, en valeur brute complète."
+                "Proposer une réécriture d'une carte : une nouvelle version de la carte visée. "
+                "Ne renvoyer que les champs qui changent, en valeur brute complète ; les autres "
+                "champs de la version affichée sont repris tels quels."
             ),
             "input_schema": _obj(
                 {
-                    "note_id": _NOTE_ID,
+                    "target": _TARGET,
                     "fields": _fields_schema(
                         "Champs modifiés uniquement, valeurs brutes complètes. " + _FIELDS_DESC
                     ),
                     "tags": _TAGS,
                     "rationale": _RATIONALE,
                 },
-                required=["note_id", "fields", "rationale"],
+                required=["target", "fields", "rationale"],
             ),
         },
         {
             "name": "propose_split",
             "description": (
-                "Proposer de couper une note en plusieurs. Par défaut l'originale est gardée et "
-                "devient le premier fragment (donner ses champs dans `original`) ; mettre "
-                "`original` à null pour la supprimer après création des nouvelles notes."
+                "Proposer de couper une carte en plusieurs. Par défaut la note originale est "
+                "gardée et devient le premier fragment (donner tous ses champs dans "
+                "`original`) ; mettre `original` à null pour la marquer supprimée, chaque "
+                "fragment étant alors une nouvelle note. Les fragments apparaissent comme "
+                "des cartes brouillon sous la carte visée."
             ),
             "input_schema": _obj(
                 {
-                    "note_id": _NOTE_ID,
+                    "target": _TARGET,
                     "original": {
                         "description": (
                             "Champs de la note originale après découpe, ou null pour la supprimer."
@@ -547,7 +643,10 @@ def proposal_tools() -> list[dict[str, Any]]:
                     },
                     "new_notes": {
                         "type": "array",
-                        "description": "Notes à créer, dans le même deck et avec les mêmes tags.",
+                        "description": (
+                            "Notes à créer (tous leurs champs), dans le même deck et avec les "
+                            "mêmes tags que la carte visée."
+                        ),
                         "minItems": 1,
                         "items": _obj(
                             {"model": _MODEL, "fields": _fields_schema()}, required=["fields"]
@@ -555,14 +654,15 @@ def proposal_tools() -> list[dict[str, Any]]:
                     },
                     "rationale": _RATIONALE,
                 },
-                required=["note_id", "original", "new_notes", "rationale"],
+                required=["target", "original", "new_notes", "rationale"],
             ),
         },
         {
             "name": "propose_create",
             "description": (
-                "Proposer une note en plus, dans le deck courant, sans toucher aux notes "
-                "existantes. Les tags de la note sélectionnée sont repris automatiquement."
+                "Proposer une note en plus (tous ses champs), dans le deck courant, sans toucher "
+                "aux cartes existantes : une nouvelle carte brouillon. Les tags de la racine "
+                "sont repris automatiquement."
             ),
             "input_schema": _obj(
                 {
@@ -573,7 +673,7 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "items": {"type": "string"},
                         "description": (
                             "Sources (ids de l'index du corpus) dont la note est tirée : ses "
-                            "ancres. Omettre pour reprendre celles de la note sélectionnée."
+                            "ancres. Omettre pour reprendre celles de la racine."
                         ),
                     },
                     "rationale": _RATIONALE,
@@ -583,46 +683,20 @@ def proposal_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "propose_move",
-            "description": "Proposer de déplacer une note vers un autre deck.",
+            "description": (
+                "Proposer de déplacer une carte vers un autre deck (un badge sur la carte, "
+                "appliqué à la validation)."
+            ),
             "input_schema": _obj(
                 {
-                    "note_id": _NOTE_ID,
+                    "target": _TARGET,
                     "deck": {
                         "type": "string",
                         "description": "Deck de destination, nom complet avec les `::`.",
                     },
                     "rationale": _RATIONALE,
                 },
-                required=["note_id", "deck", "rationale"],
-            ),
-        },
-        {
-            "name": "propose_bulk_edit",
-            "description": (
-                "Proposer la même modification sur plusieurs notes à la fois (ex. ajouter un "
-                "en-tête de contexte à vingt notes). Une seule carte, un seul clic pour tout "
-                "appliquer. Pour chaque note, ne renvoyer que les champs qui changent, en valeur "
-                "brute complète."
-            ),
-            "input_schema": _obj(
-                {
-                    "edits": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": _obj(
-                            {
-                                "note_id": _NOTE_ID,
-                                "fields": _fields_schema(
-                                    "Champs modifiés uniquement, valeurs brutes complètes. "
-                                    + _FIELDS_DESC
-                                ),
-                            },
-                            required=["note_id", "fields"],
-                        ),
-                    },
-                    "rationale": _RATIONALE,
-                },
-                required=["edits", "rationale"],
+                required=["target", "deck", "rationale"],
             ),
         },
         {
@@ -725,7 +799,7 @@ def read_tool_defs() -> list[dict[str, Any]]:
             "name": "get_notes",
             "description": (
                 "Lire des notes en entier (champs bruts, tags, flags, raison), dans le même "
-                "format que les notes en contexte."
+                "format que les cartes en contexte. Rien ne change dans l'espace de travail."
             ),
             "input_schema": _obj(
                 {
@@ -737,6 +811,30 @@ def read_tool_defs() -> list[dict[str, Any]]:
                     }
                 },
                 required=["note_ids"],
+            ),
+        },
+        {
+            "name": "add_notes",
+            "description": (
+                "Ajouter des notes à l'espace de travail pour que l'utilisateur les voie et que "
+                "tu puisses les viser — typiquement après un search_notes. Renvoie les notes en "
+                f"entier comme get_notes. L'espace tient {MAX_CARDS} cartes au plus : au-delà, "
+                "l'outil refuse et il faut resserrer."
+            ),
+            "input_schema": _obj(
+                {
+                    "note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 1,
+                        "description": "Identifiants des notes à ajouter.",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Une phrase, en français : pourquoi ces notes.",
+                    },
+                },
+                required=["note_ids", "rationale"],
             ),
         },
         {
@@ -803,13 +901,64 @@ def _usage_dict(message: Any) -> dict[str, Any]:
     return out
 
 
+class _Roster:
+    """What the workspace holds, kept up to date within a turn so the cap can be enforced.
+
+    Cards added by an `add_notes` or by a proposal on an absent note count from that moment on,
+    since the client will add them; a second call in the same turn sees the updated count.
+    """
+
+    def __init__(self, cards: Sequence[WorkspaceCard]) -> None:
+        self.wids = {card.wid for card in cards}
+        self.note_ids = {card.note_id for card in cards if card.note_id is not None}
+        self.count = len(cards)
+
+    def room_for(self, new_ids: Sequence[int]) -> bool:
+        return self.count + len(new_ids) <= MAX_CARDS
+
+    def admit(self, new_ids: Sequence[int]) -> None:
+        for nid in new_ids:
+            if nid not in self.note_ids:
+                self.note_ids.add(nid)
+                self.count += 1
+
+    def new_among(self, ids: Sequence[int]) -> list[int]:
+        seen: set[int] = set()
+        out: list[int] = []
+        for nid in ids:
+            if nid not in self.note_ids and nid not in seen:
+                seen.add(nid)
+                out.append(nid)
+        return out
+
+    def check_target(self, target: Any) -> str | None:
+        """None when the target is fine (and admitted if new), else the error text for Claude."""
+        text = str(target or "").strip()
+        if text in self.wids:
+            return None
+        if not text.isdigit():
+            return f"cible inconnue : « {text} » (identifiant d'espace w… ou identifiant Anki)"
+        nid = int(text)
+        if nid in self.note_ids:
+            return None
+        if not self.room_for([nid]):
+            return _FULL
+        self.admit([nid])
+        return None
+
+
+_FULL = (
+    f"espace de travail plein ({MAX_CARDS} cartes) : resserre la sélection ou demande à "
+    "l'utilisateur d'écarter des cartes."
+)
+
+
 async def stream_chat(
     anthropic_client: Any,
     deck: str,
-    note_ids: Sequence[int],
+    cards: Sequence[WorkspaceCard],
     source_ids: Sequence[str],
     messages: Sequence[Mapping[str, Any]],
-    load_note: NoteLoader,
     load_corpus: CorpusLoader,
     load_source: SourceLoader,
     read_tools: Mapping[str, ReadTool] | None = None,
@@ -819,23 +968,25 @@ async def stream_chat(
     """Run one chat turn (with its tool loop) and yield the events the client should receive.
 
     `messages` are plain `{role, content: str}` turns. Proposal calls are surfaced as `proposal`
-    events and answered with a `"ok"` tool result so Claude can keep talking; applying a
-    proposal is the user's decision, made later through the review and sources endpoints. A
+    events and answered with a `"ok"` tool result so Claude can keep talking; they land on the
+    workspace and are written at validation. A targeted proposal is checked against the roster
+    first: an unknown target or a full workspace is an error tool result and no event. A
     create-source proposal is answered with the id the source will carry, so that Claude can
     anchor the notes it proposes next to it; the same id travels in the event (`source_id`).
     Read calls are executed through `read_tools`, surfaced as `reading` events, and answered
     with the text the tool returned (or an error tool result, so Claude can react instead of
-    the turn failing).
+    the turn failing). `add_notes` runs `get_notes` and, when the cap allows, also streams an
+    `added` event so the client turns the notes into cards.
     """
     try:
-        notes = [load_note(int(note_id)) for note_id in note_ids]
         corpus_index = load_corpus(deck)
         attached = [load_source(str(source_id)) for source_id in source_ids]
-        system = build_system(deck, corpus_index, attached, notes, flagged_count)
+        system = build_system(deck, corpus_index, attached, cards, flagged_count)
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI, never raised into the SSE body
         yield ChatEvent("error", {"detail": f"Contexte indisponible : {exc}"})
         return
 
+    roster = _Roster(cards)
     convo: list[dict[str, Any]] = [
         {"role": str(message["role"]), "content": message["content"]} for message in messages
     ]
@@ -873,8 +1024,14 @@ async def stream_chat(
             results: list[dict[str, Any]] = []
             for block in calls:
                 kind = TOOL_KINDS.get(block.name)
+                tool_input = dict(block.input or {})
                 if kind is not None:
-                    data: dict[str, Any] = {"id": block.id, "kind": kind, "input": block.input}
+                    if block.name in TARGETED:
+                        problem = roster.check_target(tool_input.get("target"))
+                        if problem:
+                            results.append(_tool_result(block.id, problem, is_error=True))
+                            continue
+                    data: dict[str, Any] = {"id": block.id, "kind": kind, "input": tool_input}
                     answer = "ok"
                     if kind == "create_source":
                         data["source_id"] = new_source_id()
@@ -885,13 +1042,20 @@ async def stream_chat(
                     yield ChatEvent("proposal", data)
                     results.append(_tool_result(block.id, answer))
                     continue
-                tool = (read_tools or {}).get(block.name)
+                if block.name == "add_notes":
+                    ids = [int(i) for i in tool_input.get("note_ids") or []]
+                    new_ids = roster.new_among(ids)
+                    if not roster.room_for(new_ids):
+                        results.append(_tool_result(block.id, _FULL, is_error=True))
+                        continue
+                    tool = (read_tools or {}).get("get_notes")
+                else:
+                    tool = (read_tools or {}).get(block.name)
                 if tool is None:
                     results.append(
                         _tool_result(block.id, f"Outil inconnu : {block.name}", is_error=True)
                     )
                     continue
-                tool_input = dict(block.input or {})
                 try:
                     text = tool(tool_input)
                 except Exception as exc:  # noqa: BLE001 — Claude gets the error, not the UI
@@ -899,6 +1063,17 @@ async def stream_chat(
                 else:
                     failed = False
                 results.append(_tool_result(block.id, text, is_error=failed))
+                if block.name == "add_notes" and not failed:
+                    roster.admit(new_ids)
+                    yield ChatEvent(
+                        "added",
+                        {
+                            "id": block.id,
+                            "note_ids": ids,
+                            "rationale": str(tool_input.get("rationale") or ""),
+                        },
+                    )
+                    continue
                 yield ChatEvent(
                     "reading",
                     {

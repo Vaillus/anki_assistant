@@ -24,6 +24,7 @@ from anki_assistant.chat import (
     CorpusEntry,
     ReadTool,
     SourceLoader,
+    WorkspaceCard,
     default_model,
     format_decks,
     format_note_type,
@@ -53,10 +54,30 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class CardIn(BaseModel):
+    """One card of the workspace as the client holds it (specs/chat.md#api)."""
+
+    wid: str
+    note_id: int | None = None
+    fields: dict[str, str] = Field(default_factory=dict)
+    deck: str = ""
+    model: str = ""
+    tags: list[str] = Field(default_factory=list)
+    active: bool = True
+    original_fields: dict[str, str] | None = None
+    flagged_clozes: list[int] = Field(default_factory=list)
+    reason: str = ""
+    anchor_ids: list[str] = Field(default_factory=list)
+    deleted: bool = False
+    keep: bool = False
+    move_to: str | None = None
+    parent_wid: str | None = None
+
+
 class ChatRequest(BaseModel):
     deck: str
-    #: Notes in context: the selected note first, then the attached ones.
-    note_ids: list[int] = Field(default_factory=list)
+    #: The workspace, root first (block 4 of the system prompt).
+    cards: list[CardIn] = Field(default_factory=list)
     #: Attached sources (block 3 of the system prompt), by source id.
     source_ids: list[str] = Field(default_factory=list)
     messages: list[ChatMessage] = Field(default_factory=list)
@@ -197,9 +218,6 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
     anki = request.app.state.anki
     store: SourceStore = request.app.state.store
 
-    def load_note(note_id: int) -> Any:
-        return review.get_note(anki, note_id)
-
     def load_corpus(deck: str) -> list[CorpusEntry]:
         return [
             CorpusEntry(
@@ -225,10 +243,9 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
         events = stream_chat(
             client,
             body.deck,
-            body.note_ids,
+            [WorkspaceCard(**card.model_dump()) for card in body.cards],
             body.source_ids,
             [message.model_dump() for message in body.messages],
-            load_note,
             load_corpus,
             load_source,
             read_tools=read_tools_for(anki, store, body.deck, load_source),

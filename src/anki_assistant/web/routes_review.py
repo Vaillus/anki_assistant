@@ -5,25 +5,17 @@ A thin HTTP shell over `review.py`: parse the body, call the pure function, map 
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient, AnkiConnectError
-from anki_assistant.review import DeckNotes, DeckSummary, NoteNotFound, NoteView, SplitResult
+from anki_assistant.client import AnkiClient
+from anki_assistant.review import DeckNotes, DeckSummary, NoteView, SplitResult
 from anki_assistant.sources import SourceStore
+from anki_assistant.web.errors import anki_errors
+from anki_assistant.workspace import anchors_after_move
 
 router = APIRouter()
-
-# `AnkiClient.invoke` wraps a URLError with this prefix; it is the one AnkiConnect failure that
-# means "Anki is not running" rather than "Anki refused the request".
-UNREACHABLE_PREFIX = "Cannot reach"
-
-
-# ------------------------------------------------------------------- plumbing
 
 
 def _anki(request: Request) -> AnkiClient:
@@ -34,17 +26,7 @@ def _store(request: Request) -> SourceStore:
     return request.app.state.store
 
 
-@contextmanager
-def _anki_errors() -> Iterator[None]:
-    """Unknown note -> 404, Anki unreachable -> 503, any other AnkiConnect failure -> 502."""
-    try:
-        yield
-    except NoteNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except AnkiConnectError as exc:
-        message = str(exc)
-        status = 503 if message.startswith(UNREACHABLE_PREFIX) else 502
-        raise HTTPException(status_code=status, detail=message) from exc
+_anki_errors = anki_errors
 
 
 # ---------------------------------------------------------------------- bodies
@@ -87,6 +69,10 @@ class MoveBody(BaseModel):
     deck: str
 
 
+class LookupBody(BaseModel):
+    note_ids: list[int] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------- routes
 
 
@@ -100,6 +86,14 @@ def get_decks(request: Request) -> list[DeckSummary]:
 def get_notes(request: Request, deck: str = Query(...)) -> DeckNotes:
     with _anki_errors():
         return review.list_notes(_anki(request), deck)
+
+
+@router.post("/notes/lookup")
+def lookup_notes(request: Request, body: LookupBody) -> list[NoteView]:
+    """Several notes by id, unknown ids dropped, order kept — the workspace materialises its
+    cards with it (specs/workspace.md#how-notes-enter)."""
+    with _anki_errors():
+        return review.get_notes(_anki(request), body.note_ids)
 
 
 @router.get("/notes/{note_id}")
@@ -167,10 +161,7 @@ def move_note(request: Request, note_id: int, body: MoveBody) -> NoteView:
     with _anki_errors():
         view = review.move(_anki(request), note_id, body.deck)
     # An anchor survives the move only if its source is in the destination's corpus.
-    anchors = store.anchors(note_id)
-    if anchors:
-        in_destination = {source.id for source in store.corpus(body.deck)}
-        store.set_anchors(note_id, [sid for sid in anchors if sid in in_destination])
+    anchors_after_move(store, note_id, body.deck)
     return view
 
 

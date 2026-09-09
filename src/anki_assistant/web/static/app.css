@@ -1,95 +1,112 @@
 /* anki-assistant — review UI. Three columns (layout validated by prototype variant A).
-   Light + dark themes (specs/review.md#theme): every colour is a token below, nothing
-   else in this file hardcodes one. The resolved theme is stamped on <html> as
-   data-theme by the inline script in index.html, so there is exactly one dark block. */
+   Terminal palette (specs/review.md#theme): the colours are an ANSI-16 terminal theme
+   — Tokyo Night for dark, Tokyo Night Day for light — and nothing else in this file
+   hardcodes one. Two layers:
+
+     1. the ANSI layer (--term-bg/--term-fg and --ansi-*), one block per theme, holding
+        the raw terminal colours exactly as the alacritty theme publishes them;
+     2. the semantic layer (--accent, --flag, --ok, …), one block for both themes,
+        binding every name the rules below use onto an ANSI slot.
+
+   Every fill is derived with color-mix from its ANSI hue rather than hand-picked, so a
+   new terminal theme is a change to the ANSI layer alone. The resolved theme is stamped
+   on <html> as data-theme by the inline script in index.html. */
+
+/* ---------- ANSI layer: light (Tokyo Night Day) ---------- */
 
 :root {
   color-scheme: light;
-  --bg: #f6f5f1;
-  --panel: #fff;
-  --raised: #faf9f6;       /* excerpts, previews */
-  --hover: #f3f2ee;
-  --ink: #1d1c1a;
-  --ink-dim: #444;
-  --muted: #7a7772;
-  --dim: #aaa;          /* deck with no flag left */
-  --line: #e4e1da;
-  --line-strong: #bbb;     /* hovered control border */
-  --flag: #e08a2c;
-  --flagbg: #fff3e4;
-  --clozehidden: #fff1d6;
-  --on-flag: #fff;
-  --accent: #2f5fd0;
-  --accentbg: #e9efff;
-  --accentline: #c9d8fb;
-  --clozebg: #dfe9ff;
-  --on-accent: #fff;
-  --danger: #a12626;
-  --dangerline: #f0c9c9;
-  --dangerbg: #fdecec;
-  --on-danger: #fff;
-  --ok: #1f7a4d;
-  --okline: #bfe0cd;
-  --okbg: #f4fbf7;
-  --diffokbg: #edf8f1;
-  --neutralbg: #eee;       /* `kind` pill and friends */
-  --neutralink: #555;
-  --zerobg: #ddd;
-  --zeroink: #666;
-  --obsidianbg: #eadff7;
-  --obsidianink: #5b2d91;
-  --pdfbg: #fde2e2;
-  --pdfink: #a12626;
-  --noteselbg: #f4f7ff;
-  --notehover: #fbfaf7;
-  --assistantbg: #f0efeb;
-  --shadow: rgba(0, 0, 0, .25);
-  --backdrop: rgba(0, 0, 0, .35);
-  --mono: ui-monospace, Menlo, Consolas, monospace;
+  --term-bg: #e1e2e7;
+  --term-fg: #3760bf;
+  --ansi-black: #b4b5b9;
+  --ansi-red: #f52a65;
+  --ansi-green: #587539;
+  --ansi-yellow: #8c6c3e;
+  --ansi-blue: #2e7de9;
+  --ansi-magenta: #9854f1;
+  --ansi-cyan: #007197;
+  --ansi-white: #6172b0;
+  --ansi-br-black: #a1a6c5;
+  --ansi-br-red: #ff4774;
+  --ansi-br-green: #5c8524;
+  --ansi-br-yellow: #a27629;
+  --ansi-br-blue: #358aff;
+  --ansi-br-magenta: #a463ff;
+  --ansi-br-cyan: #007ea8;
+  --ansi-br-white: #3760bf;
 }
+
+/* ---------- ANSI layer: dark (Tokyo Night) ---------- */
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #161513;
-  --panel: #201f1d;
-  --raised: #1a1917;
-  --hover: #2a2825;
-  --ink: #e9e7e2;
-  --ink-dim: #bdb9b1;
-  --muted: #97938b;
-  --dim: #6d6963;
-  --line: #35332f;
-  --line-strong: #565248;
-  --flag: #e6a44e;
-  --flagbg: #392a16;
-  --clozehidden: #392a16;
-  --on-flag: #2a1c08;
-  --accent: #8aa9ff;
-  --accentbg: #232c46;
-  --accentline: #3d4a6b;
-  --clozebg: #26314f;
-  --on-accent: #131a2c;
-  --danger: #f08b8b;
-  --dangerline: #6b3838;
-  --dangerbg: #33201f;
-  --on-danger: #2a1010;
-  --ok: #6cc79a;
-  --okline: #2f5c46;
-  --okbg: #1c2a23;
-  --diffokbg: #1c2a23;
-  --neutralbg: #31302c;
-  --neutralink: #b4b0a8;
-  --zerobg: #3a3835;
-  --zeroink: #8e8a83;
-  --obsidianbg: #352748;
-  --obsidianink: #c7aef0;
-  --pdfbg: #422323;
-  --pdfink: #f0a8a8;
-  --noteselbg: #232c46;
-  --notehover: #262421;
-  --assistantbg: #2a2825;
-  --shadow: rgba(0, 0, 0, .6);
-  --backdrop: rgba(0, 0, 0, .55);
+  --term-bg: #1a1b26;
+  --term-fg: #a9b1d6;
+  --ansi-black: #32344a;
+  --ansi-red: #f7768e;
+  --ansi-green: #9ece6a;
+  --ansi-yellow: #e0af68;
+  --ansi-blue: #7aa2f7;
+  --ansi-magenta: #ad8ee6;
+  --ansi-cyan: #449dab;
+  --ansi-white: #787c99;
+  --ansi-br-black: #444b6a;
+  --ansi-br-red: #ff7a93;
+  --ansi-br-green: #b9f27c;
+  --ansi-br-yellow: #ff9e64;
+  --ansi-br-blue: #7da6ff;
+  --ansi-br-magenta: #bb9af7;
+  --ansi-br-cyan: #0db9d7;
+  --ansi-br-white: #acb0d0;
+}
+
+/* ---------- semantic layer: shared by both themes ----------
+   A terminal has one background: --panel is --bg, and the 1px rules do the separating.
+   The tinted fills below have no equivalent in a 16-colour palette; deriving them from
+   their hue keeps them coherent until the rules that use them move to reverse video. */
+
+:root {
+  --bg: var(--term-bg);
+  --panel: var(--term-bg);
+  --raised: color-mix(in srgb, var(--ansi-black) 30%, var(--term-bg));   /* excerpts, previews */
+  --hover: color-mix(in srgb, var(--ansi-br-black) 22%, var(--term-bg));
+  --ink: var(--term-fg);
+  --ink-dim: var(--ansi-white);
+  --muted: var(--ansi-br-black);
+  --dim: color-mix(in srgb, var(--ansi-br-black) 60%, var(--term-bg));   /* deck with no flag left */
+  --line: color-mix(in srgb, var(--ansi-br-black) 55%, var(--term-bg));
+  --line-strong: var(--ansi-br-black);                                   /* hovered control border */
+  --flag: var(--ansi-yellow);
+  --flagbg: color-mix(in srgb, var(--ansi-yellow) 15%, var(--term-bg));
+  --clozehidden: color-mix(in srgb, var(--ansi-yellow) 18%, var(--term-bg));
+  --on-flag: var(--term-bg);
+  --accent: var(--ansi-blue);
+  --accentbg: color-mix(in srgb, var(--ansi-blue) 15%, var(--term-bg));
+  --accentline: color-mix(in srgb, var(--ansi-blue) 40%, var(--term-bg));
+  --clozebg: color-mix(in srgb, var(--ansi-blue) 20%, var(--term-bg));
+  --on-accent: var(--term-bg);
+  --danger: var(--ansi-red);
+  --dangerline: color-mix(in srgb, var(--ansi-red) 40%, var(--term-bg));
+  --dangerbg: color-mix(in srgb, var(--ansi-red) 14%, var(--term-bg));
+  --on-danger: var(--term-bg);
+  --ok: var(--ansi-green);
+  --okline: color-mix(in srgb, var(--ansi-green) 40%, var(--term-bg));
+  --okbg: color-mix(in srgb, var(--ansi-green) 12%, var(--term-bg));
+  --diffokbg: color-mix(in srgb, var(--ansi-green) 14%, var(--term-bg));
+  --neutralbg: color-mix(in srgb, var(--ansi-br-black) 25%, var(--term-bg));  /* `kind` pill and friends */
+  --neutralink: var(--ansi-white);
+  --zerobg: color-mix(in srgb, var(--ansi-br-black) 18%, var(--term-bg));
+  --zeroink: var(--ansi-br-black);
+  --obsidianbg: color-mix(in srgb, var(--ansi-magenta) 16%, var(--term-bg));
+  --obsidianink: var(--ansi-magenta);
+  --pdfbg: color-mix(in srgb, var(--ansi-red) 14%, var(--term-bg));
+  --pdfink: var(--ansi-red);
+  --noteselbg: color-mix(in srgb, var(--ansi-blue) 10%, var(--term-bg));
+  --notehover: color-mix(in srgb, var(--ansi-br-black) 14%, var(--term-bg));
+  --assistantbg: color-mix(in srgb, var(--ansi-br-black) 16%, var(--term-bg));
+  --backdrop: rgba(0, 0, 0, .5);
+  --mono: "CaskaydiaMono Nerd Font", "CaskaydiaCove Nerd Font", "JetBrains Mono",
+          ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -98,7 +115,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font: 14px/1.45 -apple-system, system-ui, "Segoe UI", sans-serif;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
   height: 100vh;
   overflow: hidden;
 }
@@ -113,7 +132,6 @@ button {
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--ink);
-  border-radius: 6px;
   padding: 4px 10px;
 }
 button:hover:not(:disabled) { border-color: var(--line-strong); }
@@ -126,7 +144,6 @@ button.danger.solid { background: var(--danger); border-color: var(--danger); co
 input, textarea, select {
   font: inherit;
   border: 1px solid var(--line);
-  border-radius: 6px;
   padding: 6px 8px;
   background: var(--panel);
   color: var(--ink);
@@ -146,7 +163,6 @@ a { color: var(--accent); }
   display: inline-block;
   min-width: 20px;
   padding: 0 6px;
-  border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
   text-align: center;
@@ -162,7 +178,6 @@ a { color: var(--accent); }
   background: var(--clozebg);
   border-bottom: 2px solid var(--accent);
   padding: 0 3px;
-  border-radius: 3px;
 }
 /* cloze number label, since most notes carry several clozes and the flag is per card */
 .cloze::before {
@@ -190,7 +205,6 @@ a { color: var(--accent); }
   font-family: var(--mono);
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 4px;
   background: var(--neutralbg);
   color: var(--neutralink);
 }
@@ -203,7 +217,6 @@ a { color: var(--accent); }
   gap: 4px;
   background: var(--accentbg);
   color: var(--accent);
-  border-radius: 12px;
   padding: 1px 8px;
   font-size: 12px;
   font-family: var(--mono);
@@ -218,15 +231,13 @@ a { color: var(--accent); }
   margin-top: 8px;
 }
 .field-val { font-size: 15px; overflow-wrap: anywhere; }
-.field-val.small { font-size: 13px; color: var(--ink-dim); }
 .field-val .context { color: var(--ink-dim); font-size: 13px; }
 
 .reason {
   background: var(--flagbg);
   border-left: 3px solid var(--flag);
   padding: 6px 10px;
-  border-radius: 0 6px 6px 0;
-  margin: 4px 0 10px;
+  margin: 10px 0 4px;
   font-size: 13px;
 }
 .reason .reason-label {
@@ -244,7 +255,6 @@ a { color: var(--accent); }
 .banner {
   margin: 8px 12px;
   padding: 8px 10px;
-  border-radius: 6px;
   font-size: 13px;
   display: flex;
   gap: 8px;
@@ -314,7 +324,7 @@ a { color: var(--accent); }
 
 /* ---------- source tab ---------- */
 
-.source { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.source { border: 1px solid var(--line); padding: 10px; margin-bottom: 10px; }
 .source-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .source-head b { overflow-wrap: anywhere; }
 .excerpt {
@@ -324,14 +334,13 @@ a { color: var(--accent); }
   color: var(--ink-dim);
   background: var(--raised);
   border: 1px solid var(--line);
-  border-radius: 6px;
   padding: 10px;
   max-height: 42vh;
   overflow: auto;
   margin: 8px 0 0;
 }
 .warn { color: var(--flag); font-size: 12px; }
-.src-form { border: 1px dashed var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; }
+.src-form { border: 1px dashed var(--line); padding: 10px; margin-top: 10px; }
 .src-form label { display: block; font-size: 11px; color: var(--muted); margin: 6px 0 2px; }
 .src-form input, .src-form select { width: 100%; }
 
@@ -343,7 +352,7 @@ a { color: var(--accent); }
 .chat textarea { width: 100%; height: 68px; }
 .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; min-height: 18px; }
 
-.msg { padding: 8px 10px; border-radius: 8px; margin: 6px 0; max-width: 95%; white-space: pre-wrap; }
+.msg { padding: 8px 10px; margin: 6px 0; max-width: 95%; white-space: pre-wrap; }
 .msg.user { background: var(--accentbg); margin-left: auto; }
 .msg.assistant { background: var(--assistantbg); }
 .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
@@ -352,7 +361,6 @@ a { color: var(--accent); }
 .proposal {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
   padding: 8px 10px;
   margin: 8px 0;
 }
@@ -362,15 +370,14 @@ a { color: var(--accent); }
   font-family: var(--mono);
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: 4px;
   background: var(--accentbg);
   color: var(--accent);
   text-transform: uppercase;
 }
 .rationale { font-size: 13px; margin-bottom: 6px; }
 .diff { border-top: 1px dashed var(--line); padding-top: 6px; }
-.diff .before { background: var(--dangerbg); border-left: 3px solid var(--dangerline); padding: 4px 8px; border-radius: 0 4px 4px 0; }
-.diff .after { background: var(--diffokbg); border-left: 3px solid var(--okline); padding: 4px 8px; border-radius: 0 4px 4px 0; margin-top: 4px; }
+.diff .before { background: var(--dangerbg); border-left: 3px solid var(--dangerline); padding: 4px 8px; }
+.diff .after { background: var(--diffokbg); border-left: 3px solid var(--okline); padding: 4px 8px; margin-top: 4px; }
 .diff details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 6px; }
 .applied-mark { color: var(--ok); font-size: 13px; font-weight: 600; }
 .proposal .revert { font-size: 12px; padding: 2px 8px; margin-left: 6px; }
@@ -382,7 +389,6 @@ button.chip, select.chip {
   border: 1px dashed var(--accent);
   background: transparent;
   color: var(--accent);
-  border-radius: 12px;
   padding: 1px 8px;
   font-size: 12px;
   font-family: var(--mono);
@@ -406,8 +412,7 @@ select.chip { appearance: none; -webkit-appearance: none; }
   grid-template-columns: minmax(340px, 3fr) minmax(300px, 2fr);
   background: var(--panel);
   color: var(--ink);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px var(--shadow);
+  border: 1px solid var(--line-strong);
   overflow: hidden;
 }
 .ws-cards { overflow: auto; padding: 0 18px 24px; border-right: 1px solid var(--line); }
@@ -431,7 +436,7 @@ select.chip { appearance: none; -webkit-appearance: none; }
 .ws-head b { font-family: var(--mono); font-size: 14px; }
 .ws-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.ws-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 12px; background: var(--panel); }
+.ws-card { border: 1px solid var(--line); padding: 10px 12px; margin-top: 12px; background: var(--panel); }
 .ws-card.off { opacity: .55; }
 .ws-card.draft { border-style: dashed; }
 .ws-card.deleted .field-val { text-decoration: line-through; opacity: .6; }
@@ -445,16 +450,15 @@ select.chip { appearance: none; -webkit-appearance: none; }
   width: 14px;
   border-left: 2px solid var(--accentline);
   border-bottom: 2px solid var(--accentline);
-  border-radius: 0 0 0 8px;
 }
 .ws-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; cursor: pointer; margin-bottom: 6px; min-height: 26px; }
 .ws-card-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
-.ws-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); flex: none; }
+.ws-dot { width: 10px; height: 10px; border: 2px solid var(--accent); flex: none; }
 .ws-dot.on { background: var(--accent); }
 .ws-versions { display: inline-flex; align-items: center; gap: 2px; }
 .ws-versions button { padding: 0 6px; }
 .ws-version { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
-.ws-card .field-val.editable { cursor: text; border-radius: 4px; padding: 2px 4px; margin: 0 -4px; }
+.ws-card .field-val.editable { cursor: text; padding: 2px 4px; margin: 0 -4px; }
 .ws-card .field-val.editable:hover { background: var(--hover); }
 .ws-edit { width: 100%; min-height: 90px; font-family: var(--mono); font-size: 12px; margin: 2px 0 6px; }
 .ws-move { height: auto; padding: 1px 6px; font-size: 12px; max-width: 160px; }

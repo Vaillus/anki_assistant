@@ -46,7 +46,7 @@ A corpus can be large (ten notes for a big deck). A single note usually comes fr
 
 Each anchor is qualified separately. It is **valid** when its source is in the effective corpus of the note's deck (own or inherited), **dangling** when the source id exists but is not in that corpus (the note was moved, or the deck's corpus was rewritten). A note's whole entry is **orphan** when the note no longer exists in Anki. `SourceStore` cannot tell orphan from valid on its own — that needs Anki — so it exposes the raw mapping and lets `review.py` / the routes qualify it.
 
-Lifecycle rules (enforced by the routes that perform each action, see [review.md](./review.md#decisions)):
+Lifecycle rules (enforced by `workspace.apply` at validation, see [workspace.md](./workspace.md#validation), and by the review routes when called directly):
 
 - **Note deleted** → its anchors become orphan. Not removed eagerly (the delete path should not fail on a `sources.json` write); cleaned by « nettoyer » below.
 - **Source removed from a corpus** → that source id is removed from every note's list. The UI warns first: « 3 notes sont ancrées à cette source ».

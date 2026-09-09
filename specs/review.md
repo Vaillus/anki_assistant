@@ -43,28 +43,22 @@ Column 1 shows by default only decks with `flagged_total > 0`, indented by depth
 
 ## Decisions
 
-The selected note expands with a button row (validated in prototype): **Garder** (primary) · Modifier · Splitter · Créer · Déplacer · **Supprimer** (danger) · Passer. Every decision except **Garder** and **Passer** opens a dialog before it writes (see [Frontend](#frontend)).
+The queue offers three gestures on a note. Everything that edits a note — rewrite, split, create a sibling, move, delete — happens in the **workspace** ([workspace.md](./workspace.md)), which writes at its own validation.
 
-| Decision | Anki writes | Flag | Queue |
-|---|---|---|---|
-| Garder | none | cleared on all cards | note leaves |
-| Modifier | `updateNote` (fields and/or tags) | cleared | note leaves |
-| Splitter | new notes added in the same deck; original updated **or** deleted | cleared on original if kept | original leaves; new notes are unflagged |
-| Créer | `addNote` in the same deck (sibling); original untouched | original keeps its flag | new note appears unflagged, original stays |
-| Déplacer | `changeDeck` on all cards | cleared | note leaves this deck |
-| Supprimer | `deleteNotes` | — | note leaves |
-| Passer | none | kept | selection moves to next note, nothing else |
+| Gesture | How | Anki writes | Flag | Queue |
+|---|---|---|---|---|
+| Garder | « garder » control in the note head, or `g` on the selected note | none | cleared on all cards | note leaves |
+| Passer | `p`, or `j`/`k` | none | kept | selection moves to the next note, nothing else |
+| Ouvrir | click on the note, or `Entrée` on the selected note | none (until the workspace validates) | — | the workspace opens on the note |
 
 Rules:
 
 - Clearing a flag = `setSpecificValueOfCard(card, ["flags"], [0])` for **every card of the note**.
-- **Splitter** default: the original note is kept and becomes the first fragment (its fields edited); the other fragments are new notes. This keeps the original's scheduling history. The split dialog offers « supprimer l'original » as an explicit checkbox instead. New notes: same deck as the original, same tags, model defaults to the original's model (the dialog can pick another model from `modelNames`).
-- **Créer** opens the same note editor as split fragments: model picker defaulting to the original's, fields from `modelFieldNames`, tags prefilled from the original. The new note goes in the **original note's own deck** (which may be a sub-deck of the selected deck), not the selected deck.
-- **Déplacer** offers the full deck list (`deckNames`) in a searchable select, current deck preselected. Each anchor is kept if its source is in the destination's effective corpus, removed otherwise; the dialog says which.
-- **Anchors** follow the note ([sources.md](./sources.md#anchors)): split fragments inherit the original's anchors; **Créer** shows an anchor picker defaulting to the original's; **Supprimer** leaves the anchors to be removed later by « nettoyer ».
-- **Supprimer** and « supprimer l'original » in split require a confirm click. Nothing else does.
-- Clearing the reason: when a decision resolves a note that has a `reason`, the edit/split dialogs prefill `Back Extra` unchanged but show a « vider Back Extra » toggle, on by default. **Garder** clears nothing (the flag was a false alarm, the note is fine as is).
-- After any decision the client re-fetches the deck's notes and the deck counts (`/api/decks`), then selects the next flagged note in the visible list (or nothing if the queue is empty, showing « Rien à revoir ici »).
+- **Garder** clears nothing but the flag: the flag was a false alarm, the note is fine as is, its `Back Extra` stays. No confirmation.
+- After **Garder** and after a workspace closes (validated or discarded), the client re-fetches the deck's notes and the deck counts (`/api/decks`), then selects the next flagged note in the visible list (or nothing if the queue is empty, showing « Rien à revoir ici »).
+- The queue header shows « Annuler la dernière validation » while the server holds one ([workspace.md § Undo](./workspace.md#undo)).
+
+The decisions themselves — what a split, a move or a delete writes, how anchors follow the note — are specified in [workspace.md § Validation](./workspace.md#validation); `review.py` keeps the functions that perform them (`edit`, `split`, `create`, `move`, `delete`), used by `workspace.apply`, and their HTTP routes below stay available for the CLI and the tests.
 
 ## Rendering
 
@@ -97,6 +91,7 @@ All under `/api`. Errors from AnkiConnect surface as HTTP 502 `{ "detail": "<mes
 | `GET /api/decks` | — | `Deck[]` |
 | `GET /api/notes?deck=` | — | `{ deck, total, flagged, notes: Note[] }` |
 | `GET /api/notes/{id}` | — | `Note` |
+| `POST /api/notes/lookup` | `{ note_ids: [int] }` | `Note[]` (unknown ids dropped, order kept) — used by the workspace to materialise cards |
 | `POST /api/notes/{id}/keep` | — | `Note` (flags cleared) |
 | `PATCH /api/notes/{id}` | `{ fields?: {…}, tags?: [...], unflag?: true, reflag?: [card_id] }` | `Note` |
 | `POST /api/notes/{id}/split` | `{ original: { fields, tags? } \| null, new_notes: [{ model?, fields, tags? }] }` | `{ original: Note \| null, created: Note[] }` |
@@ -107,15 +102,15 @@ All under `/api`. Errors from AnkiConnect surface as HTTP 502 `{ "detail": "<mes
 
 Anchors are read and written through `SourceStore` by the routes: `list_notes` / `get_note` attach `anchors`; `split` copies the original's anchors onto the created notes; `move` re-checks each against the destination corpus; `POST /api/notes` writes `source_ids`.
 
-`original: null` in split deletes the original **after** the new notes were created successfully. `PATCH` with `unflag` omitted defaults to `true`. `reflag` puts a flag back on the listed cards (used by the chat's undo, [chat.md](./chat.md#undo)); the colour is red, since colours carry no meaning here.
+`original: null` in split deletes the original **after** the new notes were created successfully. `PATCH` with `unflag` omitted defaults to `true`. `reflag` puts a flag back on the listed cards (used by the workspace's rollback and undo, [workspace.md](./workspace.md#undo)); the colour is red, since colours carry no meaning here. The workspace's own endpoints (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 
 ## Frontend
 
-Single page, vanilla JS in `app.js`, one in-memory state object, full re-render on change (same approach as the prototype). Layout and classes may start from `prototype/review_ui/static/*` variant A, rewritten properly (the prototype is not imported).
+Single page, vanilla JS split in `state.js` (state and helpers), `api.js`, `render.js` (the three columns), `workspace.js` (the overlay), `app.js` (events, boot); one in-memory state object, full re-render on change (same approach as the prototype). Layout and classes may start from `prototype/review_ui/static/*` variant A, rewritten properly (the prototype is not imported).
 
-Keyboard: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `p` = Passer; `Espace` = Révéler (see [Question state](#question-state)); `Esc` closes a dialog. Keys are ignored while an input, textarea or select is focused.
+Keyboard, workspace closed: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `p` = Passer; `Entrée` = Ouvrir; `Espace` = Révéler (see [Question state](#question-state)). Keys are ignored while an input, textarea or select is focused. Workspace open: see [workspace.md § Keyboard](./workspace.md#keyboard).
 
-Dialogs (edit, split, create, move, delete-confirm) are plain `<dialog>` elements. The note editor inside edit/split/create shows one `<textarea>` per field holding the **raw** value, with a live preview underneath rendered client-side with the same rules as `render.py` (a small JS port is acceptable; it is display-only).
+There are no dialogs: every edit happens on a workspace card, raw value in a `<textarea>` on click, rendered client-side otherwise with the same rules as `render.py` (a JS port, display-only). Native `confirm()` is enough for the two confirmations left (discarding a workspace with changes, validating a plan that deletes).
 
 ### Theme
 

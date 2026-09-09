@@ -51,28 +51,45 @@ function deckColumn() {
     : '<div class="empty">Aucun deck flagué 🎉</div>';
   return (
     '<div class="col" data-scroll="decks">' +
-    '<div class="col-head"><h2>Decks</h2><span class="grow"></span>' +
+    '<div class="col-head">' +
+    '<img class="logo" src="/static/star.svg" alt="" width="20" height="20">' +
+    "<h2>Decks</h2><span class=\"grow\"></span>" +
     '<button class="ghost" data-act="alldecks">' +
     (S.showAllDecks ? "flagués seuls" : "tous") +
     "</button>" +
-    themeButton() +
+    themePicker() +
     "</div>" +
     rows +
     "</div>"
   );
 }
 
-/* specs/review.md#theme — shows the theme you would switch to. */
-function themeButton() {
-  const dark = currentTheme() === "dark";
-  return (
-    '<button class="ghost" data-act="theme" title="' +
-    (dark ? "Passer en clair" : "Passer en sombre") +
-    '" aria-label="' +
-    (dark ? "Passer en clair" : "Passer en sombre") +
+/* specs/review.md#theme — every Omarchy palette, grouped by mode. The selection
+   repaints on change, so the list doubles as a way to try them on. */
+function themePicker() {
+  const cur = currentTheme();
+  const group = (mode, label) =>
+    '<optgroup label="' +
+    label +
     '">' +
-    (dark ? "☀" : "☾") +
-    "</button>"
+    THEMES.filter((t) => t.mode === mode)
+      .map(
+        (t) =>
+          '<option value="' +
+          t.slug +
+          '"' +
+          (t.slug === cur ? " selected" : "") +
+          ">" +
+          esc(t.label) +
+          "</option>",
+      )
+      .join("") +
+    "</optgroup>";
+  return (
+    '<select class="chip theme" data-input="theme" title="Thème" aria-label="Thème">' +
+    group("dark", "sombre") +
+    group("light", "clair") +
+    "</select>"
   );
 }
 
@@ -180,8 +197,8 @@ function noteCard(n) {
         ">garder</button>"
       : "") +
     "</div>" +
-    reasonHtml(n) +
     fieldsHtml(n) +
+    reasonHtml(n) +
     revealHtml(n) +
     '<div class="open-hint muted small">cliquer ou Entrée : ouvrir l\'espace de travail</div>' +
     "</div>"
@@ -212,6 +229,7 @@ function revealHtml(n) {
   );
 }
 
+/* The reason, below the fields — the only place « Back Extra » is shown in the queue. */
 function reasonHtml(n) {
   if (!n.flagged || !n.reason) return "";
   return (
@@ -228,16 +246,11 @@ function fieldsHtml(n) {
   const ns = hidden ? flaggedClozes(n) : [];
   return names
     .map((name) => {
+      if (name === REASON_FIELD) return "";
       const v = hidden ? hideClozes(html[name], ns) : html[name];
       if (!v) return "";
       return (
-        '<div class="field-name">' +
-        esc(name) +
-        '</div><div class="field-val' +
-        (name === REASON_FIELD ? " small" : "") +
-        '">' +
-        v +
-        "</div>"
+        '<div class="field-name">' + esc(name) + '</div><div class="field-val">' + v + "</div>"
       );
     })
     .join("");

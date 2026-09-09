@@ -7,34 +7,40 @@
 
 const THEME_KEY = "anki-theme"; // same key as the inline script in index.html
 
+function isTheme(slug) {
+  return THEMES.some((t) => t.slug === slug);
+}
+
 function storedTheme() {
   try {
     const t = localStorage.getItem(THEME_KEY);
-    return t === "light" || t === "dark" ? t : null;
+    return isTheme(t) ? t : null;
   } catch (e) {
-    return null; // private mode: the toggle works for this session only
+    return null; // private mode: the picker works for this session only
   }
 }
 
-function systemTheme() {
+function systemMode() {
   return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
 }
 
-/* The theme actually painted: the user's stored choice if any, else the OS preference. */
+/* The theme actually painted: the user's stored choice if any, else the default for
+   whichever of light/dark the OS asks for. */
 function currentTheme() {
-  return S.theme || systemTheme();
+  return S.theme || DEFAULT_THEME[systemMode()];
 }
 
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", currentTheme());
 }
 
-function toggleTheme() {
-  S.theme = currentTheme() === "dark" ? "light" : "dark";
+function setTheme(slug) {
+  S.theme = isTheme(slug) ? slug : null;
   try {
-    localStorage.setItem(THEME_KEY, S.theme);
+    if (S.theme) localStorage.setItem(THEME_KEY, S.theme);
+    else localStorage.removeItem(THEME_KEY);
   } catch (e) {
     /* not stored, still applied */
   }
@@ -78,7 +84,7 @@ const S = {
   // misc
   models: null, // { modelName: [fieldNames] }
   refocus: null,
-  theme: storedTheme(), // "light" | "dark" once chosen; null = follow the OS
+  theme: storedTheme(), // an Omarchy slug once chosen; null = follow the OS's light/dark
 };
 
 const REASON_FIELD = "Back Extra";

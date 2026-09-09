@@ -240,9 +240,6 @@ document.addEventListener("click", (e) => {
 
   if (act === "deck") {
     selectDeck(el.getAttribute("data-deck"));
-  } else if (act === "theme") {
-    toggleTheme();
-    draw();
   } else if (act === "alldecks") {
     S.showAllDecks = !S.showAllDecks;
     draw();
@@ -294,6 +291,10 @@ document.addEventListener("input", (e) => {
   const el = e.target.closest("[data-input]");
   if (!el) return;
   const key = el.getAttribute("data-input");
+  if (key === "theme") {
+    setTheme(el.value); // reachable from behind the overlay, so it comes before the guards
+    return;
+  }
   if (S.ws) {
     wsInput(key, el);
     return;

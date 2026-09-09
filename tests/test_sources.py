@@ -45,7 +45,11 @@ def test_legacy_single_object_read_and_rewritten_as_list(tmp_path: Path) -> None
     store.save()
     raw = json.loads(store_path.read_text(encoding="utf-8"))
     assert isinstance(raw["decks"]["a::b"], list)
-    assert raw["decks"]["a::b"] == [{"kind": "obsidian", "target": "note"}]
+    (entry,) = raw["decks"]["a::b"]
+    # An entry without id gets one on load and it is written back (specs/sources.md).
+    assert len(entry.pop("id")) == 6
+    assert entry == {"kind": "obsidian", "target": "note"}
+    assert raw["anchors"] == {}
 
 
 def test_inheritance_from_nearest_ancestor(tmp_path: Path) -> None:
@@ -303,3 +307,209 @@ def _isolate_pdf_cache():
     sources_module._PDF_TEXT_CACHE.clear()
     yield
     sources_module._PDF_TEXT_CACHE.clear()
+
+
+# --------------------------------------------------------------- ids and anchors
+
+
+def _store_with_vault(tmp_path: Path) -> SourceStore:
+    store = SourceStore(path=tmp_path / "sources.json")
+    (tmp_path / "vault").mkdir()
+    store.vault = Vault(name="V", path=tmp_path / "vault")
+    return store
+
+
+def test_set_corpus_assigns_ids_and_by_id_finds_them_across_decks(tmp_path: Path) -> None:
+    store = SourceStore(path=tmp_path / "sources.json")
+    store.set_corpus("a", [Source(deck="a", kind="obsidian", target="x")])
+    store.set_corpus("b", [Source(deck="b", kind="obsidian", target="y", id="fixed1")])
+    (x,) = store.corpus("a")
+    assert len(x.id) == 6 and x.id.islower()
+    assert store.by_id(x.id) is x
+    fixed = store.by_id("fixed1")
+    assert fixed is not None and fixed.target == "y"
+    assert store.by_id("nope") is None
+
+
+def test_anchors_round_trip_and_reload(tmp_path: Path) -> None:
+    store = SourceStore(path=tmp_path / "sources.json")
+    store.set_corpus(
+        "a",
+        [
+            Source(deck="a", kind="obsidian", target="x", id="srcaaa"),
+            Source(deck="a", kind="obsidian", target="y", id="srcbbb"),
+        ],
+    )
+    assert store.anchors(1) == []
+    store.set_anchors(1, ["srcaaa", "srcbbb", "srcaaa"])  # duplicates dropped, order kept
+    store.add_anchor(2, "srcbbb")
+    store.add_anchor(2, "srcbbb")  # no-op
+    assert store.anchors(1) == ["srcaaa", "srcbbb"]
+    assert store.anchors(2) == ["srcbbb"]
+    assert store.anchors_to("srcbbb") == [1, 2]
+    assert store.anchored_note_ids() == [1, 2]
+
+    reloaded = SourceStore(path=tmp_path / "sources.json")
+    assert reloaded.anchors(1) == ["srcaaa", "srcbbb"]
+
+    with pytest.raises(KeyError):
+        store.set_anchors(3, ["unknown"])
+    store.set_anchors(1, [])
+    assert store.anchors(1) == []
+    assert store.remove_anchors([2, 99]) == 1
+    assert store.anchored_note_ids() == []
+
+
+def test_set_corpus_drops_anchors_to_removed_sources(tmp_path: Path) -> None:
+    store = SourceStore(path=tmp_path / "sources.json")
+    keep = Source(deck="a", kind="obsidian", target="x", id="keep00")
+    gone = Source(deck="a", kind="obsidian", target="y", id="gone00")
+    store.set_corpus("a", [keep, gone])
+    store.set_anchors(1, ["keep00", "gone00"])
+    store.set_anchors(2, ["gone00"])
+
+    _, removed = store.set_corpus("a", [keep])
+    assert removed == 2
+    assert store.anchors(1) == ["keep00"]
+    assert store.anchors(2) == []
+
+
+# -------------------------------------------------------------- vault writes
+
+
+def test_create_note_writes_the_file_and_appends_to_the_own_corpus(tmp_path: Path) -> None:
+    store = _store_with_vault(tmp_path)
+    store.set_corpus("a", [Source(deck="a", kind="pdf", target="p.pdf", id="pdf000")])
+
+    source = store.create_note("a", "maths/kkt.md", "# KKT\n\ncontenu", source_id="new000")
+    assert source.id == "new000"
+    assert source.kind == "obsidian"
+    assert source.target == "maths/kkt"
+    assert (tmp_path / "vault" / "maths" / "kkt.md").read_text(
+        encoding="utf-8"
+    ) == "# KKT\n\ncontenu"
+    assert [s.id for s in store.corpus("a")] == ["pdf000", "new000"]
+
+    with pytest.raises(FileExistsError):
+        store.create_note("a", "maths/kkt", "again")
+    with pytest.raises(ValueError):
+        store.create_note("a", "   ", "blank name")
+
+
+def test_create_note_materialises_an_inherited_corpus_keeping_ids(tmp_path: Path) -> None:
+    store = _store_with_vault(tmp_path)
+    store.set_corpus("a", [Source(deck="a", kind="obsidian", target="x", id="inh000")])
+    store.set_anchors(1, ["inh000"])
+
+    source = store.create_note("a::b", "new", "…")
+    own = store.corpora["a::b"]
+    assert [s.id for s in own] == ["inh000", source.id]
+    assert all(s.deck == "a::b" for s in own)
+    assert store.corpus("a") == [Source(deck="a", kind="obsidian", target="x", id="inh000")]
+    assert store.anchors(1) == ["inh000"]  # the id survived, so did the anchor
+
+
+def test_replace_in_note_requires_exactly_one_match(tmp_path: Path) -> None:
+    store = _store_with_vault(tmp_path)
+    path = tmp_path / "vault" / "n.md"
+    path.write_text("alpha beta alpha gamma", encoding="utf-8")
+    store.set_corpus(
+        "a",
+        [
+            Source(deck="a", kind="obsidian", target="n", id="note00"),
+            Source(deck="a", kind="pdf", target="p.pdf", id="pdf000"),
+        ],
+    )
+
+    store.replace_in_note("note00", "beta", "BETA")
+    assert path.read_text(encoding="utf-8") == "alpha BETA alpha gamma"
+    with pytest.raises(ValueError, match="ambigu"):
+        store.replace_in_note("note00", "alpha", "x")
+    with pytest.raises(ValueError, match="introuvable"):
+        store.replace_in_note("note00", "delta", "x")
+    with pytest.raises(ValueError, match="Obsidian"):
+        store.replace_in_note("pdf000", "a", "b")
+    with pytest.raises(KeyError):
+        store.replace_in_note("nope00", "a", "b")
+
+
+# --------------------------------------------------------------------- routes
+
+
+def _api(tmp_path: Path):  # noqa: ANN202 - TestClient
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from anki_assistant.web import routes_sources
+
+    store = _store_with_vault(tmp_path)
+    (tmp_path / "vault" / "n.md").write_text("un passage unique", encoding="utf-8")
+    store.set_corpus("a", [Source(deck="a", kind="obsidian", target="n", id="note00")])
+    store.set_anchors(7, ["note00"])
+    app = FastAPI()
+    app.state.store = store
+    app.include_router(routes_sources.router, prefix="/api")
+    return TestClient(app, raise_server_exceptions=False), store
+
+
+def test_api_corpus_carries_ids_anchored_and_counts(tmp_path: Path) -> None:
+    api, _ = _api(tmp_path)
+    body = api.get("/api/sources/corpus", params={"deck": "a::b", "note_id": 7}).json()
+    assert body["inherited_from"] == "a"
+    assert body["anchored"] == ["note00"]
+    assert body["sources"][0]["id"] == "note00"
+    assert body["sources"][0]["anchored_count"] == 1
+    assert api.get("/api/sources/corpus", params={"deck": "a"}).json()["anchored"] == []
+
+
+def test_api_put_sources_keeps_ids_and_reports_removed_anchors(tmp_path: Path) -> None:
+    api, store = _api(tmp_path)
+    body = api.put(
+        "/api/sources",
+        params={"deck": "a"},
+        json=[{"kind": "pdf", "target": "p.pdf"}],
+    ).json()
+    assert body["removed_anchors"] == 1
+    assert len(body["sources"][0]["id"]) == 6
+    assert store.anchors(7) == []
+    assert (
+        api.put(
+            "/api/sources/anchors", params={"note_id": 7}, json={"source_ids": ["zz"]}
+        ).status_code
+        == 404
+    )
+
+
+def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
+    api, store = _api(tmp_path)
+    res = api.post(
+        "/api/sources/notes",
+        json={
+            "deck": "a",
+            "name": "maths/kkt",
+            "content": "# KKT",
+            "anchor_note_ids": [7, 8],
+            "id": "chat00",
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["source"]["id"] == "chat00"
+    assert res.json()["source"]["text"] == "# KKT"
+    assert store.anchors(7) == ["note00", "chat00"]
+    assert store.anchors(8) == ["chat00"]
+    again = api.post("/api/sources/notes", json={"deck": "a", "name": "maths/kkt", "content": "x"})
+    assert again.status_code == 409
+
+
+def test_api_replace_source_text_maps_errors(tmp_path: Path) -> None:
+    api, _ = _api(tmp_path)
+    ok = api.patch("/api/sources/note00/text", json={"old": "unique", "new": "modifié"})
+    assert ok.status_code == 200
+    assert ok.json()["source"]["text"] == "un passage modifié"
+    assert (
+        api.patch("/api/sources/note00/text", json={"old": "unique", "new": "x"}).status_code == 409
+    )
+    assert api.patch("/api/sources/nope00/text", json={"old": "a", "new": "b"}).status_code == 404
+    # undo = the same call with old and new swapped
+    back = api.patch("/api/sources/note00/text", json={"old": "modifié", "new": "unique"})
+    assert back.json()["source"]["text"] == "un passage unique"

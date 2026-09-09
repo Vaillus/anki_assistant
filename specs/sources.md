@@ -112,7 +112,7 @@ The vault is the user's own notes; these two constraints are the whole safety st
 | `PUT /api/sources/anchors?note_id=` | `{ source_ids: [str] }` (full list, order kept; `[]` clears) | same as GET; 404 if a source id is unknown |
 | `GET /api/sources/anchors/orphans` | — | `{ note_ids: [...] }` — anchored note ids that Anki no longer knows (`notesInfo` returns empty) |
 | `POST /api/sources/anchors/prune` | — | `{ removed: int }` |
-| `POST /api/sources/notes` | `{ deck, name, content, anchor_note_ids? }` | `{ deck, source: SourceView }`; 409 if the file exists. `anchor_note_ids` appends the new source to those notes' anchors in the same call |
+| `POST /api/sources/notes` | `{ deck, name, content, anchor_note_ids?, id? }` | `{ deck, source: SourceView }`; 409 if the file exists. `anchor_note_ids` appends the new source to those notes' anchors in the same call; `id` lets the chat keep the id it announced to Claude ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
 | `PATCH /api/sources/{source_id}/text` | `{ old, new }` | `{ source: SourceView }` (text re-extracted); 409 on 0 or 2+ matches; 400 on a pdf source |
 
 `SourceView`:

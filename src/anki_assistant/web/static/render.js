@@ -411,6 +411,7 @@ function sourceForm() {
 function chatPane() {
   const configured = !S.chatStatus || S.chatStatus.configured !== false;
   const sel = selectedNote();
+  if (sel) ensureAnchors(sel.note_id);
   const chips =
     (sel ? '<span class="chip">note ' + short(sel.note_id) + " (sélection)</span>" : "") +
     S.chatRefs
@@ -423,7 +424,8 @@ function chatPane() {
           id +
           '">×</b></span>',
       )
-      .join("");
+      .join("") +
+    sourceChipsHtml(sel);
   const box = configured
     ? '<div class="chips">' +
       chips +
@@ -451,6 +453,57 @@ function chatPane() {
     box +
     "</div></div>"
   );
+}
+
+/* How source text enters the context (specs/chat.md#how-source-text-enters-context): attached
+   sources as chips with ×, the selected note's anchors as « ⚓ joindre … » buttons, the rest of
+   the corpus under a « + source » menu. Per source, never the whole corpus at once. */
+function sourceChipsHtml(sel) {
+  const sources = ((S.corpus || {}).sources) || [];
+  if (!sources.length) return "";
+  const attached = S.chatSources.filter((id) => sourceById(id));
+  const anchored = sel ? anchorsOf(sel.note_id) : [];
+  const attachedHtml = attached
+    .map(
+      (id) =>
+        '<span class="chip src" title="source jointe au contexte">' +
+        esc(sourceById(id).target) +
+        ' <b data-act="detach-src" data-src="' +
+        esc(id) +
+        '">×</b></span>',
+    )
+    .join("");
+  const anchorHtml = anchored
+    .filter((id) => sourceById(id) && attached.indexOf(id) < 0)
+    .map(
+      (id) =>
+        '<button class="chip anchor" data-act="attach-src" data-src="' +
+        esc(id) +
+        '" title="ancrée à cette note — joindre son texte au contexte">⚓ joindre ' +
+        esc(sourceById(id).target) +
+        "</button>",
+    )
+    .join("");
+  const rest = sources.filter(
+    (s) => attached.indexOf(s.id) < 0 && anchored.indexOf(s.id) < 0,
+  );
+  const menu = rest.length
+    ? '<select class="chip menu" data-input="attach-src-menu" title="joindre une source du corpus">' +
+      '<option value="">+ source</option>' +
+      rest
+        .map(
+          (s) =>
+            '<option value="' +
+            esc(s.id) +
+            '">' +
+            esc(s.target) +
+            (s.exists === false ? " ⚠" : "") +
+            "</option>",
+        )
+        .join("") +
+      "</select>"
+    : "";
+  return attachedHtml + anchorHtml + menu;
 }
 
 function chatLogHtml() {
@@ -500,6 +553,8 @@ const PROPOSAL_LABEL = {
   create: "create",
   move: "move",
   bulk_edit: "bulk edit",
+  create_source: "nouvelle source",
+  edit_source: "source",
 };
 
 /* Once applied, the queue holds the new values; the snapshot keeps the diff honest. */
@@ -551,8 +606,43 @@ function proposalHtml(p, mi, pi) {
       "</div></div>";
   } else if (p.kind === "bulk_edit") {
     diff = bulkTableHtml(p);
+  } else if (p.kind === "create_source") {
+    // The name stays editable until applied (specs/chat.md#proposal-tools); the content is
+    // the Markdown as Claude wrote it.
+    const anchors = input.anchor_note_ids || [];
+    diff =
+      '<div class="muted small">note Obsidian à créer dans le vault, ajoutée au corpus de ' +
+      esc(S.deck || "") +
+      "</div>" +
+      '<input class="mono src-name" data-input="psrc-name" data-mi="' +
+      mi +
+      '" data-pi="' +
+      pi +
+      '" value="' +
+      esc(p.name != null ? p.name : input.name || "") +
+      '" placeholder="dossier/nom de la note"' +
+      (p.applied ? " disabled" : "") +
+      ">" +
+      (anchors.length
+        ? '<div class="muted small">ancre : ' + anchors.map(short).join(" ") + "</div>"
+        : "") +
+      '<pre class="excerpt">' +
+      esc(input.content || "") +
+      "</pre>";
+  } else if (p.kind === "edit_source") {
+    const src = sourceById(input.source_id);
+    diff =
+      '<div class="muted small">' +
+      (src ? esc(src.target) : "source " + esc(input.source_id || "?")) +
+      "</div>" +
+      '<div class="before"><pre class="excerpt">' +
+      esc(input.old || "") +
+      '</pre></div><div class="after"><pre class="excerpt">' +
+      esc(input.new || "") +
+      "</pre></div>";
   }
-  const canUndo = p.applied && p.snapshot && p.snapshot.length;
+  const canUndo =
+    p.applied && ((p.snapshot && p.snapshot.length) || p.kind === "edit_source");
   const disabled = S.busy ? " disabled" : "";
   const at = ' data-mi="' + mi + '" data-pi="' + pi + '"';
   let applyLabel = "Appliquer";

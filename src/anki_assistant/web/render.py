@@ -22,6 +22,7 @@ _TAG = re.compile(r"<[^>]+>")
 # {{cN::answer}} or {{cN::answer::hint}}. The answer is non-greedy so nested braces in a hint
 # do not swallow the closing delimiter; DOTALL because an answer may span a line break.
 _CLOZE = re.compile(r"\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}", re.S)
+_CONTEXT = re.compile(r'^\s*<div\s+class\s*=\s*"context"\s*>(.*?)</div\s*>', re.I | re.S)
 
 
 def _img_to_text(match: re.Match[str]) -> str:
@@ -53,11 +54,22 @@ def render_field(raw: str) -> str:
     """
     if not raw:
         return ""
-    text = _BR.sub("\n", raw)
+    # Extract context header before stripping tags so we can re-wrap it.
+    ctx = ""
+    rest = raw
+    m = _CONTEXT.match(raw)
+    if m:
+        ctx = m.group(1)
+        rest = raw[m.end() :]
+    text = _BR.sub("\n", rest)
     text = _BLOCK_END.sub("\n", text)
     text = _IMG.sub(_img_to_text, text)
     text = _TAG.sub("", text)
     text = html.unescape(text)
     text = html.escape(text.strip())
     text = _CLOZE.sub(_cloze_to_span, text)
-    return text.replace("\n", "<br>")
+    out = text.replace("\n", "<br>")
+    if ctx:
+        ctx_text = html.escape(html.unescape(_TAG.sub("", ctx)).strip())
+        out = f'<span class="context">{ctx_text}</span><br>{out}'
+    return out

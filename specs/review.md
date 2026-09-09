@@ -35,7 +35,7 @@ Column 1 shows by default only decks with `flagged_total > 0`, indented by depth
 ```
 
 - `fields` is what the user edits and what goes back to Anki. `fields_html` is display-only (see [Rendering](#rendering)).
-- `flagged_cards` — the cards of the note that carry a flag, sorted by `ord` (Anki's card ordinal, 0-based). For a Cloze note, card `ord` is the card that hides cloze `c{ord+1}`. Empty when the note is not flagged. This is what lets the UI show *which* card was flagged and replay its question side (see [Question state](#question-state)).
+- `flagged_cards` — the cards of the note that carry a flag, sorted by `ord` (Anki's card ordinal, 0-based). For a Cloze note, card `ord` is the card that hides cloze `c{ord+1}`. Empty when the note is not flagged. Used by [Question state](#question-state).
 - `reason` — plain text of `Back Extra` if the model has that field and the note is flagged, else `""`. The UI shows it in an orange callout at the top of the note, above the fields, labelled « raison du flag ». The `Back Extra` field itself is still shown among the fields.
 - `anchors` — the sources the note is anchored to ([sources.md](./sources.md#anchors)), in order, `[]` when none. `status` is `"valid"` or `"dangling"` (source not in the deck's effective corpus). Shown as one chip « ⚓ différentiabilité » per anchor under the fields, plus « ⚓ ancrer… » to add one.
 - Queue order: flagged notes first, then unflagged; within each group by `note_id` ascending (creation order). Column 2 shows flagged only by default; a toggle « voir toutes » shows the whole deck, unflagged notes at 55% opacity.
@@ -43,7 +43,7 @@ Column 1 shows by default only decks with `flagged_total > 0`, indented by depth
 
 ## Decisions
 
-The selected note expands with a button row (validated in prototype): **Garder** (primary) · Modifier · Splitter · Créer · Déplacer · **Supprimer** (danger) · Passer.
+The selected note expands with a button row (validated in prototype): **Garder** (primary) · Modifier · Splitter · Créer · Déplacer · **Supprimer** (danger) · Passer. Every decision except **Garder** and **Passer** opens a dialog before it writes (see [Frontend](#frontend)).
 
 | Decision | Anki writes | Flag | Queue |
 |---|---|---|---|
@@ -61,7 +61,7 @@ Rules:
 - **Splitter** default: the original note is kept and becomes the first fragment (its fields edited); the other fragments are new notes. This keeps the original's scheduling history. The split dialog offers « supprimer l'original » as an explicit checkbox instead. New notes: same deck as the original, same tags, model defaults to the original's model (the dialog can pick another model from `modelNames`).
 - **Créer** opens the same note editor as split fragments: model picker defaulting to the original's, fields from `modelFieldNames`, tags prefilled from the original. The new note goes in the **original note's own deck** (which may be a sub-deck of the selected deck), not the selected deck.
 - **Déplacer** offers the full deck list (`deckNames`) in a searchable select, current deck preselected. Each anchor is kept if its source is in the destination's effective corpus, removed otherwise; the dialog says which.
-- **Anchors** follow the note ([sources.md](./sources.md#anchors)): split fragments inherit the original's anchors; **Créer** shows an anchor picker defaulting to the original's; **Supprimer** leaves the anchors to the orphan cleanup.
+- **Anchors** follow the note ([sources.md](./sources.md#anchors)): split fragments inherit the original's anchors; **Créer** shows an anchor picker defaulting to the original's; **Supprimer** leaves the anchors to be removed later by « nettoyer ».
 - **Supprimer** and « supprimer l'original » in split require a confirm click. Nothing else does.
 - Clearing the reason: when a decision resolves a note that has a `reason`, the edit/split dialogs prefill `Back Extra` unchanged but show a « vider Back Extra » toggle, on by default. **Garder** clears nothing (the flag was a false alarm, the note is fine as is).
 - After any decision the client re-fetches the deck's notes and the deck counts (`/api/decks`), then selects the next flagged note in the visible list (or nothing if the queue is empty, showing « Rien à revoir ici »).
@@ -80,7 +80,7 @@ MathJax delimiters (`\(…\)`, `\[…\]`, `[$]…[/$]`) are left as text in v1.
 
 ### Question state
 
-When Hugo flags a card he is looking at its **question side**: the flagged cloze is hidden, the others are visible. Seeing the whole note at once often makes the reason for the flag unreadable, so a flagged note is first shown in the same informational state:
+A card is flagged from its **question side**: the flagged cloze is hidden, the others are visible. Seeing the whole note at once often makes the reason for the flag unreadable, so a flagged note is first shown with the same clozes hidden:
 
 - A flagged note whose fields contain cloze spans is shown **hidden** by default: every cloze `c{ord+1}` of a card in `flagged_cards` is replaced by `[…]` (or `[hint]` when the marker has a hint), keeping its `cN` label. Other clozes stay visible, as they would in Anki.
 - The note header names the flagged cards: « ⚑ c2 » (one label per flagged card).
@@ -113,19 +113,13 @@ Anchors are read and written through `SourceStore` by the routes: `list_notes` /
 
 Single page, vanilla JS in `app.js`, one in-memory state object, full re-render on change (same approach as the prototype). Layout and classes may start from `prototype/review_ui/static/*` variant A, rewritten properly (the prototype is not imported).
 
-Keyboard: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `p` = Passer; `Espace` reveals / hides the selected note's flagged clozes (see [Question state](#question-state)); `Esc` closes a dialog. Keys are ignored while an input, textarea or select is focused.
+Keyboard: `j`/`k` or `↓`/`↑` move the selection in column 2; `g` = Garder; `p` = Passer; `Espace` = Révéler (see [Question state](#question-state)); `Esc` closes a dialog. Keys are ignored while an input, textarea or select is focused.
 
 Dialogs (edit, split, create, move, delete-confirm) are plain `<dialog>` elements. The note editor inside edit/split/create shows one `<textarea>` per field holding the **raw** value, with a live preview underneath rendered client-side with the same rules as `render.py` (a small JS port is acceptable; it is display-only).
 
 ### Theme
 
-The UI has a **light** and a **dark** theme. Every colour is a CSS custom property defined on `:root`; nothing else in `app.css` hardcodes a colour.
-
-- Default: the OS preference (`prefers-color-scheme`).
-- A toggle in the head of column 1 (☾ / ☀︎) switches theme and stores the choice in `localStorage` under `anki-theme` (`"light"` | `"dark"`). A stored choice wins over the OS preference, in both directions.
-- The resolved theme (`"light"` | `"dark"`) is stamped on `<html>` as `data-theme` by a tiny inline script in `index.html`, **before** the stylesheet, so a reload never flashes the other theme. `app.css` therefore holds exactly two palettes: `:root` (light) and `:root[data-theme="dark"]`, each setting `color-scheme` so native widgets (scrollbars, `<select>`, checkboxes, `::backdrop`) match.
-- With no stored choice the page follows the OS live, through a `matchMedia` listener.
-- `localStorage` may throw (private mode); the toggle then works for the session only.
+Light and dark. Every colour is a CSS custom property defined on `:root`; nothing else in `app.css` hardcodes one. The default is the OS preference (`prefers-color-scheme`), followed live through a `matchMedia` listener; the ☾ / ☀︎ toggle in the head of column 1 overrides it in both directions and stores the choice in `localStorage` under `anki-theme` (`"light"` | `"dark"`), degrading to session-only if `localStorage` throws. The resolved theme is stamped on `<html>` as `data-theme` by a tiny inline script in `index.html`, **before** the stylesheet, so a reload never flashes the other theme; `app.css` therefore holds exactly two palettes, `:root` (light) and `:root[data-theme="dark"]`, each setting `color-scheme` so native widgets (scrollbars, `<select>`, checkboxes, `::backdrop`) match.
 
 ## Module `review.py`
 
@@ -136,8 +130,8 @@ def list_decks(client, store) -> list[DeckSummary]
 def list_notes(client, store, deck) -> DeckNotes                # store: anchors
 def get_note(client, store, note_id) -> NoteView
 def keep(client, note_id) -> NoteView
-def get_notes(client, note_ids) -> list[NoteView]        # batched, unknown ids dropped
-def search_notes(client, query, limit=50) -> list[NoteView]
+def get_notes(client, note_ids) -> list[NoteView]              # chat read tool, batched, unknown ids dropped
+def search_notes(client, query, limit=50) -> list[NoteView]    # chat read tool, see chat.md
 def edit(client, note_id, fields=None, tags=None, unflag=True, reflag=None) -> NoteView
 def split(client, note_id, original, new_notes) -> SplitResult
 def create(client, deck, model, fields, tags) -> NoteView

@@ -16,7 +16,7 @@ Hugo flags a card during a review when something is wrong with it (too vague, wr
 - **Source** — a document a deck was made from: an Obsidian note in the vault, or a PDF on disk (optionally restricted to a page range). A deck has a **corpus**: an ordered list of sources. A deck with no corpus of its own inherits its nearest ancestor's corpus (`a::b::c` → `a::b` → `a`). Every source has a stable **id**.
 - **Anchor** — a source of its deck's corpus a note was made from; a note can have several. Stored in `sources.json` (note id → list of source ids), never in Anki. Opens the Source tab on the right documents and lets the chat load those alone. See [sources.md](./sources.md#anchors).
 - **Decision** — what the user does with a flagged note: keep, edit, split, create a sibling, move, delete, skip. See [review.md](./review.md#decisions).
-- **Proposal** — a structured change suggested by Claude in the chat (edit / split / create / move / bulk edit) that the user applies with one click, and can undo for edits. Claude can also **read** the collection (deck tree, deck index, notes, note types) and the sources through read tools; **no source text is in its context unless the user attaches it or Claude reads it**, both visibly. Two proposals write into the vault (create a note, replace a passage). See [chat.md](./chat.md).
+- **Proposal** — a structured change suggested by Claude in the chat (edit / split / create / move / bulk edit) that the user applies with one click, and can undo for edits. Claude can also **read** the collection (deck tree, note search, notes, note types) and the sources through read tools; **no source text is in its context unless the user attaches it or Claude reads it**, both visibly. Two proposals write into the vault (create a note, replace a passage). See [chat.md](./chat.md).
 
 ## Surfaces
 
@@ -31,7 +31,7 @@ One page, `/`, laid out as **three columns** (validated by prototype, variant A)
 └──────────────┴───────────────────────────────┴──────────────────────┘
 ```
 
-Detailed behaviour: [review.md](./review.md) (columns 1–2), [sources.md](./sources.md) (Source tab), [chat.md](./chat.md) (Chat tab).
+Detailed behaviour: [review.md](./review.md) (columns 1–2), [sources.md](./sources.md) (Source tab), [chat.md](./chat.md) (Chat tab). Conventions of the notes themselves (raw field syntax, context header): [notes.md](./notes.md).
 
 There is also a CLI (`uv run anki …`) over the same client; it predates the web UI and stays as a debugging tool. Not specced beyond `README.md`.
 

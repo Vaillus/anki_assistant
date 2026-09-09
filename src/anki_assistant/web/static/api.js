@@ -52,6 +52,9 @@ const API = {
   corpus: (deck) => jfetch("/api/sources/corpus?deck=" + q(deck)),
   putSources: (deck, entries) => jfetch("/api/sources?deck=" + q(deck), jsonBody("PUT", entries)),
   vaultNotes: (query) => jfetch("/api/vault/notes?q=" + q(query)),
+  anchors: (noteId) => jfetch("/api/sources/anchors?note_id=" + noteId),
+  createSourceNote: (body) => jfetch("/api/sources/notes", jsonBody("POST", body)),
+  patchSourceText: (id, body) => jfetch("/api/sources/" + q(id) + "/text", jsonBody("PATCH", body)),
 
   // chat
   chatStatus: () => jfetch("/api/chat/status"),

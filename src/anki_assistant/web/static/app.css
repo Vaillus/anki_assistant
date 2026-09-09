@@ -219,6 +219,7 @@ a { color: var(--accent); }
 }
 .field-val { font-size: 15px; overflow-wrap: anywhere; }
 .field-val.small { font-size: 13px; color: var(--ink-dim); }
+.field-val .context { color: var(--ink-dim); font-size: 13px; }
 
 .reason {
   background: var(--flagbg);
@@ -450,3 +451,23 @@ dialog .dlg-foot {
 .deck-list .opt { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .deck-list .opt:hover { background: var(--hover); }
 .deck-list .opt.on { background: var(--accentbg); color: var(--accent); }
+
+/* ---------- chat: source chips and source proposals (specs/chat.md) ---------- */
+
+.chip.src { background: var(--obsidianbg); color: var(--obsidianink); }
+button.chip, select.chip {
+  border: 1px dashed var(--accent);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 12px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+  line-height: 1.5;
+  height: auto;
+  width: auto;
+  cursor: pointer;
+}
+select.chip { appearance: none; -webkit-appearance: none; }
+.proposal input.src-name { width: 100%; font-family: var(--mono); font-size: 12px; margin: 4px 0; }
+.proposal .diff .excerpt { margin: 0; }

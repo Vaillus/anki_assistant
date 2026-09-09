@@ -7,12 +7,16 @@ the ANKI_SOURCES env var):
       "vault": {"name": "Vault", "path": "/Users/me/Documents/Vault"},
       "decks": {
         "courant::00-Thèse": [
-          {"kind": "obsidian", "target": "Allocation sur des angles disjoints"},
-          {"kind": "pdf", "target": "~/stone_search.pdf", "pages": "12-19", "note": "chap. 2"}
+          {"id": "k7q2vd", "kind": "obsidian", "target": "Allocation sur des angles disjoints"},
+          {"id": "m3x8pa", "kind": "pdf", "target": "~/stone_search.pdf", "pages": "12-19",
+           "note": "chap. 2"}
         ],
         "courant::01-AI::little book of deep learning": [
-          {"kind": "pdf", "target": "~/lbdl.pdf"}
+          {"id": "r9wt4n", "kind": "pdf", "target": "~/lbdl.pdf"}
         ]
+      },
+      "anchors": {
+        "1739276778640": ["k7q2vd"]
       }
     }
 
@@ -20,7 +24,10 @@ A deck's value is an ordered list of sources: its **corpus**. A deck without a c
 inherits its nearest parent deck's corpus, so mapping `courant::01-AI::little book of deep
 learning` also covers its `::1` .. `::6` sub-decks. For backward compatibility with the 0.1
 format, a deck value that is a single object (not a list) is read as a one-element list and
-rewritten as a list on next save.
+rewritten as a list on next save; an entry without `id` gets one on load.
+
+`anchors` maps an Anki note id (JSON key, so a string) to the ids of the sources the note was
+made from. Nothing is written into Anki: only this file knows a note is anchored.
 """
 
 from __future__ import annotations
@@ -28,8 +35,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import urllib.parse
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from collections.abc import Set as AbstractSet
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -41,6 +51,14 @@ Kind = Literal["pdf", "obsidian"]
 DEFAULT_MAX_CHARS = 60_000
 
 _PAGES_RE = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
+
+_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"  # lowercase base32
+
+
+def new_source_id() -> str:
+    """A fresh source id: 6 lowercase base32 characters, path-safe, never reused once stored."""
+    return "".join(secrets.choice(_ID_ALPHABET) for _ in range(6))
+
 
 # In-memory cache of PDF text extraction, keyed by (path, mtime, pages). PDFs are slow to parse
 # and the same corpus is requested on every note under review.
@@ -131,13 +149,18 @@ class SourceText:
 
 @dataclass
 class Source:
-    """A source attached to a deck. `deck` is the deck the entry was written on."""
+    """A source of a deck's corpus. `deck` is the deck the entry was written on.
+
+    `id` is the identity of the source: anchors point to it, so editing `target` (a renamed
+    vault note, a moved PDF) keeps them intact. Generated on creation, never changed.
+    """
 
     deck: str
     kind: Kind
     target: str
     pages: str = ""
     note: str = ""
+    id: str = ""
 
     @classmethod
     def from_dict(cls, deck: str, raw: dict[str, Any]) -> Source:
@@ -148,11 +171,16 @@ class Source:
         if not is_valid_pages(pages):
             raise ValueError(f"{deck}: invalid pages format {pages!r}")
         return cls(
-            deck=deck, kind=kind, target=raw["target"], pages=pages, note=raw.get("note", "")
+            deck=deck,
+            kind=kind,
+            target=raw["target"],
+            pages=pages,
+            note=raw.get("note", ""),
+            id=str(raw.get("id") or "") or new_source_id(),
         )
 
     def to_dict(self) -> dict[str, str]:
-        out: dict[str, str] = {"kind": self.kind, "target": self.target}
+        out: dict[str, str] = {"id": self.id, "kind": self.kind, "target": self.target}
         if self.pages:
             out["pages"] = self.pages
         if self.note:
@@ -226,12 +254,14 @@ class Source:
 
 
 class SourceStore:
-    """Read/write the deck -> corpus mapping, with inheritance down the deck tree."""
+    """Read/write the deck -> corpus mapping and the note -> sources anchors."""
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_store_path()
         self.vault = Vault()
         self.corpora: dict[str, list[Source]] = {}
+        #: note id (as a string, it is a JSON key) -> source ids, in the order the user added them
+        self.anchor_map: dict[str, list[str]] = {}
         self.load()
 
     def load(self) -> None:
@@ -247,6 +277,11 @@ class SourceStore:
                 # 0.1 format: a single object instead of a list.
                 corpora[deck] = [Source.from_dict(deck, entry)]
         self.corpora = corpora
+        self.anchor_map = {
+            str(note_id): [str(sid) for sid in ids]
+            for note_id, ids in raw.get("anchors", {}).items()
+            if ids
+        }
 
     def save(self) -> None:
         payload = {
@@ -254,6 +289,9 @@ class SourceStore:
             "decks": {
                 deck: [src.to_dict() for src in sources]
                 for deck, sources in sorted(self.corpora.items())
+            },
+            "anchors": {
+                note_id: list(ids) for note_id, ids in sorted(self.anchor_map.items()) if ids
             },
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,14 +320,22 @@ class SourceStore:
         corpus = self.corpus(deck) if inherit else list(self.corpora.get(deck, []))
         return corpus[0] if corpus else None
 
-    def set_corpus(self, deck: str, entries: list[Source]) -> list[Source]:
-        """Replace the deck's own corpus with `entries`. An empty list deletes the entry."""
+    def set_corpus(self, deck: str, entries: list[Source]) -> tuple[list[Source], int]:
+        """Replace the deck's own corpus with `entries`. An empty list deletes the entry.
+
+        Entries without an id get one. Anchors to a source id that no longer exists anywhere
+        afterwards are dropped; the count of dropped anchors is returned with the new corpus.
+        """
+        for source in entries:
+            if not source.id:
+                source.id = new_source_id()
         if entries:
             self.corpora[deck] = list(entries)
         else:
             self.corpora.pop(deck, None)
+        removed = self._drop_anchors_to_unknown_sources()
         self.save()
-        return list(self.corpora.get(deck, []))
+        return list(self.corpora.get(deck, [])), removed
 
     def set(
         self, deck: str, target: str, kind: Kind | None = None, pages: str = "", note: str = ""
@@ -328,6 +374,137 @@ class SourceStore:
             for src in sources
             if not src.exists(self.vault)
         ]
+
+    def by_id(self, source_id: str) -> Source | None:
+        """The source carrying this id, whichever deck declares it; None when unknown."""
+        for sources in self.corpora.values():
+            for src in sources:
+                if src.id == source_id:
+                    return src
+        return None
+
+    # `AbstractSet`, not `set`: inside this class `set` is the method above.
+    def _known_ids(self) -> AbstractSet[str]:
+        return {src.id for sources in self.corpora.values() for src in sources}
+
+    # ---------------------------------------------------------------- anchors
+
+    def anchors(self, note_id: int) -> list[str]:
+        """Source ids the note is anchored to, in anchor order; [] when none."""
+        return list(self.anchor_map.get(str(note_id), []))
+
+    def set_anchors(self, note_id: int, source_ids: Sequence[str]) -> None:
+        """Replace the note's anchors (order kept, duplicates dropped).
+
+        KeyError on an unknown source id.
+        """
+        known = self._known_ids()
+        cleaned: list[str] = []
+        for sid in source_ids:
+            if sid not in known:
+                raise KeyError(f"source inconnue : {sid}")
+            if sid not in cleaned:
+                cleaned.append(sid)
+        key = str(note_id)
+        if cleaned == self.anchor_map.get(key, []):
+            return
+        if cleaned:
+            self.anchor_map[key] = cleaned
+        else:
+            del self.anchor_map[key]
+        self.save()
+
+    def add_anchor(self, note_id: int, source_id: str) -> None:
+        """Append one anchor; no-op if already present. KeyError on an unknown id."""
+        current = self.anchors(note_id)
+        if source_id in current:
+            return
+        self.set_anchors(note_id, [*current, source_id])
+
+    def anchors_to(self, source_id: str) -> list[int]:
+        """Ids of the notes anchored to this source."""
+        return [int(note_id) for note_id, ids in self.anchor_map.items() if source_id in ids]
+
+    def anchored_note_ids(self) -> list[int]:
+        return [int(note_id) for note_id in self.anchor_map]
+
+    def remove_anchors(self, note_ids: Iterable[int]) -> int:
+        """Drop every anchor of these notes (deleted or orphan notes). Returns how many notes."""
+        removed = 0
+        for note_id in note_ids:
+            if self.anchor_map.pop(str(note_id), None) is not None:
+                removed += 1
+        if removed:
+            self.save()
+        return removed
+
+    def _drop_anchors_to_unknown_sources(self) -> int:
+        """Remove anchors whose source id is declared on no deck any more. Returns the count."""
+        known = self._known_ids()
+        removed = 0
+        for note_id in list(self.anchor_map):
+            kept = [sid for sid in self.anchor_map[note_id] if sid in known]
+            removed += len(self.anchor_map[note_id]) - len(kept)
+            if kept:
+                self.anchor_map[note_id] = kept
+            else:
+                del self.anchor_map[note_id]
+        return removed
+
+    # ---------------------------------------------------------- vault writes
+
+    def create_note(
+        self, deck: str, name: str, content: str, source_id: str | None = None
+    ) -> Source:
+        """Write `<vault>/<name>.md` and add it to the deck's own corpus.
+
+        Refuses if the file exists (FileExistsError). `name` is vault-relative, `/` allowed
+        (parent directories are created), `.md` optional. An inherited corpus is materialised
+        on `deck` first, as when a source is added from the form. `source_id` lets a caller who
+        announced the id beforehand (the chat's create-source proposal) keep it.
+        """
+        clean = name.strip().strip("/")
+        if not clean:
+            raise ValueError("nom de note vide")
+        target = clean[:-3] if clean.endswith(".md") else clean
+        path = self.vault.path / f"{target}.md"
+        if path.exists():
+            raise FileExistsError(f"{target}.md existe déjà dans le vault")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+        source = Source(deck=deck, kind="obsidian", target=target, id=source_id or new_source_id())
+        own = self.corpora.get(deck)
+        if own is None:
+            # Materialise the inherited corpus on this deck; ids are kept so anchors survive.
+            own = [replace(inherited, deck=deck) for inherited in self.corpus(deck)]
+        self.set_corpus(deck, [*own, source])
+        return source
+
+    def replace_in_note(self, source_id: str, old: str, new: str) -> None:
+        """Replace `old` with `new` in an obsidian source's file; `old` must occur exactly once.
+
+        KeyError for an unknown id; ValueError for a pdf source, or when `old` occurs 0 or 2+
+        times (the message says which). The bounded, reviewable replacement is the whole safety
+        story of writing into the vault — and what makes undoing it a swap of `old` and `new`.
+        """
+        source = self.by_id(source_id)
+        if source is None:
+            raise KeyError(f"source inconnue : {source_id}")
+        if source.kind != "obsidian":
+            raise ValueError("seule une note Obsidian peut être modifiée")
+        if not old:
+            raise ValueError("passage à remplacer vide")
+        path = source.note_path(self.vault)
+        if path is None or not path.exists():
+            raise ValueError("fichier introuvable")
+        text = path.read_text(encoding="utf-8")
+        count = text.count(old)
+        if count == 0:
+            raise ValueError("passage introuvable")
+        if count > 1:
+            raise ValueError(f"passage ambigu ({count} occurrences)")
+        path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
 def vault_notes(vault: Vault, q: str = "", limit: int = 50) -> list[str]:

@@ -79,6 +79,8 @@ class CreateBody(BaseModel):
     model: str
     fields: dict[str, str]
     tags: list[str] | None = None
+    #: Anchors of the new note (specs/sources.md#anchors); the chat defaults them client-side.
+    source_ids: list[str] | None = None
 
 
 class MoveBody(BaseModel):
@@ -127,27 +129,49 @@ def edit_note(request: Request, note_id: int, body: EditBody) -> NoteView:
 
 @router.post("/notes/{note_id}/split")
 def split_note(request: Request, note_id: int, body: SplitBody) -> SplitResult:
+    store = _store(request)
+    anchors = store.anchors(note_id)
     with _anki_errors():
-        return review.split(
+        result = review.split(
             _anki(request),
             note_id,
             original=body.original.model_dump() if body.original is not None else None,
             new_notes=[n.model_dump(exclude_none=True) for n in body.new_notes],
         )
+    # The fragments inherit the original's anchors (specs/sources.md#anchors).
+    if anchors:
+        for created in result.created:
+            store.set_anchors(created.note_id, anchors)
+        if result.original is None:
+            store.remove_anchors([note_id])
+    return result
 
 
 @router.post("/notes")
 def create_note(request: Request, body: CreateBody) -> NoteView:
     with _anki_errors():
-        return review.create(
+        view = review.create(
             _anki(request), deck=body.deck, model=body.model, fields=body.fields, tags=body.tags
         )
+    if body.source_ids:
+        try:
+            _store(request).set_anchors(view.note_id, body.source_ids)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return view
 
 
 @router.post("/notes/{note_id}/move")
 def move_note(request: Request, note_id: int, body: MoveBody) -> NoteView:
+    store = _store(request)
     with _anki_errors():
-        return review.move(_anki(request), note_id, body.deck)
+        view = review.move(_anki(request), note_id, body.deck)
+    # An anchor survives the move only if its source is in the destination's corpus.
+    anchors = store.anchors(note_id)
+    if anchors:
+        in_destination = {source.id for source in store.corpus(body.deck)}
+        store.set_anchors(note_id, [sid for sid in anchors if sid in in_destination])
+    return view
 
 
 @router.delete("/notes/{note_id}", status_code=204)

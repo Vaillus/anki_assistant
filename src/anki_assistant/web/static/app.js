@@ -59,9 +59,11 @@ async function selectDeck(name) {
   S.srcForm = null;
   S.srcExpanded = {};
   S.error = "";
-  // The conversation lives per deck and is dropped when the deck changes.
+  // Changing deck resets the conversation (specs/chat.md#conversation-lifetime).
   S.chat = [];
   S.chatRefs = [];
+  S.chatSources = [];
+  S.noteAnchors = {};
   S.chatDraft = "";
   draw();
   await Promise.all([loadNotes(), loadCorpus()]);
@@ -235,6 +237,44 @@ function chatContextIds() {
   return ids;
 }
 
+/* Fetch a note's anchors once (specs/sources.md#anchors); the chips row needs them to offer
+   « ⚓ joindre … ». Called from the render, so it must be a no-op once the fetch is under way. */
+function ensureAnchors(noteId) {
+  if (!noteId || S.noteAnchors[noteId] !== undefined) return;
+  S.noteAnchors[noteId] = null;
+  API.anchors(noteId)
+    .then((a) => {
+      S.noteAnchors[noteId] = ((a && a.anchors) || []).map((x) => x.source_id);
+      draw();
+    })
+    .catch(() => {
+      S.noteAnchors[noteId] = [];
+    });
+}
+
+async function anchorsFor(noteId) {
+  if (!noteId) return [];
+  if (Array.isArray(S.noteAnchors[noteId])) return S.noteAnchors[noteId];
+  try {
+    const a = await API.anchors(noteId);
+    S.noteAnchors[noteId] = ((a && a.anchors) || []).map((x) => x.source_id);
+  } catch (e) {
+    S.noteAnchors[noteId] = [];
+  }
+  return S.noteAnchors[noteId];
+}
+
+function attachSource(id) {
+  if (!id || !sourceById(id) || S.chatSources.indexOf(id) >= 0) return;
+  S.chatSources.push(id);
+  draw();
+}
+
+function detachSource(id) {
+  S.chatSources = S.chatSources.filter((x) => x !== id);
+  draw();
+}
+
 /* Prior proposals and reads are not replayed; they are summarised into the assistant text
    (specs/chat.md#api). */
 function historyForServer() {
@@ -275,6 +315,7 @@ function newChat() {
   if (S.chatBusy) return;
   S.chat = [];
   S.chatRefs = [];
+  S.chatSources = [];
   S.chatDraft = "";
   S.refocus = "chat";
   draw();
@@ -306,6 +347,7 @@ async function sendChat() {
     const payload = {
       deck: S.deck,
       note_ids: ids,
+      source_ids: S.chatSources.slice(),
       flagged_count: (S.notes && S.notes.flagged) || 0,
       messages,
     };
@@ -322,6 +364,9 @@ async function sendChat() {
           id: d.id,
           kind: d.kind,
           input: d.input || {},
+          // create_source: the id the server announced to Claude, reused when applying
+          sourceId: d.source_id || null,
+          name: (d.input || {}).name || "",
           applied: false,
           error: "",
         });
@@ -361,6 +406,7 @@ async function applyProposal(mi, pi) {
   S.busy = true;
   draw();
   let bulkWrote = false;
+  let sourceWrote = false;
   try {
     if (p.kind === "edit") {
       p.snapshot = [await snapshotOf(input.note_id)];
@@ -398,14 +444,36 @@ async function applyProposal(mi, pi) {
         model: input.model || (sel && sel.model),
         fields: input.fields || {},
         tags: (sel && sel.tags) || [],
+        // anchors default to the selected note's (specs/chat.md#proposal-tools)
+        source_ids: input.source_ids || (await anchorsFor(sel && sel.note_id)),
       });
     } else if (p.kind === "move") {
       await API.move(input.note_id, input.deck);
+    } else if (p.kind === "create_source") {
+      const name = String(p.name != null ? p.name : input.name || "").trim();
+      if (!name) throw new Error("indique un nom de note");
+      await API.createSourceNote({
+        deck: S.deck,
+        name,
+        content: input.content || "",
+        anchor_note_ids: input.anchor_note_ids || [],
+        id: p.sourceId || null,
+      });
+      (input.anchor_note_ids || []).forEach((id) => delete S.noteAnchors[id]);
+      sourceWrote = true;
+    } else if (p.kind === "edit_source") {
+      await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
+      sourceWrote = true;
     } else {
       throw new Error("proposition inconnue : " + p.kind);
     }
     p.applied = true;
     S.busy = false;
+    if (sourceWrote) {
+      // Nothing changed in Anki: refresh the corpus, not the queue. loadCorpus() redraws.
+      await loadCorpus();
+      return;
+    }
     const firstEdit = p.kind === "bulk_edit" ? ((input.edits || [])[0] || {}).note_id : null;
     await afterDecision({
       resolvedId: input.note_id || firstEdit,
@@ -425,8 +493,28 @@ async function applyProposal(mi, pi) {
 async function revertProposal(mi, pi) {
   const msg = S.chat[mi];
   const p = msg && msg.proposals && msg.proposals[pi];
-  if (!p || !p.applied || !p.snapshot || !p.snapshot.length || S.busy) return;
+  if (!p || !p.applied || S.busy) return;
   const input = p.input || {};
+  if (p.kind === "edit_source") {
+    // Undo is the same replacement with old and new swapped; the exact-match rule refuses it
+    // when the passage changed since (specs/chat.md#undo).
+    p.error = "";
+    S.busy = true;
+    draw();
+    try {
+      await API.patchSourceText(input.source_id, { old: input.new || "", new: input.old || "" });
+      p.applied = false;
+      p.reverted = true;
+      S.busy = false;
+      await loadCorpus();
+    } catch (e) {
+      p.error = e.status === 409 ? "modifiée depuis, annulation impossible" : e.message;
+      S.busy = false;
+      draw();
+    }
+    return;
+  }
+  if (!p.snapshot || !p.snapshot.length) return;
   const written = {};
   if (p.kind === "edit") written[input.note_id] = input.fields || {};
   else (input.edits || []).forEach((e) => (written[e.note_id] = e.fields || {}));
@@ -505,6 +593,10 @@ document.addEventListener("click", (e) => {
   } else if (act === "unref") {
     S.chatRefs = S.chatRefs.filter((id) => id !== noteId);
     draw();
+  } else if (act === "attach-src") {
+    attachSource(el.getAttribute("data-src"));
+  } else if (act === "detach-src") {
+    detachSource(el.getAttribute("data-src"));
   } else if (act === "tab") {
     S.tab = el.getAttribute("data-tab");
     draw();
@@ -543,6 +635,16 @@ document.addEventListener("input", (e) => {
   const key = el.getAttribute("data-input");
   if (key === "chat") {
     S.chatDraft = el.value;
+    return;
+  }
+  if (key === "attach-src-menu") {
+    attachSource(el.value); // redraws, which resets the menu to « + source »
+    return;
+  }
+  if (key === "psrc-name") {
+    const msg = S.chat[Number(el.getAttribute("data-mi"))];
+    const p = msg && msg.proposals && msg.proposals[Number(el.getAttribute("data-pi"))];
+    if (p) p.name = el.value;
     return;
   }
   if (!S.srcForm) return;

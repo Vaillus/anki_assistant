@@ -75,6 +75,8 @@ const S = {
   // chat
   chat: [], // [{ who: "user"|"assistant", text, refs?: [], proposals?: [], streaming?: bool }]
   chatRefs: [], // note ids attached with « → chat »
+  chatSources: [], // source ids attached to the conversation (specs/chat.md#context)
+  noteAnchors: {}, // note id -> [source id] once fetched, null while loading
   chatDraft: "",
   chatStatus: null, // { configured, model }
   chatBusy: false,
@@ -112,8 +114,17 @@ function unescapeHtml(s) {
 }
 
 /* JS port of render.py::render_field — display only, never sent back to Anki. */
+const _CTX_RE = /^\s*<div\s+class\s*=\s*"context"\s*>([\s\S]*?)<\/div\s*>/i;
+
 function renderField(raw) {
   let t = String(raw === null || raw === undefined ? "" : raw);
+  // Extract context header before stripping tags so we can re-wrap it.
+  let ctx = "";
+  const cm = _CTX_RE.exec(t);
+  if (cm) {
+    ctx = cm[1];
+    t = t.slice(cm[0].length);
+  }
   t = t.replace(/<br\s*\/?>/gi, "\n");
   t = t.replace(/<\/(p|div|li)\s*>/gi, "\n");
   t = t.replace(/<img\b[^>]*>/gi, (m) => {
@@ -128,7 +139,12 @@ function renderField(raw) {
     (_m, n, answer, hint) =>
       `<span class="cloze" data-n="${n}"${hint ? ` data-hint="${hint}"` : ""}>${answer}</span>`,
   );
-  return t.replace(/\n/g, "<br>");
+  let out = t.replace(/\n/g, "<br>");
+  if (ctx) {
+    const ctxText = esc(unescapeHtml(ctx.replace(/<[^>]+>/g, "")).trim());
+    out = `<span class="context">${ctxText}</span><br>${out}`;
+  }
+  return out;
 }
 
 /* ---------- question state (specs/review.md#question-state) ---------- */
@@ -200,6 +216,15 @@ function noteById(id) {
 
 function selectedNote() {
   return S.selNote ? noteById(S.selNote) : null;
+}
+
+function sourceById(id) {
+  return (((S.corpus || {}).sources) || []).find((s) => s.id === id) || null;
+}
+
+/* Anchors already fetched for a note; [] while unknown or loading (see ensureAnchors). */
+function anchorsOf(noteId) {
+  return (noteId && S.noteAnchors[noteId]) || [];
 }
 
 function visibleDecks() {

@@ -8,7 +8,7 @@ General terms (*corpus*, *source*, *anchor*…) are defined in [00-overview.md �
 
 Claude enters each turn already knowing the cards of the workspace — the note the user opened, the drafts prepared for it, any note pulled in since — the deck's list of sources, and any sources the user has attached to the conversation. That context travels in a **system prompt** the server rebuilds on every request from four blocks (detailed in [Context](#context)).
 
-From there Claude can do two things. It can **read** — search for other notes, fetch a source's full text, list decks, bring notes into the workspace — to pull in information the system prompt does not already carry. And it can **propose** — suggest a structured change (a rewrite of a card, a split, a new note, a move, a fix to a source passage). A proposal on a note becomes a version or a card on the workspace; nothing is written to Anki until the user clicks « Valider » ([workspace.md § Validation](./workspace.md#validation)).
+From there Claude can do two things. It can **read** — search for other notes, fetch a source's full text, list decks, bring notes into the workspace, search the web — to pull in information the system prompt does not already carry. And it can **propose** — suggest a structured change (a rewrite of a card, a split, a new note, a move, a fix to a source passage). A proposal on a note becomes a version or a card on the workspace; nothing is written to Anki until the user clicks « Valider » ([workspace.md § Validation](./workspace.md#validation)).
 
 The **client** is the browser page (`app.js`, `workspace.js`); the **server** is the local FastAPI process — "server" never means Anthropic's side. The rest of this spec details each piece: conversation lifetime, the four prompt blocks, the tools, and the server API.
 
@@ -28,7 +28,7 @@ The server keeps nothing between requests. On every **turn** — one user messag
 
 ### What Claude receives
 
-1. **Standing instructions** — reply in the user's language (French by default); when suggesting a concrete change, use the proposal tools rather than describing it in prose; the next message is about the **active** cards, target them by their workspace id; fields are raw Anki HTML with cloze markers, keep the syntax valid. It also states the conventions of the note collection (field syntax, context headers) from [notes.md](./notes.md) as facts, so that Claude reads and writes fields the way they are actually shaped. Nothing else: no instructions on terseness, on when to read, on how many notes an idea deserves, or on what to check before creating. Those are the conversation's business.
+1. **Standing instructions** — reply in the user's language (French by default); when suggesting a concrete change, use the proposal tools rather than describing it in prose; the next message is about the **active** cards, target them by their workspace id; fields are raw Anki HTML with cloze markers, keep the syntax valid; the web is for checking a card and for finding sources worth adding, and content taken from it should arrive with the source proposal that grounds it. It also states the conventions of the note collection (field syntax, context headers) from [notes.md](./notes.md) as facts, so that Claude reads and writes fields the way they are actually shaped. Nothing else: no instructions on terseness, on when to read, on how many notes an idea deserves, or on what to check before creating. Those are the conversation's business.
 
 2. **Corpus index** — one line per source of the deck's corpus: id, kind, target, page range, optional note, and a ⚠ marker when the file is missing. Sources anchored to a card of the workspace are marked « ancrée à la note #… » ([sources.md § Anchors](./sources.md#anchors)). **The corpus index contains no source text.** It tells Claude what sources exist and which ones it has not read.
 
@@ -56,13 +56,20 @@ Source text enters the system prompt in two ways, both visible to the user:
 
 ## Read tools
 
-Claude sees only what the system prompt pushes (deck name, corpus index, attached sources, cards). Everything else it **pulls** through read tools, which the server executes against Anki or the `SourceStore` and returns as text. Read tools never write to Anki or the vault; one of them, `add_notes`, changes what the workspace shows.
+Claude sees only what the system prompt pushes (deck name, corpus index, attached sources, cards). Everything else it **pulls** through read tools. Read tools never write to Anki or the vault; one of them, `add_notes`, changes what the workspace shows.
+
+They come in two families, and the difference is who runs them:
+
+- **Local read tools** — `list_decks`, `search_notes`, `get_notes`, `add_notes`, `get_note_type`, `read_source`. The server executes them against Anki or the `SourceStore` and returns text.
+- **Web tools** — `web_search`, `web_fetch` ([Web tools](#web-tools) below). Anthropic executes them; the server never sees the request and has nothing to run. They are declared in the same `tools` list and reported to the user the same way, but they change the shape of a turn — see [The tool-use loop](#the-tool-use-loop).
 
 ### The tool-use loop
 
 A single turn (one user message and the reply to it, see [Context](#context)) can involve multiple round trips between the server and the LLM. Each round trip is a **model call**: the server sends the conversation to the LLM, and the LLM responds. If the response contains tool invocations, the server executes them, appends the results to the conversation, and makes another model call. This cycle is the **tool loop**: it repeats until the LLM responds without invoking tools, or the cap is reached.
 
 The cap is `MAX_TOOL_LOOPS` = 8 model calls per turn. A realistic sequence is: search (brief) → add 5 notes → propose → comment, four model calls.
+
+A turn that uses a **web tool** does not go round the loop that way: Anthropic runs the search inside the model call and returns its results as extra content blocks of the same assistant message, so the server has nothing to execute and `stop_reason` is not `tool_use`. Two consequences the loop has to handle. A long search run comes back as `stop_reason: "pause_turn"`: the server appends the assistant message unchanged and calls again — no extra user message — and the API resumes where it left off, spending one more of the eight model calls. And when Claude calls a web tool and a local read tool in the same batch, the API returns `tool_use` and defers the search: the local results go back as usual and the search runs on the next call.
 
 Tool results land in the conversation that is sent on the next model call within the same turn, but they are **not** replayed to the LLM across turns (the server is stateless and only the message text is re-sent). Instead, the client summarises each read into the assistant text between turns as a bracket notation — e.g. « [lecture: search_notes re:lagrang → 6 notes] » — so Claude knows what it has already looked at. If Claude needs the actual content again, it reads again. Anki is local; a re-read costs a model call and tokens, not meaningful latency.
 
@@ -95,6 +102,25 @@ Each read is streamed to the client as a `reading` event (`{ id, tool, input, su
 Results are ordered flagged first. A `full` result that would exceed 100 000 characters is not returned: the tool responds with the count and asks Claude to narrow the query or pass `fields`, so one badly scoped search cannot exhaust the token budget available for the rest of the turn.
 
 **`add_notes`** is how notes found by a search become cards the user can see and Claude can target: « trouve les notes du deck qui ont le même problème » is a `search_notes` then an `add_notes`. The server first checks the cap — the workspace holds at most 50 cards ([workspace.md § How notes enter](./workspace.md#how-notes-enter)); ids already in the workspace do not count — and refuses with an error result asking to narrow down when it would be exceeded. Otherwise it returns the notes' text (so Claude can propose in the same turn) and streams an `added` event (`{ id, note_ids, rationale }`); the client fetches the notes and appends one card each. The reply shows « ajoute : 6 notes » where reads show « lit : … ». The rationale is one sentence for the user.
+
+### Web tools
+
+Two Anthropic server tools, declared alongside the others and reported as reads, put the open web behind the same conversation as the deck.
+
+| Tool | Input | Returns |
+|---|---|---|
+| `web_search` | `{ query }` | Result pages (title, url, extract), filtered server-side before they reach context. Capped at `MAX_WEB_SEARCHES` = 8 per turn. |
+| `web_fetch` | `{ url }` | The full text of a page whose URL is **already in the conversation** — a search result, a message from the user. Capped at `MAX_WEB_FETCHES` = 5 per turn. |
+
+**Why both.** Search returns extracts, which are enough to answer « is my card's statement the standard one? » but too thin to become a source. `web_fetch` is what turns a page the user wants to keep into a `propose_create_source` with real content — the path by which a Wikipedia article or a set of lecture notes enters the corpus as an Obsidian note ([sources.md](./sources.md)).
+
+**What the user sees.** Each call is streamed as a `reading` event like any other, and the summary carries the **URLs**, not just a count: « lit : web\_search → « KKT conditions » → 5 résultats : en.wikipedia.org/…, … ». That is the whole provenance guarantee — a card must never rest on a page the user was not told about. The reply's own citation markers are not rendered in the log; the reading line is where provenance lives.
+
+**What the web is allowed to be.** Standing instructions ([Context](#what-claude-receives)) state it: the web is legitimate for checking a card against the outside world and for *finding sources to add*, and a proposal whose content comes from the web should come with the `propose_create_source` that grounds it. Nothing about this is enforced in code — the enforcement is that every write still waits for a click.
+
+**Untrusted content.** A fetched page is text written by someone else, arriving in a context where Claude holds proposal tools. The design already answers this and no new mechanism is added: proposals land as versions and cards that the user reads before « Valider », and source proposals wait on « Appliquer ». No web content reaches Anki or the vault without a click.
+
+**Results are not replayed.** The API requires search results to be sent back byte-identical (`encrypted_content`) or not at all; since the client replays assistant *text* only ([API](#api)), they are simply dropped, like every other read, and survive as the bracket notation « [lecture: web\_search → …] ». Re-reading a page costs a real round trip to the open web, not a local call — so `web_fetch` on something worth keeping is a reason to propose it as a source rather than fetch it twice.
 
 ## Proposal tools
 
@@ -129,7 +155,7 @@ Nothing is written to Anki from the chat, so nothing is undone from it: a versio
 
 ## LLM configuration
 
-Uses the Anthropic Python SDK (`anthropic`), streaming, with the model id from `ANKI_CHAT_MODEL` (default `claude-opus-4-6`). `max_tokens` is 8 192 (thinking tokens, when enabled, count against this budget). API key from `ANTHROPIC_API_KEY` (environment variable or `.env` via `python-dotenv`, loaded in `web/main.py`).
+Uses the Anthropic Python SDK (`anthropic`), streaming, with the model id from `ANKI_CHAT_MODEL` (default `claude-opus-4-6`). The web tools are declared as `web_search_20260209` / `web_fetch_20260209`, the variants that filter results server-side before they enter context; they need Opus 4.6 / Sonnet 4.6 or later, so a model set through `ANKI_CHAT_MODEL` must be one of those. Searches are billed per search on top of tokens ($10 per 1 000 at the time of writing), which is what `max_uses` is for. `max_tokens` is 8 192 (thinking tokens, when enabled, count against this budget). API key from `ANTHROPIC_API_KEY` (environment variable or `.env` via `python-dotenv`, loaded in `web/main.py`).
 
 System prompt layout and the `cache_control: ephemeral` placement: see [Prompt caching](#prompt-caching).
 

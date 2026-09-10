@@ -27,6 +27,10 @@ Two kinds of tools (specs/chat.md):
   `read_source`): executed here through the injected callables, the text they return is the tool
   result. A `reading` event tells the client what was read; `add_notes` also sends an `added`
   event so that the notes become cards.
+- **web tools** (`web_search`, `web_fetch`): run by Anthropic inside the model call, so there is
+  nothing to execute here. Their results come back as extra content blocks of the assistant
+  message; `_web_events` turns each one into a `reading` event carrying the URLs, and a long run
+  comes back as `stop_reason: "pause_turn"`, which `stream_chat` resumes.
 """
 
 from __future__ import annotations
@@ -53,6 +57,15 @@ MAX_TOOL_LOOPS = 8
 BRIEF_FIELD_CHARS = 120
 #: Cards a workspace holds at most (specs/workspace.md#how-notes-enter).
 MAX_CARDS = 50
+#: Web tool versions. These filter results server-side before they enter context, which needs
+#: Opus 4.6 / Sonnet 4.6 or later — the floor `DEFAULT_MODEL` already sits on.
+WEB_SEARCH_TYPE = "web_search_20260209"
+WEB_FETCH_TYPE = "web_fetch_20260209"
+#: Web tool calls per turn. Billed per search on top of tokens, hence a cap rather than none.
+MAX_WEB_SEARCHES = 8
+MAX_WEB_FETCHES = 5
+#: URLs spelled out in a `web_search` reading line; the rest are counted.
+WEB_URLS_SHOWN = 5
 
 
 def default_model() -> str:
@@ -199,7 +212,8 @@ travaille dans un espace de travail : les cartes qu'il regarde (la note qu'il a 
 brouillons préparés pour elle, les notes ajoutées depuis) sont listées plus bas avec leur \
 identifiant (w1, w2…). Ce prompt te donne aussi le deck en cours, l'index de son corpus et les \
 sources jointes. Le reste — les autres notes du deck ou de la collection, le texte d'une source \
-non jointe, l'arborescence des decks, un type de note — se lit avec les outils de lecture.
+non jointe, l'arborescence des decks, un type de note — se lit avec les outils de lecture, et \
+ce qui n'est nulle part dans la collection se cherche sur le web.
 
 Règles :
 - Réponds dans la langue de l'utilisateur, français par défaut.
@@ -212,6 +226,12 @@ lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; le mêm
 plusieurs notes = un propose_edit par note. Chaque proposition devient une version ou une carte \
 que l'utilisateur relit, retouche ou écarte, puis valide en bloc : tu n'écris jamais dans Anki. \
 Pour montrer des notes à l'utilisateur sans les modifier, add_notes les ajoute à l'espace.
+- Le web (web_search, puis web_fetch pour lire une page en entier) sert à deux choses : \
+confronter une carte à l'extérieur quand le corpus ne suffit pas, et **trouver des sources à \
+ajouter** — un article, un livre, une page de référence. Le corpus n'est pas fermé : une page \
+qui mérite d'être gardée devient une source par propose_create_source, et le contenu de carte \
+que tu tires du web arrive avec la proposition de source qui le fonde, pas tout seul. Cite les \
+URL sur lesquelles tu t'appuies.
 - Les champs sont des valeurs de champ Anki **brutes** : HTML, marqueurs de cloze \
 `{{c1::réponse}}` ou `{{c1::réponse::indice}}` conservés. Produis les tiens dans la même syntaxe \
 et garde-la valide : numéros contigus à partir de c1, accolades équilibrées, au moins un cloze \
@@ -546,6 +566,15 @@ READ_TOOLS: tuple[str, ...] = (
     "read_source",
 )
 
+#: Tools Anthropic executes. Nothing here dispatches them; they are reported, not run.
+WEB_TOOLS: tuple[str, ...] = ("web_search", "web_fetch")
+
+#: Result block type -> the web tool that produced it.
+_WEB_RESULTS: dict[str, str] = {
+    "web_search_tool_result": "web_search",
+    "web_fetch_tool_result": "web_fetch",
+}
+
 _FIELDS_DESC = (
     "Valeurs de champ Anki brutes, par nom de champ. HTML autorisé, marqueurs de cloze conservés."
 )
@@ -594,8 +623,22 @@ def _obj(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, 
 
 
 def tools() -> list[dict[str, Any]]:
-    """Every tool definition sent to the model: the proposal tools, then the read tools."""
-    return proposal_tools() + read_tool_defs()
+    """Every tool definition: the proposal tools, then the read tools, then the web tools."""
+    return proposal_tools() + read_tool_defs() + web_tool_defs()
+
+
+def web_tool_defs() -> list[dict[str, Any]]:
+    """The two Anthropic server tools. No `input_schema`: the API owns their shape.
+
+    `allowed_callers` is left at its default, so search runs inside code execution and filters
+    results before they reach context. The nested call/result pairs still come back in
+    `content`, which is what `_web_events` reads. If reading lines ever stop appearing, pinning
+    `"allowed_callers": ["direct"]` here trades those saved tokens for flat blocks.
+    """
+    return [
+        {"type": WEB_SEARCH_TYPE, "name": "web_search", "max_uses": MAX_WEB_SEARCHES},
+        {"type": WEB_FETCH_TYPE, "name": "web_fetch", "max_uses": MAX_WEB_FETCHES},
+    ]
 
 
 def proposal_tools() -> list[dict[str, Any]]:
@@ -884,6 +927,84 @@ def _summary(text: str) -> str:
     return first.lstrip("#").strip()
 
 
+def _attr(obj: Any, name: str) -> Any:
+    """Read `name` off an SDK block or off the plain dict the test fake replays."""
+    return obj.get(name) if isinstance(obj, Mapping) else getattr(obj, name, None)
+
+
+def _field(obj: Any, name: str) -> str:
+    value = _attr(obj, name)
+    return "" if value is None else str(value)
+
+
+def _web_outcome(block: Any) -> tuple[list[Any], str]:
+    """`(results, error_code)` of a web result block.
+
+    A web tool that fails still comes back HTTP 200 with the error inside the block, so this is
+    the only place that distinguishes the two — and the shapes differ per tool: `web_search`
+    succeeds with a *list* of results (empty when nothing matched), `web_fetch` with a single
+    result object. So an error is recognised by its `error_code`, never by not being a list.
+    """
+    content = _attr(block, "content")
+    code = _field(content, "error_code")
+    if code or _field(content, "type").endswith("_error"):
+        return [], code or "erreur inconnue"
+    if isinstance(content, list):
+        return content, ""
+    return ([] if content is None else [content]), ""
+
+
+def _web_summary(tool: str, call_input: Mapping[str, Any], results: Sequence[Any], err: str) -> str:
+    """The reading line for one web call. It spells out the URLs: that is the whole provenance
+    guarantee (specs/chat.md#web-tools) — the user must never learn of a page after the fact."""
+    if tool == "web_fetch":
+        url = str(call_input.get("url") or "") or (_field(results[0], "url") if results else "")
+        return f"erreur : {err}" if err else (url or "page")
+    query = str(call_input.get("query") or "")
+    head = f"« {query} »" if query else "recherche"
+    if err:
+        return f"{head} → erreur : {err}"
+    if not results:
+        return f"{head} → aucun résultat"
+    urls = [url for url in (_field(r, "url") for r in results) if url]
+    rest = len(urls) - WEB_URLS_SHOWN
+    tail = f" (+{rest})" if rest > 0 else ""
+    return f"{head} → {len(results)} résultat(s) : {', '.join(urls[:WEB_URLS_SHOWN])}{tail}"
+
+
+def _web_events(content: Sequence[Any], calls: dict[str, dict[str, Any]]) -> list[ChatEvent]:
+    """`reading` events for the web tools Anthropic ran inside one model call.
+
+    `calls` accumulates `server_tool_use` inputs by id **across the turn**: when Claude calls a
+    web tool and a local one in the same batch the API defers the search, so the call block and
+    its result land in different messages. An event is emitted on the *result* block only —
+    that one appears exactly once, where a deferred call block is re-sent with the next message.
+    """
+    events: list[ChatEvent] = []
+    for block in content:
+        kind = _field(block, "type")
+        if kind == "server_tool_use":
+            calls[_field(block, "id")] = dict(_attr(block, "input") or {})
+            continue
+        tool = _WEB_RESULTS.get(kind)
+        if tool is None:
+            continue
+        call_input = calls.get(_field(block, "tool_use_id"), {})
+        results, err = _web_outcome(block)
+        events.append(
+            ChatEvent(
+                "reading",
+                {
+                    "id": _field(block, "tool_use_id"),
+                    "tool": tool,
+                    "input": call_input,
+                    "summary": _web_summary(tool, call_input, results, err),
+                },
+            )
+        )
+    return events
+
+
 def _usage_dict(message: Any) -> dict[str, Any]:
     usage = getattr(message, "usage", None)
     if usage is None:
@@ -992,6 +1113,8 @@ async def stream_chat(
     ]
     tool_defs = tools()
     final: Any = None
+    #: `server_tool_use` inputs by id, kept for the whole turn (see `_web_events`).
+    web_calls: dict[str, dict[str, Any]] = {}
 
     try:
         for _ in range(MAX_TOOL_LOOPS):
@@ -1010,13 +1133,20 @@ async def stream_chat(
                         yield ChatEvent("text", {"delta": delta.text})
                 final = await stream.get_final_message()
 
-            if getattr(final, "stop_reason", None) != "tool_use":
+            for event in _web_events(getattr(final, "content", None) or [], web_calls):
+                yield event
+
+            stop_reason = getattr(final, "stop_reason", None)
+            if stop_reason == "pause_turn":
+                # A long web-tool run. Hand the assistant message back untouched and call again:
+                # the trailing server_tool_use block is what tells the API to resume, so there is
+                # no user message to add. It spends one of the MAX_TOOL_LOOPS calls.
+                convo.append({"role": "assistant", "content": final.content})
+                continue
+            if stop_reason != "tool_use":
                 yield ChatEvent(
                     "done",
-                    {
-                        "stop_reason": getattr(final, "stop_reason", None),
-                        "usage": _usage_dict(final),
-                    },
+                    {"stop_reason": stop_reason, "usage": _usage_dict(final)},
                 )
                 return
 

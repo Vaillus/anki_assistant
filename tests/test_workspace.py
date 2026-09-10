@@ -403,3 +403,114 @@ def test_api_lookup_returns_known_notes_in_order(api: TestClient, anki: FailingA
     assert res.status_code == 200
     assert [n["note_id"] for n in res.json()] == [b, a]
     assert res.json()[0]["fields"]["Text"] == "b"
+
+
+# ----------------------------------------------------------------------- model change
+
+
+def test_apply_changes_note_type_via_update_note_model(anki: FailingAnki, store: SourceStore):
+    """An edit with a different `model` calls updateNoteModel and the note becomes Basic."""
+    nid = anki.add(
+        "d", model="Cloze", fields={"Text": "old {{c1::x}}", "Back Extra": "r"}, flags=(1, 0)
+    )
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="edit",
+                note_id=nid,
+                model="Basic",
+                fields={"Front": "question", "Back": "answer"},
+                tags=["t"],
+            )
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok
+    assert anki.notes[nid]["modelName"] == "Basic"
+    assert anki.notes[nid]["fields"] == {"Front": "question", "Back": "answer"}
+    assert anki.notes[nid]["tags"] == ["t"]
+    assert "updateNoteModel" in anki.calls
+    assert "updateNote" not in anki.calls, "updateNoteModel replaces the normal edit"
+    assert nid in snap.model_changed
+    assert report.undo_available is True
+
+
+def test_apply_model_change_rollback_restores_old_type(anki: FailingAnki, store: SourceStore):
+    """On failure after a model change, rollback swaps back to the old type."""
+    a = anki.add("d", model="Cloze", fields={"Text": "x", "Back Extra": ""}, flags=(1,))
+    b = anki.add("d", model="Cloze", fields={"Text": "y", "Back Extra": ""}, flags=(1,))
+    anki.fail_on["updateNoteModel"] = 2  # the second model change fails
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="edit",
+                note_id=a,
+                model="Basic",
+                fields={"Front": "q1", "Back": "a1"},
+            ),
+            CardPlan(
+                wid="w2",
+                action="edit",
+                note_id=b,
+                model="Basic",
+                fields={"Front": "q2", "Back": "a2"},
+            ),
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok is False
+    assert report.rolled_back is True
+    # The first note was rolled back to Cloze
+    assert anki.notes[a]["modelName"] == "Cloze"
+    assert anki.notes[a]["fields"] == {"Text": "x", "Back Extra": ""}
+
+
+def test_undo_reverts_model_change(anki: FailingAnki, store: SourceStore):
+    """Undo after a model change restores the original note type."""
+    nid = anki.add("d", model="Cloze", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="edit",
+                note_id=nid,
+                model="Basic",
+                fields={"Front": "q", "Back": "a"},
+            )
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok and report.undo_available
+    assert anki.notes[nid]["modelName"] == "Basic"
+
+    undone = workspace.undo(anki, store, snap)
+    assert undone.ok
+    assert anki.notes[nid]["modelName"] == "Cloze"
+    assert anki.notes[nid]["fields"] == {"Text": "old", "Back Extra": ""}
+
+
+def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, store: SourceStore):
+    """An edit where `model` matches the note's current type goes through `review.edit`."""
+    nid = anki.add("d", model="Cloze", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="edit",
+                note_id=nid,
+                model="Cloze",
+                fields={"Text": "new", "Back Extra": ""},
+            )
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok
+    assert "updateNoteModel" not in anki.calls
+    assert "updateNote" in anki.calls
+    assert nid not in snap.model_changed

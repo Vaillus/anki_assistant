@@ -62,7 +62,7 @@ A **deleted** card is struck through and its fields are not editable. A **moved*
 
 ### Editing
 
-Click on a field → that field becomes a `<textarea>` holding the **raw value** (HTML and cloze markers), focused, with no preview; blur (click elsewhere, `Tab`) → the field is rendered again. The other fields of the card stay rendered meanwhile. Field names are not editable, fields cannot be added or removed: a card keeps the fields of its note type.
+Click on a field → that field becomes a `<textarea>` holding the **raw value** (HTML and cloze markers), focused, with no preview; blur (click elsewhere, `Tab`) → the field is rendered again. The other fields of the card stay rendered meanwhile. Field names are not editable; fields cannot be added or removed by hand. A `propose_edit` with a `model` different from the card's current type replaces the entire field set with the target type's fields ([chat.md § Proposal tools](./chat.md#proposal-tools)); the card head shows the effective type with a ⇄ indicator when it differs from v0.
 
 Editing the shown version modifies it in place, except when the shown version is **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « éditée ») that becomes the shown one. Any version other than v0 is editable, Claude's included; a hand-edited version of Claude's keeps its rationale and gains the « éditée » mark.
 
@@ -111,7 +111,7 @@ The **plan** is built from the cards, in this order of precedence per existing n
 | Card | Anki writes | Flag |
 |---|---|---|
 | Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), model, tags; anchors written to `sources.json` | — (new notes are unflagged) |
-| Existing, edited | `updateNote` with the shown version's fields (and tags if changed) | cleared |
+| Existing, edited | `updateNote` with the shown version's fields (and tags if changed); when the plan carries a different `model`, `updateNoteModel` instead (swaps the note type, writes fields and tags in one call — c1's history is kept, c2+ become orphan cards removed by Check Database) | cleared |
 | Existing, kept | none | cleared |
 | Existing, moved (with either of the above) | `changeDeck` on all cards; anchors re-checked against the destination corpus ([sources.md § Anchors](./sources.md#anchors)) | cleared |
 | Existing, deleted | `deleteNotes` | — |
@@ -123,7 +123,7 @@ The **plan** is built from the cards, in this order of precedence per existing n
 AnkiConnect has no transactions, so all-or-nothing is emulated. `workspace.apply` proceeds:
 
 1. **Validate** the plan's shape (unknown action, a create without fields, a note listed twice…) before touching Anki.
-2. **Snapshot** every existing note of the plan in one read: raw fields, tags, deck, card ids, flagged card ids.
+2. **Snapshot** every existing note of the plan in one read: raw fields, tags, deck, model, card ids, flagged card ids.
 3. **Create** the draft notes (`review.create`, then anchors). A fragment inherits the parent's anchors; a created note gets the plan's `source_ids`.
 4. **Edit** (`review.edit` with `unflag=False`), `Back Extra` emptied when the toggle says so.
 5. **Move** (`changeDeck`, anchors re-checked).
@@ -181,8 +181,8 @@ Pure functions over `AnkiClient` and `SourceStore`, no FastAPI imports, reusing 
 ```python
 @dataclass class CardPlan: wid, action, note_id, fields, tags, model, deck, source_ids, move_to, parent_wid
 @dataclass class ApplyPlan: deck, clear_reason, cards
-@dataclass class NoteSnap: note_id, fields, tags, deck, card_ids, flags   # flags: card id -> flag, restored colour by colour
-@dataclass class Snapshot: notes: dict[int, NoteSnap]; created; deleted; moved; anchors_before; written; unflagged
+@dataclass class NoteSnap: note_id, fields, tags, deck, model, card_ids, flags   # flags: card id -> flag, restored colour by colour
+@dataclass class Snapshot: notes: dict[int, NoteSnap]; created; deleted; moved; anchors_before; written; model_changed; unflagged
 @dataclass class ApplyReport: ok, created, resolved, deleted, moved, errors, rolled_back, undo_available
 
 def validate(plan) -> list[str]

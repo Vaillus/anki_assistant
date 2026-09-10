@@ -93,12 +93,13 @@ class ApplyPlan:
 
 @dataclass
 class NoteSnap:
-    """What it takes to put an existing note back: fields, tags, deck, and the flag of each card."""
+    """What it takes to put an existing note back: fields, tags, deck, model and flags."""
 
     note_id: int
     fields: dict[str, str]
     tags: list[str]
     deck: str
+    model: str
     card_ids: list[int]
     #: card id -> flag (0 = none), for every card of the note.
     flags: dict[int, int]
@@ -123,6 +124,8 @@ class Snapshot:
     anchors_before: dict[int, list[str]] = field(default_factory=dict)
     #: note id -> fields written, for the "modified since" check of undo.
     written: dict[int, dict[str, str]] = field(default_factory=dict)
+    #: Note ids whose note type was changed (old model is in NoteSnap.model).
+    model_changed: list[int] = field(default_factory=list)
     #: Note ids whose flags were cleared.
     unflagged: list[int] = field(default_factory=list)
 
@@ -209,6 +212,7 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
             fields=dict(note.fields),
             tags=list(note.tags),
             deck=cards[0].deck_name if cards else plan.deck,
+            model=note.model_name,
             card_ids=[c.card_id for c in cards] or list(note.card_ids),
             flags={c.card_id: c.flag for c in cards},
         )
@@ -268,7 +272,14 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
             fields = dict(card.fields or {})
             if plan.clear_reason and _reason_to_clear(snap.notes[nid]):
                 fields[REASON_FIELD] = ""
-            review.edit(client, nid, fields=fields, tags=card.tags, unflag=False)
+            new_model = card.model
+            old_model = snap.notes[nid].model
+            if new_model and new_model != old_model:
+                tags = list(card.tags) if card.tags is not None else list(snap.notes[nid].tags)
+                client.update_note_model(nid, model=new_model, fields=fields, tags=tags)
+                snap.model_changed.append(nid)
+            else:
+                review.edit(client, nid, fields=fields, tags=card.tags, unflag=False)
             snap.written[nid] = fields
 
         for card in moves:
@@ -363,10 +374,16 @@ def _restore(
     for nid in list(snap.written):
         note = snap.notes[nid]
         try:
-            client.update_note(nid, fields=dict(note.fields), tags=list(note.tags))
+            if nid in snap.model_changed:
+                client.update_note_model(
+                    nid, model=note.model, fields=dict(note.fields), tags=list(note.tags)
+                )
+            else:
+                client.update_note(nid, fields=dict(note.fields), tags=list(note.tags))
         except Exception as exc:  # noqa: BLE001
             errors.append(f"annulation de la modification de #{nid} : {exc}")
     snap.written = {}
+    snap.model_changed = []
     return errors
 
 

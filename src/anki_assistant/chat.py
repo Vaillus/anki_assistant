@@ -606,13 +606,26 @@ def proposal_tools() -> list[dict[str, Any]]:
             "description": (
                 "Proposer une réécriture d'une carte : une nouvelle version de la carte visée. "
                 "Ne renvoyer que les champs qui changent, en valeur brute complète ; les autres "
-                "champs de la version affichée sont repris tels quels."
+                "champs de la version affichée sont repris tels quels. "
+                "Pour changer le type de note (ex. Cloze → Basic) : passer `model` avec le nom "
+                "du nouveau type et donner **tous** les champs du type cible (rien n'est repris "
+                "de l'ancienne version, les schémas sont différents). L'historique de la c1 est "
+                "conservé ; les c2+ deviennent orphelines jusqu'au prochain « Vérifier la base »."
             ),
             "input_schema": _obj(
                 {
                     "target": _TARGET,
+                    "model": {
+                        "type": "string",
+                        "description": (
+                            "Nouveau type de note (ex. « Basic »). Omettre pour garder le type "
+                            "actuel. Quand il change, `fields` doit donner tous les champs du "
+                            "type cible."
+                        ),
+                    },
                     "fields": _fields_schema(
-                        "Champs modifiés uniquement, valeurs brutes complètes. " + _FIELDS_DESC
+                        "Champs modifiés uniquement (ou tous les champs du type cible si `model` "
+                        "change). Valeurs brutes complètes. " + _FIELDS_DESC
                     ),
                     "tags": _TAGS,
                     "rationale": _RATIONALE,

@@ -175,6 +175,20 @@ class FakeAnkiClient(AnkiClient):
         for key, value in zip(keys, newValues, strict=True):
             self.cards[card][key] = value
 
+    def _do_updateNoteModel(self, note: dict[str, Any]) -> None:
+        stored = self._note(note["id"])
+        model = note["modelName"]
+        if model not in self.models:
+            raise AnkiConnectError(f"model was not found: {model}")
+        stored["modelName"] = model
+        stored["fields"] = {name: "" for name in self.models[model]}
+        for name, value in note.get("fields", {}).items():
+            for field_name in stored["fields"]:
+                if name.lower() == field_name.lower():
+                    stored["fields"][field_name] = value
+                    break
+        stored["tags"] = list(note.get("tags", []))
+
     def _do_modelNames(self) -> list[str]:
         return sorted(self.models)
 

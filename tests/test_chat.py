@@ -38,6 +38,25 @@ def tool_use_block(block_id: str, name: str, tool_input: dict[str, Any]) -> Simp
     return SimpleNamespace(type="tool_use", id=block_id, name=name, input=tool_input)
 
 
+def server_tool_use_block(block_id: str, name: str, tool_input: dict[str, Any]) -> SimpleNamespace:
+    """A web tool call as Anthropic reports it — never dispatched by us, only reported."""
+    return SimpleNamespace(type="server_tool_use", id=block_id, name=name, input=tool_input)
+
+
+def web_result(url: str, title: str = "") -> SimpleNamespace:
+    return SimpleNamespace(type="web_search_result", url=url, title=title)
+
+
+def web_result_block(tool_use_id: str, content: Any, tool: str = "web_search") -> SimpleNamespace:
+    return SimpleNamespace(type=f"{tool}_tool_result", tool_use_id=tool_use_id, content=content)
+
+
+def web_error_block(tool_use_id: str, code: str, tool: str = "web_search") -> SimpleNamespace:
+    return web_result_block(
+        tool_use_id, SimpleNamespace(type=f"{tool}_tool_result_error", error_code=code), tool
+    )
+
+
 def final_message(content: list[Any], stop_reason: str) -> SimpleNamespace:
     return SimpleNamespace(
         content=content,
@@ -274,7 +293,7 @@ def test_index_marks_missing_files() -> None:
 # ------------------------------------------------------------------------------- tools
 
 
-def test_tools_cover_the_six_proposals_then_the_six_read_tools() -> None:
+def test_tools_are_the_proposals_then_the_read_tools_then_the_web_tools() -> None:
     defs = chat.tools()
     names = [tool["name"] for tool in defs]
     proposals = [
@@ -287,7 +306,7 @@ def test_tools_cover_the_six_proposals_then_the_six_read_tools() -> None:
     ]
     assert names[: len(proposals)] == proposals
     assert set(proposals) == set(chat.TOOL_KINDS)
-    assert tuple(names[len(proposals) :]) == chat.READ_TOOLS
+    assert tuple(names[len(proposals) : -len(chat.WEB_TOOLS)]) == chat.READ_TOOLS
     assert chat.READ_TOOLS == (
         "list_decks",
         "search_notes",
@@ -296,8 +315,14 @@ def test_tools_cover_the_six_proposals_then_the_six_read_tools() -> None:
         "get_note_type",
         "read_source",
     )
+    assert tuple(names[-len(chat.WEB_TOOLS) :]) == chat.WEB_TOOLS
     assert not (set(chat.READ_TOOLS) & set(chat.TOOL_KINDS))
-    for tool in defs:
+    # The web tools are Anthropic-defined: a `type`, no schema of ours (specs/chat.md#web-tools).
+    assert chat.web_tool_defs() == [
+        {"type": "web_search_20260209", "name": "web_search", "max_uses": chat.MAX_WEB_SEARCHES},
+        {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": chat.MAX_WEB_FETCHES},
+    ]
+    for tool in chat.proposal_tools() + chat.read_tool_defs():
         schema = tool["input_schema"]
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
@@ -308,7 +333,9 @@ def test_tools_cover_the_six_proposals_then_the_six_read_tools() -> None:
 
 
 def test_tool_schemas_match_the_spec_tables() -> None:
-    by_name = {tool["name"]: tool["input_schema"] for tool in chat.tools()}
+    by_name = {
+        tool["name"]: tool["input_schema"] for tool in chat.proposal_tools() + chat.read_tool_defs()
+    }
     assert by_name["propose_edit"]["properties"]["fields"]["additionalProperties"] == {
         "type": "string"
     }
@@ -695,6 +722,115 @@ def test_tool_loop_is_capped() -> None:
     assert len(client.messages.calls) == chat.MAX_TOOL_LOOPS
     assert events[-1].type == "done"
     assert events[-1].data["stop_reason"] == "max_tool_loops"
+
+
+# ----------------------------------------------------------------------------- web tools
+
+
+def test_web_search_reading_names_the_query_and_spells_out_the_urls() -> None:
+    call = server_tool_use_block("srvtoolu_1", "web_search", {"query": "conditions KKT"})
+    results = [web_result(f"https://ex{i}.org/p") for i in range(1, 8)]
+    client = FakeAnthropic(
+        [([], final_message([call, web_result_block("srvtoolu_1", results)], "end_turn"))]
+    )
+    events = run_chat(client)
+
+    assert [event.type for event in events] == ["reading", "done"]
+    reading = events[0].data
+    assert reading == {
+        "id": "srvtoolu_1",
+        "tool": "web_search",
+        "input": {"query": "conditions KKT"},
+        "summary": reading["summary"],
+    }
+    # The URLs are the provenance guarantee; past WEB_URLS_SHOWN the rest is counted.
+    assert reading["summary"].startswith("« conditions KKT » → 7 résultat(s) : https://ex1.org/p")
+    assert "https://ex5.org/p" in reading["summary"]
+    assert "https://ex6.org/p" not in reading["summary"]
+    assert reading["summary"].endswith("(+2)")
+
+
+def test_web_search_without_results_says_so() -> None:
+    call = server_tool_use_block("srvtoolu_1", "web_search", {"query": "rien"})
+    client = FakeAnthropic(
+        [([], final_message([call, web_result_block("srvtoolu_1", [])], "end_turn"))]
+    )
+    events = run_chat(client)
+    assert events[0].data["summary"] == "« rien » → aucun résultat"
+
+
+def test_web_tool_error_is_a_reading_not_a_chat_error() -> None:
+    call = server_tool_use_block("srvtoolu_1", "web_search", {"query": "x"})
+    failed = web_error_block("srvtoolu_1", "max_uses_exceeded")
+    client = FakeAnthropic([([], final_message([call, failed], "end_turn"))])
+    events = run_chat(client)
+    assert [event.type for event in events] == ["reading", "done"]
+    assert events[0].data["summary"] == "« x » → erreur : max_uses_exceeded"
+
+
+def test_web_fetch_succeeds_with_a_single_object_and_reads_as_its_url() -> None:
+    url = "https://en.wikipedia.org/wiki/Karush-Kuhn-Tucker_conditions"
+    call = server_tool_use_block("srvtoolu_2", "web_fetch", {"url": url})
+    document = SimpleNamespace(type="web_fetch_result", url=url, content="…")
+    client = FakeAnthropic(
+        [
+            (
+                [],
+                final_message(
+                    [call, web_result_block("srvtoolu_2", document, tool="web_fetch")], "end_turn"
+                ),
+            )
+        ]
+    )
+    events = run_chat(client)
+    assert [event.type for event in events] == ["reading", "done"]
+    assert events[0].data == {
+        "id": "srvtoolu_2",
+        "tool": "web_fetch",
+        "input": {"url": url},
+        "summary": url,
+    }
+
+
+def test_pause_turn_resumes_with_the_assistant_message_unchanged() -> None:
+    """A long search: the API pauses, and the trailing call block is what resumes it.
+
+    Also covers the deferred case — the call lands in one message and its result in the next,
+    and the reading still names the query.
+    """
+    call = server_tool_use_block("srvtoolu_1", "web_search", {"query": "conditions KKT"})
+    paused = final_message([text_block("Je cherche."), call], "pause_turn")
+    resumed = final_message(
+        [web_result_block("srvtoolu_1", [web_result("https://ex.org/kkt")])], "end_turn"
+    )
+    client = FakeAnthropic([([], paused), ([text_delta("Voilà.")], resumed)])
+    events = run_chat(client)
+
+    # Text streams as it is generated; the search is only known from the final message. The log
+    # renders reads above the body either way (workspace.js#msgHtml).
+    assert [event.type for event in events] == ["text", "reading", "done"]
+    assert events[1].data["summary"] == "« conditions KKT » → 1 résultat(s) : https://ex.org/kkt"
+    assert events[-1].data["stop_reason"] == "end_turn"
+
+    # Resumed with the assistant message verbatim (encrypted content intact) and nothing added.
+    assert len(client.messages.calls) == 2
+    convo = client.messages.calls[1]["messages"]
+    assert convo[-1] == {"role": "assistant", "content": paused.content}
+
+
+def test_a_web_call_without_its_result_yet_emits_nothing() -> None:
+    """Mixed batch: the API defers the search, so only the local tool result comes back now."""
+    call = server_tool_use_block("srvtoolu_1", "web_search", {"query": "conditions KKT"})
+    local = tool_use_block("toolu_1", "list_decks", {})
+    client = FakeAnthropic(
+        [
+            ([], final_message([call, local], "tool_use")),
+            ([text_delta("ok")], final_message([], "end_turn")),
+        ]
+    )
+    events = run_chat(client, read_tools={"list_decks": lambda _inp: "# 2 decks"})
+    assert [event.type for event in events] == ["reading", "text", "done"]
+    assert events[0].data["tool"] == "list_decks"
 
 
 def test_api_failure_becomes_an_error_event() -> None:

@@ -222,6 +222,24 @@ class AnkiClient:
     def delete_notes(self, note_ids: list[int]) -> None:
         self.invoke("deleteNotes", notes=note_ids)
 
+    def update_note_model(
+        self,
+        note_id: int,
+        model: str,
+        fields: dict[str, str],
+        tags: list[str],
+    ) -> None:
+        """Change the note's type, fields and tags in one call (AnkiConnect `updateNoteModel`).
+
+        This swaps the note type id, rebuilds the field list by case-insensitive name match,
+        and replaces tags. Cards are untouched: orphan cards (ordinals without a template in the
+        new type) remain until Anki's Check Database removes them.
+        """
+        self.invoke(
+            "updateNoteModel",
+            note={"id": note_id, "modelName": model, "fields": fields, "tags": tags},
+        )
+
     # ---------------------------------------------------------------- models
 
     def model_names(self) -> list[str]:

@@ -80,7 +80,7 @@ function shownFields(c) {
 /* An existing note's card is changed when it is not on v0 or carries a state; a draft always is. */
 function cardChanged(c) {
   if (!c.noteId) return true;
-  return c.vi > 0 || c.deleted || c.keep || !!c.moveTo || tagsChanged(c);
+  return c.vi > 0 || c.deleted || c.keep || !!c.moveTo || tagsChanged(c) || shownModel(c) !== c.model;
 }
 
 function tagsChanged(c) {
@@ -173,11 +173,19 @@ async function closeWorkspace(force) {
 
 /* ---------------- versions ---------------- */
 
-function pushVersion(card, fields, by, rationale) {
-  card.versions.push({ fields: Object.assign({}, fields), by, rationale: rationale || "" });
+function pushVersion(card, fields, by, rationale, model) {
+  var v = { fields: Object.assign({}, fields), by: by, rationale: rationale || "" };
+  if (model) v.model = model;
+  card.versions.push(v);
   card.vi = card.versions.length - 1;
   card.deleted = false; // a rewrite supersedes a deletion (specs/chat.md#proposal-tools)
   card.keep = false;
+}
+
+/* The effective model for a card: the shown version's model override, or the card's original. */
+function shownModel(c) {
+  var v = shownVersion(c);
+  return v.model || c.model;
 }
 
 function showVersion(card, delta) {
@@ -209,6 +217,7 @@ function editField(card, name, value) {
   let v = shownVersion(card);
   if (v.by === "anki") {
     v = { fields: Object.assign({}, v.fields), by: "user", rationale: "" };
+    if (shownVersion(card).model) v.model = shownVersion(card).model;
     card.versions.push(v);
     card.vi = card.versions.length - 1;
   }
@@ -248,8 +257,13 @@ async function landProposal(input, kind) {
   const inp = input || {};
   if (kind === "edit") {
     const card = await resolveTarget(inp.target);
-    const fields = Object.assign({}, shownFields(card), inp.fields || {});
-    pushVersion(card, fields, "claude", inp.rationale);
+    const newModel = inp.model || null;
+    const modelChanged = newModel && newModel !== shownModel(card);
+    // When the note type changes, fields are complete (different schema); otherwise merge.
+    const fields = modelChanged
+      ? Object.assign({}, inp.fields || {})
+      : Object.assign({}, shownFields(card), inp.fields || {});
+    pushVersion(card, fields, "claude", inp.rationale, modelChanged ? newModel : null);
     if (Array.isArray(inp.tags)) card.tags = inp.tags.slice();
     return "→ carte " + card.wid;
   }
@@ -314,7 +328,7 @@ function cardsForServer() {
     note_id: c.noteId,
     fields: shownFields(c),
     deck: c.deck,
-    model: c.model,
+    model: shownModel(c),
     tags: c.tags,
     active: c.active,
     original_fields: c.noteId && c.vi > 0 ? c.versions[0].fields : null,
@@ -560,6 +574,8 @@ function planFromWs() {
     } else if (c.vi > 0 || tagsChanged(c)) {
       const card = { wid: c.wid, action: "edit", note_id: c.noteId, fields: shownFields(c), move_to: c.moveTo };
       if (tagsChanged(c)) card.tags = c.tags;
+      const em = shownModel(c);
+      if (em !== c.model) card.model = em;
       cards.push(card);
     } else if (c.keep || c.moveTo) {
       cards.push({ wid: c.wid, action: "keep", note_id: c.noteId, move_to: c.moveTo });
@@ -846,11 +862,14 @@ function wsCardHtml(c, isFragment) {
         "</button>"
       : "") +
     (c.noteId && !c.deleted ? movePickerHtml(c) : "");
+  const effectiveModel = shownModel(c);
+  const modelChanged = c.noteId && effectiveModel !== c.model;
   const identity =
     '<span class="tag">' +
     (c.noteId ? esc(short(c.noteId)) : "brouillon") +
     " · " +
-    esc(c.model || "") +
+    esc(effectiveModel || "") +
+    (modelChanged ? ' <b title="type changé (était ' + esc(c.model) + ')">⇄</b>' : "") +
     (c.deck && c.deck !== S.ws.deck ? " · " + esc(c.deck) : "") +
     (c.tags.length ? " · " + esc(c.tags.join(" ")) : "") +
     "</span>";

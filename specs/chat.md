@@ -104,7 +104,7 @@ Claude gets six proposal tools. Each invocation is streamed to the client as a `
 
 | Tool | Input | Lands as |
 |---|---|---|
-| `propose_edit` | `{ target, fields: {name: raw}, tags?: [], rationale }` | a new version on the target card |
+| `propose_edit` | `{ target, model?, fields: {name: raw}, tags?: [], rationale }` (`model` = target Anki note type name; when it differs from the card's current type, `fields` must be the **complete** field set of the target type — no merge) | a new version on the target card (with a model override when the type changes) |
 | `propose_split` | `{ target, original: {fields} \| null, new_notes: [{ model?, fields }], rationale }` (`model` = Anki note type name) | a new version on the target card (`original.fields`) — or the card marked deleted when `original` is null — plus one fragment card per entry of `new_notes` |
 | `propose_create` | `{ fields, model?, source_ids?, rationale }` (`model` = Anki note type name; deck, tags and `source_ids` default to the root's) | a new draft card, no parent |
 | `propose_move` | `{ target, deck, rationale }` | the destination deck as a badge on the target card |
@@ -113,7 +113,7 @@ Claude gets six proposal tools. Each invocation is streamed to the client as a `
 
 **`target`** is a string: a workspace id (`"w3"`) for any card, or an Anki note id in digits (`"1732375559262"`) for a note that has a card *or not*. A note id absent from the workspace adds the note as a card first (the client fetches it with `POST /api/notes/lookup`), then applies the proposal; the server refuses such a proposal with an error result when the workspace is at its cap. An unknown workspace id or note id is an error result. A `propose_edit` on a deleted card is accepted and puts the card back (a rewrite supersedes a deletion).
 
-`fields` in proposals are **raw field values** (HTML, cloze markers kept). On `propose_edit` they are the **changed fields only**, as complete raw values; the client merges them into the shown version's fields to build the new version, so that a one-word fix does not make Claude retype `Back Extra`. On `propose_split` and `propose_create` every field of the new note is given.
+`fields` in proposals are **raw field values** (HTML, cloze markers kept). On `propose_edit` they are the **changed fields only**, as complete raw values; the client merges them into the shown version's fields to build the new version, so that a one-word fix does not make Claude retype `Back Extra`. **Exception: when `model` is given and differs from the card's current type, `fields` are the complete field set of the target type — no merge, since the field schemas differ.** On `propose_split` and `propose_create` every field of the new note is given.
 
 In the log, a proposal that landed on the workspace shows as one muted pointer line — « → carte w3 », « → 3 cartes » for a split — with the rationale under the version on the card, not here. Several notes with the same defect are several `propose_edit` calls in one turn, one card each; there is no bulk tool.
 
@@ -185,4 +185,4 @@ async def stream_chat(client, deck, cards, source_ids, messages, load_corpus, lo
 
 ## Out of scope for v1
 
-Retrieval inside long PDFs (the user sets `pages` instead), persistence of conversations, Claude acting without a click, Claude editing note types (CSS, templates — read-only through `get_note_type`), creating or editing PDF sources.
+Retrieval inside long PDFs (the user sets `pages` instead), persistence of conversations, Claude acting without a click, editing note type definitions (CSS, templates — read-only through `get_note_type`; **changing** which note type a note belongs to is supported via `propose_edit` with `model`), creating or editing PDF sources.

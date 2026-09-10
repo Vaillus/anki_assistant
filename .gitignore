@@ -8,3 +8,4 @@ __pycache__/
 sources.json
 *.egg-info/
 CLAUDE.md
+scripts/app/img/

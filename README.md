@@ -26,6 +26,19 @@ Trois colonnes : les decks avec leur nombre de notes flaguées, la file du deck 
 panneau Source / Chat. La note sélectionnée expose les décisions : Garder, Modifier, Splitter,
 Créer, Déplacer, Supprimer, Passer. Détails dans [`specs/review.md`](specs/review.md).
 
+## Desktop launcher
+
+[`scripts/app/install.sh`](scripts/app/) builds **Anki Assistant.app** in `~/Applications`:
+a real app bundle that starts Anki if it is not running, starts the server, and renders the
+UI in its own window — no tab strip, no address bar, its own Dock icon and running dot.
+See [`scripts/app/README.md`](scripts/app/README.md) for details.
+
+```bash
+scripts/app/install.sh              # build it (pass a directory to install elsewhere)
+scripts/app/launch.sh               # servers up, then show the window
+scripts/app/launch.sh stop          # stop the server
+```
+
 ## CLI
 
 

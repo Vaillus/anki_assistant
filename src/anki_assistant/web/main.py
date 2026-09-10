@@ -47,7 +47,9 @@ app = create_app()
 
 
 def run() -> None:
-    uvicorn.run("anki_assistant.web.main:app", host=HOST, port=PORT, reload=True)
+    """Serve the app. Auto-reload unless ANKI_WEB_RELOAD=0 (the desktop launcher sets it)."""
+    reload = os.environ.get("ANKI_WEB_RELOAD", "1") != "0"
+    uvicorn.run("anki_assistant.web.main:app", host=HOST, port=PORT, reload=reload)
 
 
 if __name__ == "__main__":

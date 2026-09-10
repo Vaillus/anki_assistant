@@ -38,3 +38,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ty.src]
 exclude = ["prototype"]
+
+# scripts/ holds standalone dev tooling, imported by its tests via sys.path.
+[tool.ty.environment]
+extra-paths = ["scripts"]

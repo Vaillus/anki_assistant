@@ -52,7 +52,9 @@ The **activation toggle** is the head itself: clicking the head (outside a contr
 
 ### Body
 
-The reason callout (as in the queue) sits at the top of an existing note's card, in every version — it is about the flag, not part of the card.
+The reason callout (as in the queue) sits at the bottom of an existing note's card, under the fields, in every version — it is about the flag, not part of the card. It always shows the reason as v0 held it.
+
+`Back Extra` is never shown among the fields and is never editable by hand (as in the queue): the callout is the only place it appears, and the « vider Back Extra » toggle is the only thing that writes it.
 
 Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). **v0 is shown in question state**: the flagged clozes hidden, « Révéler » to show them, exactly as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full: a rewrite may renumber clozes, and the hidden state is for understanding the flag, not for proofreading the fix.
 

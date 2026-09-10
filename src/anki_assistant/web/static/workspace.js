@@ -893,9 +893,9 @@ function wsCardHtml(c, isFragment) {
     versions +
     actions +
     "</div>" +
-    (c.noteId && c.reason ? '<div class="reason"><span class="reason-label">raison du flag</span>' + nl2br(c.reason) + "</div>" : "") +
     meta +
     wsFieldsHtml(c) +
+    (c.noteId && c.reason ? '<div class="reason"><span class="reason-label">raison du flag</span>' + nl2br(c.reason) + "</div>" : "") +
     wsRevealHtml(c) +
     "</div>"
   );
@@ -921,11 +921,14 @@ function wsHidden(c) {
   return c.flaggedClozes.some((k) => html.indexOf('<span class="cloze" data-n="' + k + '"') >= 0);
 }
 
+/* « Back Extra » is skipped: the reason callout is the only place it appears, and nothing
+   but the « vider Back Extra » toggle writes it (specs/workspace.md#body). */
 function wsFieldsHtml(c) {
   const fields = shownFields(c);
   const hidden = wsHidden(c);
   return Object.keys(fields)
     .map((name) => {
+      if (name === REASON_FIELD) return "";
       const raw = fields[name];
       let body;
       if (c.editing === name) {
@@ -937,7 +940,7 @@ function wsFieldsHtml(c) {
         let html = renderField(raw);
         if (hidden) html = hideClozes(html, c.flaggedClozes);
         body =
-          '<div class="field-val' + (name === REASON_FIELD ? " small" : "") + (c.deleted ? "" : " editable") + '" data-act="ws-edit" data-wid="' + c.wid + '" data-field="' + esc(name) + '" title="cliquer pour éditer la valeur brute">' +
+          '<div class="field-val' + (c.deleted ? "" : " editable") + '" data-act="ws-edit" data-wid="' + c.wid + '" data-field="' + esc(name) + '" title="cliquer pour éditer la valeur brute">' +
           (html || '<span class="muted">(vide)</span>') +
           "</div>";
       }

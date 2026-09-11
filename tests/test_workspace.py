@@ -516,6 +516,61 @@ def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, sto
     assert nid not in snap.model_changed
 
 
+# ---------------------------------------------------------------------- field names
+
+
+def test_field_names_are_fitted_to_the_note_type_case_insensitively(
+    anki: FailingAnki, store: SourceStore
+):
+    nid = anki.add("d", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="create",
+                model="Basic",
+                deck="d",
+                fields={"front": "q", "BACK": "a"},
+            ),
+            CardPlan(
+                wid="w2",
+                action="edit",
+                note_id=nid,
+                model="Basic",
+                fields={"front": "q2", "back": "a2"},
+            ),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok, report.errors
+    assert anki.notes[report.created["w1"]]["fields"] == {"Front": "q", "Back": "a"}
+    assert anki.notes[nid]["fields"] == {"Front": "q2", "Back": "a2"}
+    assert anki.notes[nid]["modelName"] == "Basic"
+
+
+def test_an_unknown_field_or_an_empty_first_field_is_refused_before_writing(
+    anki: FailingAnki, store: SourceStore
+):
+    nid = anki.add("d", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
+    bad = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="create", model="Basic", deck="d", fields={"Recto": "q"}),
+            CardPlan(wid="w2", action="create", model="Basic", deck="d", fields={"Back": "a"}),
+            CardPlan(wid="w3", action="edit", note_id=nid, fields={"Text": "x", "Extra": "y"}),
+        ],
+    )
+    with pytest.raises(workspace.PlanError) as exc:
+        workspace.apply(anki, store, bad)
+    message = str(exc.value)
+    assert "w1 : champ « Recto » inconnu du type Basic (champs : Front, Back)" in message
+    assert "w2 : le premier champ (Front) est vide" in message
+    assert "w3 : champ « Extra » inconnu du type Cloze" in message
+    assert "addNote" not in anki.calls and "updateNote" not in anki.calls
+    assert anki.notes[nid]["fields"] == {"Text": "old", "Back Extra": ""}
+
+
 # ---------------------------------------------------------------------------- defer
 
 

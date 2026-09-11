@@ -59,7 +59,9 @@ The reason callout (as in the queue) sits at the bottom of an existing note's ca
 
 `Back Extra` is never shown among the fields and is never editable by hand (as in the queue): the callout is the only place it appears, and the only things that write it are the « vider Back Extra » toggle and the comment of a card whose flag is on.
 
-When the **flag is on** the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped) — only if the user changed it, so an untouched `Back Extra` is not rewritten. Typing does not redraw. When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
+When the **flag is on** the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped) — only if the user changed it, so an untouched `Back Extra` is not rewritten. Typing does not redraw. When an existing note's type has no `Back Extra` (v0 has no such field), the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag. A draft always gets the textarea — a proposal may simply have left the field out — and the server checks the note type at validation.
+
+A draft whose flag is off shows its `Back Extra`, when the proposal filled it, in the same read-only callout labelled « Back Extra »: the field is hidden from the editable fields like everywhere else, and this is the one place it can be read.
 
 Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). **v0 is shown in question state**: the flagged clozes hidden, « Révéler » to show them, exactly as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full: a rewrite may renumber clozes, and the hidden state is for understanding the flag, not for proofreading the fix.
 
@@ -109,7 +111,7 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics (
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card whose flag is on counts once, as « à revoir », edited or not; a draft with the flag on counts as created and as « à revoir ». Disabled when the plan is empty and during the write. On a freshly opened workspace the plan already holds the root as kept: « Valider · 1 gardée » is the workspace's « Garder ». When the plan deletes at least one note, a confirmation lists them; nothing else asks for confirmation — the workspace itself is the review step.
+« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card counts under every action it carries: an edited card with the flag on is both « modifiée » and « à revoir », a draft with the flag on both « créée » and « à revoir », a moved card also « déplacée ». Disabled when the plan is empty and during the write. On a freshly opened workspace the plan already holds the root as kept: « Valider · 1 gardée » is the workspace's « Garder ». When the plan deletes at least one note, a confirmation lists them; nothing else asks for confirmation — the workspace itself is the review step.
 
 ### What is written
 
@@ -117,7 +119,7 @@ The **plan** is built from the cards. Per existing note's card, in this order: d
 
 | Card | Anki writes | Flag |
 |---|---|---|
-| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), model, tags; anchors written to `sources.json`. Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
+| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), model, tags; anchors written to `sources.json`. Deferred: `Back Extra` is the comment in the same `addNote`, whether or not the proposal gave the field, as long as the note type has it (`modelFieldNames`) | — (new notes are unflagged), unless deferred: red on every card |
 | Existing, edited | `updateNote` with the shown version's fields (and tags if changed); when the plan carries a different `model`, `updateNoteModel` instead (swaps the note type, writes fields and tags in one call — c1's history is kept, c2+ become orphan cards removed by Check Database) | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |

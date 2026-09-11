@@ -131,8 +131,8 @@ function wsChanges() {
       if (p.defer) out.deferred++; // created flagged: counts as both
     } else if (p.action === "delete") out.deleted++;
     else if (p.action === "edit") {
-      if (p.defer) out.deferred++; // an edited card with the flag on counts once, as « à revoir »
-      else out.edited++;
+      out.edited++;
+      if (p.defer) out.deferred++; // edited and still flagged: counts as both
     } else if (p.action === "defer") out.deferred++;
     else if (p.action === "keep") out.kept++;
     if (p.move_to) out.moved++;
@@ -218,8 +218,10 @@ function toggleFlag(card) {
   if (card.flag.on && hasReasonField(card)) S.refocus = "ws-comment-" + card.wid;
 }
 
+/* A draft always has one as far as the client knows — a proposal may have left the field
+   out — and the server checks the note type at validation (specs/workspace.md#body). */
 function hasReasonField(card) {
-  return Object.prototype.hasOwnProperty.call(shownFields(card), REASON_FIELD);
+  return !card.noteId || Object.prototype.hasOwnProperty.call(card.versions[0].fields, REASON_FIELD);
 }
 
 /* ---------------- versions ---------------- */
@@ -961,7 +963,9 @@ function wsCardHtml(c, isFragment) {
       ? wsCommentHtml(c)
       : c.noteId && c.reason
         ? '<div class="reason"><span class="reason-label">raison du flag' + clozeLabels(c) + "</span>" + nl2br(c.reason) + "</div>"
-        : "") +
+        : !c.noteId && plainText(shownFields(c)[REASON_FIELD] || "")
+          ? '<div class="reason"><span class="reason-label">' + esc(REASON_FIELD) + "</span>" + nl2br(plainText(shownFields(c)[REASON_FIELD])) + "</div>"
+          : "") +
     wsRevealHtml(c) +
     "</div>"
   );

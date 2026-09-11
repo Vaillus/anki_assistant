@@ -298,7 +298,11 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
             step = f"création de {card.wid}"
             fields = dict(card.fields or {})
             if card.deferred and card.comment is not None:
-                if REASON_FIELD in fields:
+                # A proposal may have left the field out: ask the note type, not the proposal.
+                has_field = REASON_FIELD in fields or REASON_FIELD in client.model_field_names(
+                    str(card.model)
+                )
+                if has_field:
                     fields[REASON_FIELD] = comment_html(card.comment)
                 elif card.comment.strip():
                     report.errors.append(

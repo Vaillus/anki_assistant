@@ -342,6 +342,14 @@ a { color: var(--accent); }
 .applied-mark { color: var(--ok); font-size: 13px; font-weight: 600; }
 .proposal .revert { font-size: 12px; padding: 2px 8px; margin-left: 6px; }
 .reading { font-size: 12px; color: var(--muted); font-style: italic; margin: 2px 0; }
+/* ---------- chat: citations (specs/chat.md#web-tools) ---------- */
+
+.cite { font-size: 11px; text-decoration: none; vertical-align: super; margin-left: 1px; }
+.cite:hover { text-decoration: underline; }
+.sources { margin: 6px 0 0; padding: 4px 0 0; border-top: 1px dashed var(--line); list-style: none; font-size: 12px; }
+.sources li { margin: 2px 0; }
+.sources .n { font-family: var(--mono); color: var(--muted); }
+.sources .host { color: var(--muted); }
 /* ---------- chat: source chips and source proposals (specs/chat.md) ---------- */
 
 .chip.src { background: var(--obsidianbg); color: var(--obsidianink); }

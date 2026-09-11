@@ -57,6 +57,44 @@ def web_error_block(tool_use_id: str, code: str, tool: str = "web_search") -> Si
     )
 
 
+def block_start(content_block: Any) -> SimpleNamespace:
+    return SimpleNamespace(type="content_block_start", content_block=content_block)
+
+
+def text_start() -> SimpleNamespace:
+    return block_start(SimpleNamespace(type="text", text=""))
+
+
+def block_stop() -> SimpleNamespace:
+    return SimpleNamespace(type="content_block_stop")
+
+
+def citation_delta(**citation: Any) -> SimpleNamespace:
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="citations_delta", citation=SimpleNamespace(**citation)),
+    )
+
+
+def search_citation(url: str, title: str = "", cited_text: str = "…") -> SimpleNamespace:
+    return citation_delta(
+        type="web_search_result_location", url=url, title=title, cited_text=cited_text
+    )
+
+
+def fetch_citation(title: str, index: int, cited_text: str = "…") -> SimpleNamespace:
+    return citation_delta(
+        type="char_location", document_title=title, document_index=index, cited_text=cited_text
+    )
+
+
+def fetched_page(tool_use_id: str, url: str, title: str) -> SimpleNamespace:
+    document = SimpleNamespace(
+        type="web_fetch_result", url=url, content=SimpleNamespace(type="document", title=title)
+    )
+    return web_result_block(tool_use_id, document, tool="web_fetch")
+
+
 def final_message(content: list[Any], stop_reason: str) -> SimpleNamespace:
     return SimpleNamespace(
         content=content,
@@ -319,8 +357,19 @@ def test_tools_are_the_proposals_then_the_read_tools_then_the_web_tools() -> Non
     assert not (set(chat.READ_TOOLS) & set(chat.TOOL_KINDS))
     # The web tools are Anthropic-defined: a `type`, no schema of ours (specs/chat.md#web-tools).
     assert chat.web_tool_defs() == [
-        {"type": "web_search_20260209", "name": "web_search", "max_uses": chat.MAX_WEB_SEARCHES},
-        {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": chat.MAX_WEB_FETCHES},
+        {
+            "type": "web_search_20260209",
+            "name": "web_search",
+            "max_uses": chat.MAX_WEB_SEARCHES,
+            "allowed_callers": ["direct"],
+        },
+        {
+            "type": "web_fetch_20260209",
+            "name": "web_fetch",
+            "max_uses": chat.MAX_WEB_FETCHES,
+            "allowed_callers": ["direct"],
+            "citations": {"enabled": True},
+        },
     ]
     for tool in chat.proposal_tools() + chat.read_tool_defs():
         schema = tool["input_schema"]
@@ -831,6 +880,107 @@ def test_a_web_call_without_its_result_yet_emits_nothing() -> None:
     events = run_chat(client, read_tools={"list_decks": lambda _inp: "# 2 decks"})
     assert [event.type for event in events] == ["reading", "text", "done"]
     assert events[0].data["tool"] == "list_decks"
+
+
+# ------------------------------------------------------------------------------ citations
+
+
+def test_web_tools_are_called_directly_and_fetch_is_cited() -> None:
+    """Filtered calls (the default) run inside code execution and yield no citations at all."""
+    defs = {tool["name"]: tool for tool in chat.web_tool_defs()}
+    assert defs["web_search"]["allowed_callers"] == ["direct"]
+    assert defs["web_fetch"]["allowed_callers"] == ["direct"]
+    assert defs["web_fetch"]["citations"] == {"enabled": True}
+
+
+def test_search_citations_number_the_pages_by_url_and_land_where_their_block_closes() -> None:
+    wiki, blog = "https://en.wikipedia.org/wiki/KKT", "https://blog.example/kkt"
+    events_in = [
+        text_start(),
+        text_delta("Les conditions KKT généralisent Lagrange"),
+        search_citation(wiki, title="KKT - Wikipedia", cited_text="The KKT conditions…"),
+        block_stop(),
+        text_start(),
+        search_citation(blog, title="Notes on KKT"),  # before its text: still lands after it
+        text_delta(". Elles sont nécessaires sous qualification"),
+        block_stop(),
+        text_start(),
+        text_delta(", et suffisantes en convexe"),
+        search_citation(wiki, title="KKT - Wikipedia", cited_text="In the convex case…"),
+        # No block_stop: the stream ending flushes the pending citation all the same.
+    ]
+    client = FakeAnthropic([(events_in, final_message([], "end_turn"))])
+    events = run_chat(client)
+
+    # Each citation is emitted when its block closes, after the block's text, so the client's
+    # text ends where the marker goes; the same page keeps its number across the turn.
+    assert [event.type for event in events] == [
+        "text", "citation", "text", "citation", "text", "citation", "done"
+    ]  # fmt: skip
+    cites = [event.data for event in events if event.type == "citation"]
+    assert cites[0] == {
+        "n": 1,
+        "url": wiki,
+        "title": "KKT - Wikipedia",
+        "cited_text": "The KKT conditions…",
+    }
+    assert cites[1]["n"] == 2 and cites[1]["url"] == blog
+    assert cites[2]["n"] == 1 and cites[2]["cited_text"] == "In the convex case…"
+
+
+def test_cited_text_is_collapsed_and_capped_for_the_tooltip() -> None:
+    long = "In\n[mathematical optimization](https://x)   the KKT conditions " * 8
+    events_in = [text_delta("KKT"), search_citation("https://ex.org", cited_text=long)]
+    client = FakeAnthropic([(events_in, final_message([], "end_turn"))])
+    cited = [e for e in run_chat(client) if e.type == "citation"][0].data["cited_text"]
+    assert "\n" not in cited and "   " not in cited
+    assert len(cited) == chat.CITED_TEXT_CHARS
+    assert cited.endswith("…")
+
+
+def test_fetch_citations_resolve_to_the_fetched_page_by_title_then_by_index() -> None:
+    first, second = "https://ex.org/a", "https://ex.org/b"
+    events_in = [
+        block_start(fetched_page("srvtoolu_1", first, "Page A")),
+        block_stop(),
+        block_start(fetched_page("srvtoolu_2", second, "Page B")),
+        block_stop(),
+        text_start(),
+        text_delta("Selon B"),
+        fetch_citation("Page B", index=0),  # the title wins over a wrong index
+        block_stop(),
+        text_start(),
+        text_delta(", et selon A"),
+        fetch_citation("", index=0),  # no title: the index into the turn's fetches
+        block_stop(),
+        text_start(),
+        text_delta(", et d'après rien"),
+        fetch_citation("Unknown", index=7),  # unresolvable: dropped, no marker
+        block_stop(),
+    ]
+    client = FakeAnthropic([(events_in, final_message([], "end_turn"))])
+    events = run_chat(client)
+
+    cites = [event.data for event in events if event.type == "citation"]
+    assert [(c["n"], c["url"], c["title"]) for c in cites] == [
+        (1, second, "Page B"),
+        (2, first, "Page A"),
+    ]
+
+
+def test_a_deferred_fetch_is_known_from_the_final_message_for_later_citations() -> None:
+    url = "https://ex.org/kkt"
+    call = server_tool_use_block("srvtoolu_1", "web_fetch", {"url": url})
+    paused = final_message([call, fetched_page("srvtoolu_1", url, "KKT")], "pause_turn")
+    client = FakeAnthropic(
+        [
+            ([], paused),
+            ([text_delta("Donc"), fetch_citation("KKT", index=0)], final_message([], "end_turn")),
+        ]
+    )
+    events = run_chat(client)
+    assert [event.type for event in events] == ["reading", "text", "citation", "done"]
+    assert events[2].data["url"] == url
 
 
 def test_api_failure_becomes_an_error_event() -> None:

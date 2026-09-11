@@ -30,7 +30,9 @@ Two kinds of tools (specs/chat.md):
 - **web tools** (`web_search`, `web_fetch`): run by Anthropic inside the model call, so there is
   nothing to execute here. Their results come back as extra content blocks of the assistant
   message; `_web_events` turns each one into a `reading` event carrying the URLs, and a long run
-  comes back as `stop_reason: "pause_turn"`, which `stream_chat` resumes.
+  comes back as `stop_reason: "pause_turn"`, which `stream_chat` resumes. The passages of the
+  reply that rest on a page arrive with citations (`citations_delta` in the stream); `_Citer`
+  numbers the pages per turn and emits a `citation` event the client renders as a [n] marker.
 """
 
 from __future__ import annotations
@@ -66,6 +68,9 @@ MAX_WEB_SEARCHES = 8
 MAX_WEB_FETCHES = 5
 #: URLs spelled out in a `web_search` reading line; the rest are counted.
 WEB_URLS_SHOWN = 5
+#: Characters of a citation's `cited_text` kept for the marker's tooltip. Search citations are
+#: at most 150 by the API; fetch citations quote whole passages, hundreds of characters long.
+CITED_TEXT_CHARS = 200
 
 
 def default_model() -> str:
@@ -195,7 +200,8 @@ ReadTool = Callable[[Mapping[str, Any]], str]
 
 @dataclass
 class ChatEvent:
-    """One SSE event. `type` is one of "text", "reading", "added", "proposal", "done", "error"."""
+    """One SSE event. `type` is one of "text", "citation", "reading", "added", "proposal",
+    "done", "error"."""
 
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -230,8 +236,10 @@ Pour montrer des notes à l'utilisateur sans les modifier, add_notes les ajoute 
 confronter une carte à l'extérieur quand le corpus ne suffit pas, et **trouver des sources à \
 ajouter** — un article, un livre, une page de référence. Le corpus n'est pas fermé : une page \
 qui mérite d'être gardée devient une source par propose_create_source, et le contenu de carte \
-que tu tires du web arrive avec la proposition de source qui le fonde, pas tout seul. Cite les \
-URL sur lesquelles tu t'appuies.
+que tu tires du web arrive avec la proposition de source qui le fonde, pas tout seul. Ne recopie \
+pas d'URL dans ta réponse : les passages tirés du web sont cités automatiquement (renvoi numéroté \
+vers la page, liste des sources sous la réponse) ; une URL en clair ne sert qu'à recommander une \
+page que tu n'as pas citée.
 - Les champs sont des valeurs de champ Anki **brutes** : HTML, marqueurs de cloze \
 `{{c1::réponse}}` ou `{{c1::réponse::indice}}` conservés. Produis les tiens dans la même syntaxe \
 et garde-la valide : numéros contigus à partir de c1, accolades équilibrées, au moins un cloze \
@@ -630,14 +638,26 @@ def tools() -> list[dict[str, Any]]:
 def web_tool_defs() -> list[dict[str, Any]]:
     """The two Anthropic server tools. No `input_schema`: the API owns their shape.
 
-    `allowed_callers` is left at its default, so search runs inside code execution and filters
-    results before they reach context. The nested call/result pairs still come back in
-    `content`, which is what `_web_events` reads. If reading lines ever stop appearing, pinning
-    `"allowed_callers": ["direct"]` here trades those saved tokens for flat blocks.
+    `allowed_callers` is pinned to direct calls. At its default these versions run the tools
+    inside code execution and filter results before they reach context, and the reply then
+    carries no citations at all (observed: a dozen code-execution round trips and not one
+    `citations_delta`). Search results are always cited; fetched pages only when asked, hence
+    `citations` on `web_fetch` (specs/chat.md#web-tools).
     """
     return [
-        {"type": WEB_SEARCH_TYPE, "name": "web_search", "max_uses": MAX_WEB_SEARCHES},
-        {"type": WEB_FETCH_TYPE, "name": "web_fetch", "max_uses": MAX_WEB_FETCHES},
+        {
+            "type": WEB_SEARCH_TYPE,
+            "name": "web_search",
+            "max_uses": MAX_WEB_SEARCHES,
+            "allowed_callers": ["direct"],
+        },
+        {
+            "type": WEB_FETCH_TYPE,
+            "name": "web_fetch",
+            "max_uses": MAX_WEB_FETCHES,
+            "allowed_callers": ["direct"],
+            "citations": {"enabled": True},
+        },
     ]
 
 
@@ -1005,6 +1025,61 @@ def _web_events(content: Sequence[Any], calls: dict[str, dict[str, Any]]) -> lis
     return events
 
 
+class _Citer:
+    """Numbers the pages one turn cites and resolves fetch citations to a URL.
+
+    Pages are numbered per turn, by URL, in order of first citation (specs/chat.md#web-tools).
+    A `web_search_result_location` names its page directly; a `char_location` (a fetched page)
+    only names the document by title and index, so the pages fetched during the turn are kept in
+    order — from the stream's `content_block_start` events and from each final message, since a
+    deferred fetch lands in a later message than its call.
+    """
+
+    def __init__(self) -> None:
+        self.numbers: dict[str, int] = {}
+        #: `(title, url)` of the fetched pages, in order of fetching.
+        self.fetched: list[tuple[str, str]] = []
+
+    def saw_block(self, block: Any) -> None:
+        if _field(block, "type") != "web_fetch_tool_result":
+            return
+        results, _err = _web_outcome(block)
+        for result in results:
+            url = _field(result, "url")
+            document = _attr(result, "content")
+            title = "" if isinstance(document, str | None) else _field(document, "title")
+            if url and (title, url) not in self.fetched:
+                self.fetched.append((title, url))
+
+    def event(self, citation: Any) -> ChatEvent | None:
+        kind = _field(citation, "type")
+        if kind == "web_search_result_location":
+            url, title = _field(citation, "url"), _field(citation, "title")
+        elif kind == "char_location":
+            url, title = self._resolve_fetch(citation)
+        else:
+            return None
+        if not url:
+            return None
+        n = self.numbers.setdefault(url, len(self.numbers) + 1)
+        cited = " ".join(_field(citation, "cited_text").split())
+        if len(cited) > CITED_TEXT_CHARS:
+            cited = cited[: CITED_TEXT_CHARS - 1].rstrip() + "…"
+        return ChatEvent("citation", {"n": n, "url": url, "title": title, "cited_text": cited})
+
+    def _resolve_fetch(self, citation: Any) -> tuple[str, str]:
+        title = _field(citation, "document_title")
+        if title:
+            for fetched_title, url in self.fetched:
+                if fetched_title == title:
+                    return url, title
+        index = _attr(citation, "document_index")
+        if isinstance(index, int) and 0 <= index < len(self.fetched):
+            fetched_title, url = self.fetched[index]
+            return url, fetched_title or title
+        return "", title
+
+
 def _usage_dict(message: Any) -> dict[str, Any]:
     usage = getattr(message, "usage", None)
     if usage is None:
@@ -1115,6 +1190,7 @@ async def stream_chat(
     final: Any = None
     #: `server_tool_use` inputs by id, kept for the whole turn (see `_web_events`).
     web_calls: dict[str, dict[str, Any]] = {}
+    citer = _Citer()
 
     try:
         for _ in range(MAX_TOOL_LOOPS):
@@ -1125,15 +1201,37 @@ async def stream_chat(
                 tools=tool_defs,
                 messages=convo,
             ) as stream:
+                # A block's citations may stream before or after its text deltas (both seen),
+                # so they wait for the block to close: the [n] marker goes at the passage's end.
+                pending: list[ChatEvent] = []
                 async for event in stream:
-                    if getattr(event, "type", None) != "content_block_delta":
+                    event_type = getattr(event, "type", None)
+                    if event_type == "content_block_start":
+                        citer.saw_block(getattr(event, "content_block", None))
+                        continue
+                    if event_type == "content_block_stop":
+                        for cited in pending:
+                            yield cited
+                        pending = []
+                        continue
+                    if event_type != "content_block_delta":
                         continue
                     delta: Any = getattr(event, "delta", None)
-                    if getattr(delta, "type", None) == "text_delta":
+                    delta_type = getattr(delta, "type", None)
+                    if delta_type == "text_delta":
                         yield ChatEvent("text", {"delta": delta.text})
+                    elif delta_type == "citations_delta":
+                        cited = citer.event(getattr(delta, "citation", None))
+                        if cited is not None:
+                            pending.append(cited)
+                for cited in pending:
+                    yield cited
                 final = await stream.get_final_message()
 
-            for event in _web_events(getattr(final, "content", None) or [], web_calls):
+            content = getattr(final, "content", None) or []
+            for block in content:
+                citer.saw_block(block)
+            for event in _web_events(content, web_calls):
                 yield event
 
             stop_reason = getattr(final, "stop_reason", None)

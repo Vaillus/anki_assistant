@@ -335,7 +335,10 @@ function historyForServer() {
   const msgs = S.ws.chat;
   const lastAssistant = msgs.map((m) => m.who).lastIndexOf("assistant");
   msgs.forEach((m, i) => {
-    const bits = [m.text || ""];
+    const bits = [textWithMarkers(m)];
+    if ((m.sources || []).length) {
+      bits.push("[sources : " + m.sources.map((s) => "[" + s.n + "] " + s.url).join(", ") + "]");
+    }
     (m.reads || []).forEach((r) => {
       bits.push("[lecture: " + (r.tool || "?") + (r.summary ? " → " + r.summary : "") + "]");
     });
@@ -354,6 +357,19 @@ function historyForServer() {
     out.push({ role: m.who === "user" ? "user" : "assistant", content });
   });
   return out;
+}
+
+/* The reply text with its [n] citation markers inlined, as replayed to the LLM. */
+function textWithMarkers(m) {
+  const text = m.text || "";
+  let out = "";
+  let at = 0;
+  (m.cites || []).forEach((c) => {
+    const pos = Math.min(Math.max(c.pos, at), text.length);
+    out += text.slice(at, pos) + "[" + c.n + "]";
+    at = pos;
+  });
+  return out + text.slice(at);
 }
 
 let wsLogRefreshQueued = false;
@@ -384,7 +400,17 @@ async function sendChat() {
   messages.push({ role: "user", content: text });
 
   ws.chat.push({ who: "user", text });
-  const reply = { who: "assistant", text: "", reads: [], added: [], proposals: [], streaming: true, error: "" };
+  const reply = {
+    who: "assistant",
+    text: "",
+    cites: [],
+    sources: [],
+    reads: [],
+    added: [],
+    proposals: [],
+    streaming: true,
+    error: "",
+  };
   ws.chat.push(reply);
   ws.chatDraft = "";
   ws.chatBusy = true;
@@ -407,6 +433,13 @@ async function sendChat() {
       const d = data || {};
       if (name === "text") {
         reply.text += d.delta || "";
+        scheduleLogRefresh();
+      } else if (name === "citation") {
+        // Arrives right after the text of the cited passage: the marker goes where the text ends.
+        reply.cites.push({ pos: reply.text.length, n: d.n, cited: d.cited_text || "" });
+        if (!reply.sources.some((s) => s.n === d.n)) {
+          reply.sources.push({ n: d.n, url: d.url || "", title: d.title || "" });
+        }
         scheduleLogRefresh();
       } else if (name === "reading") {
         reply.reads.push({ tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
@@ -1022,11 +1055,67 @@ function chatLogHtml() {
   return S.ws.chat.map(msgHtml).join("");
 }
 
+const URL_RE = /https?:\/\/[^\s<>"'\]]+/g;
+
+/* Escaped text with its URLs as links opening in a new tab (specs/chat.md#web-tools). */
+function linkify(text) {
+  let out = "";
+  let last = 0;
+  String(text || "").replace(URL_RE, (match, offset) => {
+    const url = match.replace(/[.,;:!?)]+$/, "");
+    out += esc(text.slice(last, offset));
+    out += '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url) + "</a>";
+    last = offset + url.length;
+    return match;
+  });
+  return (out + esc(text.slice(last))).replace(/\n/g, "<br>");
+}
+
+/* The reply text with a [n] marker after each cited passage, linking to the page. */
+function bodyHtml(m) {
+  const text = m.text || "";
+  const byN = {};
+  (m.sources || []).forEach((s) => {
+    byN[s.n] = s;
+  });
+  let out = "";
+  let at = 0;
+  (m.cites || []).forEach((c) => {
+    const pos = Math.min(Math.max(c.pos, at), text.length);
+    const s = byN[c.n] || {};
+    out +=
+      linkify(text.slice(at, pos)) +
+      '<a class="cite" href="' + esc(s.url || "#") + '" target="_blank" rel="noopener" title="' + esc(c.cited || "") + '">[' + c.n + "]</a>";
+    at = pos;
+  });
+  return out + linkify(text.slice(at));
+}
+
+function sourcesHtml(m) {
+  const sources = m.sources || [];
+  if (!sources.length) return "";
+  const items = sources.map((s) => {
+    let host = "";
+    try {
+      host = new URL(s.url).host.replace(/^www\./, "");
+    } catch (e) {
+      host = "";
+    }
+    return (
+      '<li><span class="n">[' + s.n + "]</span> " +
+      '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.title || s.url) + "</a>" +
+      (s.title && host ? ' <span class="host">' + esc(host) + "</span>" : "") +
+      "</li>"
+    );
+  });
+  return '<ol class="sources">' + items.join("") + "</ol>";
+}
+
 function msgHtml(m, mi) {
   const who = m.who === "user" ? "toi" : "claude";
-  const body = esc(m.text || "").replace(/\n/g, "<br>") + (m.streaming ? '<span class="cursor">▍</span>' : "");
+  const body = bodyHtml(m) + (m.streaming ? '<span class="cursor">▍</span>' : "") + sourcesHtml(m);
   const reads = (m.reads || [])
-    .map((r) => '<div class="reading">lit : ' + esc(r.tool || "?") + (r.summary ? " → " + esc(r.summary) : "") + "</div>")
+    .map((r) => '<div class="reading">lit : ' + esc(r.tool || "?") + (r.summary ? " → " + linkify(r.summary) : "") + "</div>")
     .join("");
   const added = (m.added || [])
     .map(

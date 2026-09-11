@@ -101,34 +101,3 @@ store = SourceStore()
 source = store.get("courant::00-Thèse")
 print(source.kind, source.target, source.uri(store.vault))
 ```
-
-## Todos
-
-`todo.md` mirrors the TickTick project **anki assistant**. Each line carries its task id in
-a trailing HTML comment, which is what pairs the two sides:
-
-```markdown
-- [ ] review the specs <!--tt:6a9d847a3302cf9468487e2d-->
-```
-
-```bash
-uv run python scripts/sync_todos.py             # push local edits, then pull
-uv run python scripts/sync_todos.py --dry-run   # report what would change
-uv run python scripts/sync_todos.py --pull-only # let TickTick win, write nothing back
-```
-
-A sync pushes first, then pulls:
-
-| Local edit                       | Effect in TickTick             |
-| -------------------------------- | ------------------------------ |
-| Check a box                       | Task completed, line moves to `## Done` |
-| Add a `- [ ]` line with no id     | Task created, id written back  |
-| Change a line's text              | Task renamed                   |
-| Delete a line                     | Nothing — the pull restores it |
-
-Deleting is deliberately one-way: remove the task in TickTick instead. If a title changed on
-both sides since the last sync, the local text wins.
-
-Credentials are read from the [`tt` CLI](https://github.com/Vaillus/ticktick-cli) config at
-`~/.config/tt/.env`, so there is no second set of secrets here. Run `tt auth` when the script
-reports an expired token.

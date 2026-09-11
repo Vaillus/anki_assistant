@@ -15,7 +15,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 | [notes.md](./notes.md) | Note, card, note type, field, reason, field syntax |
 | [review.md](./review.md) | The three-column page: deck tree, queue, decisions, rendering, keyboard |
 | [sources.md](./sources.md) | Corpus, source, anchors, extracted text, vault writes, Source tab |
-| [workspace.md](./workspace.md) | The overlay: cards, versions, split, validation, undo |
+| [workspace.md](./workspace.md) | The overlay: cards, versions, split, deferral, validation, undo |
 | [chat.md](./chat.md) | The conversation: system prompt, read tools, proposal tools, source proposals |
 | [theme.md](./theme.md) | Visual identity: terminal look, Omarchy palettes, two-layer colour architecture, picker, logo |
 

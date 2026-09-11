@@ -14,11 +14,11 @@ Resolving a flagged note usually means *working* on it: reading the reason, aski
 - **Root** — the note the workspace was opened on. Its deck is the **current deck** (for the prompt and for `search_notes`); its tags and anchors are the defaults of a created note.
 - **Card** — one slot of the workspace. A card is either an **existing note** (it has a `note_id`) or a **draft note** (a split fragment or a created note, not in Anki yet). Every card has a **workspace id** (`w1`, `w2`…), unique within the workspace, which is how Claude names it.
 - **Version** — the field values of a card at one point. An existing note's card starts at **v0**, the values in Anki, read-only. Each proposal by Claude adds a version; the user's hand edits modify the shown version in place. A draft note has no v0: its first version is Claude's.
-- **Changed** — an existing note's card whose shown version is not v0, or that is marked deleted, kept, deferred or moved. A draft note is always changed.
+- **Changed** — an existing note's card whose shown version is not v0, that is marked deleted or moved, or whose flag (below) differs from what Anki holds. A draft note is always changed.
 - **Active** — a card the next message is about. Every card is in Claude's context; the active ones are the target.
 - **Deleted** — a state of an existing note's card: the note is removed from Anki at validation. Reversible until then.
-- **Kept** — a state of an existing note's card that has no other change: resolved (flag cleared) at validation without being edited.
-- **Deferred** (« à revoir ») — a state of a card: at validation the note is *not* resolved — an existing note keeps its flag (or receives one when it had none), a draft note is created already flagged — and its `Back Extra` is set to the **comment** typed on the card, so that it shows up in the queue later with that comment as its reason. For a note that is not worth finishing now but that the user wants to understand at the next pass. Combines with an edit (a partial fix, still flagged) and with a move; exclusive with kept and deleted.
+- **Flag** — of a card: whether the note is flagged *after* validation, shown as a ⚑ toggle in the card head. **Off** means resolved: the flag is cleared at validation. **On** (« à revoir ») means the note stays — or becomes — flagged, and its `Back Extra` is set to the **comment** typed on the card, so that it shows up in the queue later with that comment as its reason; a draft with the flag on is created already flagged. The **root opens with the flag off**: opening a workspace is resolving the note, and the user turns the flag back on to keep it in the queue. A note brought in by Claude opens with its flag as Anki holds it; a draft opens off. The flag combines with an edit (a partial fix, still flagged) and with a move; a deleted card has none. In the plan and the API a card whose flag is on is **deferred** (`defer`).
+- **Kept** — an untouched card (v0, tags unchanged), flagged in Anki, whose flag is off: resolved at validation without being edited. Not a gesture of its own — it is what the root is when the user validates without touching anything, the counterpart of « Garder » in the queue.
 - **Moved** — a card carrying a destination deck; applied at validation.
 - **Fragment** — a draft note created by a split, linked to its **parent** card (the note that was split).
 
@@ -30,7 +30,7 @@ Opening builds the root card from the note as the queue holds it (raw fields as 
 
 Closing:
 
-- **× (top right) or `Esc`** discards everything: cards, versions, conversation. When at least one card is changed, a confirmation says how many changes will be lost. Nothing is written to Anki either way.
+- **× (top right) or `Esc`** discards everything: cards, versions, conversation. When the user changed something by hand — a version, a state, a flag toggled, a comment — a confirmation says how many cards will lose their changes; the implicit resolution of the root does not count. Nothing is written to Anki either way.
 - **« Valider »** writes the changes (see [Validation](#validation)) and then closes.
 
 After closing the queue and the deck counts are re-fetched. After a validation the next flagged note is selected, not opened (as after « Garder », [review.md § Decisions](./review.md#decisions)); after a discard the selection stays on the root, which is still there.
@@ -47,19 +47,19 @@ Cards are listed root first, then in order of arrival. A fragment is shown right
 
 ### Card head
 
-One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the state badges (« ⚑ c2 » per flagged card as in the queue, « supprimée », « gardée », « à revoir », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider » (drop the shown version), « supprimer » / « restaurer », « garder » / « ne pas garder », « différer » / « ne pas différer », « déplacer… » (a deck picker, same list as `list_decks`).
+One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the **⚑ flag toggle** (outlined when off; filled, reading « ⚑ à revoir », when on), the state badges (« supprimée », « gardée », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider » (drop the shown version), « supprimer » / « restaurer », « déplacer… » (a deck picker, same list as `list_decks`).
 
-« garder » is offered only on an untouched card (v0, tags unchanged) that is not deferred; « différer » on any card, draft included, that is not deleted or kept. Marking a card deleted or kept drops its deferral, and vice versa.
+The flag toggle is the only control of the flag: clicking it turns the flag on or off and changes nothing else. It is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head any more — the card is drawn as the note will be, resolved — but stay in the reason callout's label (« raison du flag · c2 ») and keep driving the question state of v0.
 
 The **activation toggle** is the head itself: clicking the head (outside a control) toggles the card between active and inactive. An inactive card is drawn at 55 % opacity. Every card is active when it enters the workspace.
 
 ### Body
 
-The reason callout (as in the queue) sits at the bottom of an existing note's card, under the fields, in every version — it is about the flag, not part of the card. It always shows the reason as v0 held it.
+The reason callout (as in the queue) sits at the bottom of an existing note's card, under the fields, in every version — it is about the flag, not part of the card. It always shows the reason as v0 held it, with the flagged clozes in its label.
 
-`Back Extra` is never shown among the fields and is never editable by hand (as in the queue): the callout is the only place it appears, and the only things that write it are the « vider Back Extra » toggle and the comment of a deferred card.
+`Back Extra` is never shown among the fields and is never editable by hand (as in the queue): the callout is the only place it appears, and the only things that write it are the « vider Back Extra » toggle and the comment of a card whose flag is on.
 
-On a **deferred** card the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped). Typing does not redraw. When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
+When the **flag is on** the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped) — only if the user changed it, so an untouched `Back Extra` is not rewritten. Typing does not redraw. When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
 
 Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). **v0 is shown in question state**: the flagged clozes hidden, « Révéler » to show them, exactly as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full: a rewrite may renumber clozes, and the hidden state is for understanding the flag, not for proofreading the fix.
 
@@ -109,11 +109,11 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics (
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card both edited and deferred counts once, as « à revoir »; a deferred draft counts as created and as « à revoir ». Disabled when no card is changed and during the write. When the plan deletes at least one note, a confirmation lists them; nothing else asks for confirmation — the workspace itself is the review step.
+« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card whose flag is on counts once, as « à revoir », edited or not; a draft with the flag on counts as created and as « à revoir ». Disabled when the plan is empty and during the write. On a freshly opened workspace the plan already holds the root as kept: « Valider · 1 gardée » is the workspace's « Garder ». When the plan deletes at least one note, a confirmation lists them; nothing else asks for confirmation — the workspace itself is the review step.
 
 ### What is written
 
-The **plan** is built from the cards, in this order of precedence per existing note's card: deleted → kept → edited (shown version ≠ v0) → deferred, each optionally moved; an edited card may also be deferred (the `defer` modifier of an `edit`). Cards on v0 with no state are not in the plan and keep their flag.
+The **plan** is built from the cards. Per existing note's card, in this order: deleted → `delete`; edited (shown version ≠ v0, or tags changed) → `edit`, with the `defer` modifier when the flag is on; otherwise, flag on → `defer` when the note is not flagged in Anki, the comment was changed or the card is moved; flag off → `keep` when the note is flagged in Anki or the card is moved. Any other card is not in the plan: a note brought in for a look, flag as Anki holds it, is left alone. `comment` is sent only when the user changed it.
 
 | Card | Anki writes | Flag |
 |---|---|---|

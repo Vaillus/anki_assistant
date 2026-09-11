@@ -12,6 +12,7 @@ const MAX_CARDS = 50; // same cap as chat.py (specs/workspace.md#how-notes-enter
 /* One card of the workspace. `versions[0]` is v0 (Anki) for an existing note; a draft note has
    no v0. `vi` is the shown version. */
 function cardFromNote(n, parentWid) {
+  const isRoot = S.ws.cards.length === 0;
   return {
     wid: "w" + S.ws.nextWid++,
     noteId: n.note_id,
@@ -21,14 +22,16 @@ function cardFromNote(n, parentWid) {
     originalTags: (n.tags || []).slice(),
     deck: n.deck || S.ws.deck,
     flaggedClozes: flaggedClozes(n),
+    ankiFlagged: !!n.flagged,
     reason: n.reason || "",
     anchors: null, // [source id] once fetched
     versions: [{ fields: Object.assign({}, n.fields || {}), by: "anki", rationale: "" }],
     vi: 0,
     active: true,
     deleted: false,
-    keep: false,
-    defer: null, // { comment } when marked « à revoir » (specs/workspace.md#vocabulary)
+    // The flag after validation (specs/workspace.md#vocabulary): the root opens resolved,
+    // a note Claude brought in opens as Anki holds it.
+    flag: flagState(!isRoot && !!n.flagged, n.fields || {}),
     moveTo: null,
     revealed: false,
     editing: null, // field name while a textarea is open
@@ -45,14 +48,14 @@ function draftCard(spec) {
     originalTags: [],
     deck: spec.deck || S.ws.deck,
     flaggedClozes: [],
+    ankiFlagged: false,
     reason: "",
     anchors: (spec.anchors || []).slice(),
     versions: [{ fields: Object.assign({}, spec.fields || {}), by: "claude", rationale: spec.rationale || "" }],
     vi: 0,
     active: true,
     deleted: false,
-    keep: false,
-    defer: null,
+    flag: flagState(false, spec.fields || {}),
     moveTo: null,
     revealed: false,
     editing: null,
@@ -80,10 +83,35 @@ function shownFields(c) {
 }
 
 /* An existing note's card is changed when it is not on v0 or carries a state; a draft always is. */
+/* The flag toggle of a card. `on` is the flag after validation; `comment` is what goes to
+   « Back Extra » when it is on; `initial` is the comment's starting text (the field's plain
+   text), so that an untouched field is not rewritten; `initial_on` is the opening state, which
+   the close confirmation compares against. */
+function flagState(on, fields) {
+  const text = plainText(fields[REASON_FIELD] || "");
+  return { on: on, comment: text, initial: text, initialOn: on };
+}
+
+function commentChanged(c) {
+  return c.flag.comment !== c.flag.initial;
+}
+
+/* Whether the card is in the plan (specs/workspace.md#what-is-written). */
 function cardChanged(c) {
+  return planCard(c) !== null;
+}
+
+/* Whether the user did something by hand on this card: what the × confirmation counts. */
+function cardDirty(c) {
   if (!c.noteId) return true;
   return (
-    c.vi > 0 || c.deleted || c.keep || !!c.defer || !!c.moveTo || tagsChanged(c) || shownModel(c) !== c.model
+    c.vi > 0 ||
+    c.deleted ||
+    !!c.moveTo ||
+    tagsChanged(c) ||
+    shownModel(c) !== c.model ||
+    c.flag.on !== c.flag.initialOn ||
+    (c.flag.on && commentChanged(c))
   );
 }
 
@@ -91,23 +119,29 @@ function tagsChanged(c) {
   return c.tags.join(" ") !== c.originalTags.join(" ");
 }
 
-/* Counts for the « Valider » label and the close confirmation. */
+/* Counts for the « Valider » label, derived from the plan so that they never disagree. */
 function wsChanges() {
-  const out = { edited: 0, created: 0, deleted: 0, kept: 0, deferred: 0, moved: 0 };
+  const out = { edited: 0, created: 0, deleted: 0, kept: 0, deferred: 0, moved: 0, total: 0 };
   (S.ws ? S.ws.cards : []).forEach((c) => {
-    if (!c.noteId) {
+    const p = planCard(c);
+    if (!p) return;
+    out.total++;
+    if (p.action === "create") {
       out.created++;
-      if (c.defer) out.deferred++; // created flagged: counts as both
-    } else if (c.deleted) out.deleted++;
-    else {
-      if (c.defer) out.deferred++; // an edited + deferred card counts once, as « à revoir »
-      else if (c.vi > 0 || tagsChanged(c)) out.edited++;
-      else if (c.keep) out.kept++;
-      if (c.moveTo) out.moved++;
-    }
+      if (p.defer) out.deferred++; // created flagged: counts as both
+    } else if (p.action === "delete") out.deleted++;
+    else if (p.action === "edit") {
+      if (p.defer) out.deferred++; // an edited card with the flag on counts once, as « à revoir »
+      else out.edited++;
+    } else if (p.action === "defer") out.deferred++;
+    else if (p.action === "keep") out.kept++;
+    if (p.move_to) out.moved++;
   });
-  out.total = (S.ws ? S.ws.cards : []).filter(cardChanged).length;
   return out;
+}
+
+function wsDirty() {
+  return (S.ws ? S.ws.cards : []).filter(cardDirty).length;
 }
 
 /* Fetch a card's anchors once; used for the chips and passed on to fragments. */
@@ -165,10 +199,10 @@ function openWorkspace(noteId) {
 /* Discard everything (specs/workspace.md#opening-and-closing). */
 async function closeWorkspace(force) {
   if (!S.ws || S.ws.applying) return;
-  const n = wsChanges().total;
+  const n = wsDirty();
   if (!force && n > 0) {
     const ok = window.confirm(
-      n + " changement(s) non validé(s) seront perdus. Fermer quand même ?",
+      n + " carte(s) modifiée(s) non validée(s) seront perdues. Fermer quand même ?",
     );
     if (!ok) return;
   }
@@ -178,18 +212,10 @@ async function closeWorkspace(force) {
   await afterDecision({ resolvedId: root ? root.noteId : null, keepSelection: true });
 }
 
-/* Mark a card « à revoir » — or unmark it. The comment starts as the plain text of
-   « Back Extra » as v0 holds it (the shown version, for a draft), so that the existing
-   reason is completed rather than lost. */
-function toggleDefer(card) {
-  if (card.defer) {
-    card.defer = null;
-    return;
-  }
-  const fields = card.noteId ? card.versions[0].fields : shownFields(card);
-  card.defer = { comment: plainText(fields[REASON_FIELD] || "") };
-  card.keep = false;
-  if (hasReasonField(card)) S.refocus = "ws-comment-" + card.wid;
+/* Turn the flag on or off. Turning it on brings the comment textarea up, focused. */
+function toggleFlag(card) {
+  card.flag.on = !card.flag.on;
+  if (card.flag.on && hasReasonField(card)) S.refocus = "ws-comment-" + card.wid;
 }
 
 function hasReasonField(card) {
@@ -204,7 +230,6 @@ function pushVersion(card, fields, by, rationale, model) {
   card.versions.push(v);
   card.vi = card.versions.length - 1;
   card.deleted = false; // a rewrite supersedes a deletion (specs/chat.md#proposal-tools)
-  card.keep = false;
 }
 
 /* The effective model for a card: the shown version's model override, or the card's original. */
@@ -296,7 +321,6 @@ async function landProposal(input, kind) {
     const card = await resolveTarget(inp.target);
     if (inp.original === null || inp.original === undefined) {
       card.deleted = true;
-      card.keep = false;
     } else {
       pushVersion(
         card,
@@ -361,9 +385,9 @@ function cardsForServer() {
     reason: c.reason,
     anchor_ids: c.anchors || [],
     deleted: c.deleted,
-    keep: c.keep,
-    defer: !!c.defer,
-    comment: c.defer ? c.defer.comment : "",
+    keep: (planCard(c) || {}).action === "keep",
+    defer: c.flag.on && !c.deleted,
+    comment: c.flag.on ? c.flag.comment : "",
     move_to: c.moveTo,
     parent_wid: c.parentWid,
   }));
@@ -581,42 +605,48 @@ async function revertSourceProposal(mi, pi) {
 
 /* ---------------- validation ---------------- */
 
-/* The plan of specs/workspace.md#what-is-written: deleted → kept → edited → deferred, each
-   maybe moved; an edited card may carry the `defer` modifier. */
-function planFromWs() {
-  const cards = [];
-  S.ws.cards.forEach((c) => {
-    if (!c.noteId) {
-      cards.push({
-        wid: c.wid,
-        action: "create",
-        parent_wid: c.parentWid,
-        deck: c.deck,
-        model: c.model,
-        fields: shownFields(c),
-        tags: c.tags,
-        source_ids: c.anchors || [],
-        defer: !!c.defer,
-        comment: c.defer ? c.defer.comment : null,
-      });
-    } else if (c.deleted) {
-      cards.push({ wid: c.wid, action: "delete", note_id: c.noteId });
-    } else if (c.vi > 0 || tagsChanged(c)) {
-      const card = { wid: c.wid, action: "edit", note_id: c.noteId, fields: shownFields(c), move_to: c.moveTo };
-      if (tagsChanged(c)) card.tags = c.tags;
-      const em = shownModel(c);
-      if (em !== c.model) card.model = em;
-      if (c.defer) {
-        card.defer = true;
-        card.comment = c.defer.comment;
-      }
-      cards.push(card);
-    } else if (c.defer) {
-      cards.push({ wid: c.wid, action: "defer", note_id: c.noteId, comment: c.defer.comment, move_to: c.moveTo });
-    } else if (c.keep || c.moveTo) {
-      cards.push({ wid: c.wid, action: "keep", note_id: c.noteId, move_to: c.moveTo });
+/* One card's entry in the plan of specs/workspace.md#what-is-written, or null when the
+   card is not in it. The comment travels only when the user changed it. */
+function planCard(c) {
+  const comment = c.flag.on && commentChanged(c) ? c.flag.comment : null;
+  if (!c.noteId) {
+    return {
+      wid: c.wid,
+      action: "create",
+      parent_wid: c.parentWid,
+      deck: c.deck,
+      model: c.model,
+      fields: shownFields(c),
+      tags: c.tags,
+      source_ids: c.anchors || [],
+      defer: c.flag.on,
+      comment: comment,
+    };
+  }
+  if (c.deleted) return { wid: c.wid, action: "delete", note_id: c.noteId };
+  if (c.vi > 0 || tagsChanged(c)) {
+    const card = { wid: c.wid, action: "edit", note_id: c.noteId, fields: shownFields(c), move_to: c.moveTo };
+    if (tagsChanged(c)) card.tags = c.tags;
+    const em = shownModel(c);
+    if (em !== c.model) card.model = em;
+    if (c.flag.on) {
+      card.defer = true;
+      if (comment !== null) card.comment = comment;
     }
-  });
+    return card;
+  }
+  if (c.flag.on) {
+    if (!c.ankiFlagged || comment !== null || c.moveTo) {
+      return { wid: c.wid, action: "defer", note_id: c.noteId, comment: comment, move_to: c.moveTo };
+    }
+    return null; // flagged in Anki, stays so, nothing to say: left alone
+  }
+  if (c.ankiFlagged || c.moveTo) return { wid: c.wid, action: "keep", note_id: c.noteId, move_to: c.moveTo };
+  return null;
+}
+
+function planFromWs() {
+  const cards = S.ws.cards.map(planCard).filter(Boolean);
   return { deck: S.ws.deck, clear_reason: !!S.ws.clearReason, cards };
 }
 
@@ -725,16 +755,8 @@ function wsClick(act, el, e) {
   } else if (act === "ws-prev") showVersion(card, -1);
   else if (act === "ws-next") showVersion(card, 1);
   else if (act === "ws-invalidate") invalidateVersion(card);
-  else if (act === "ws-delete") {
-    card.deleted = !card.deleted;
-    if (card.deleted) {
-      card.keep = false;
-      card.defer = null;
-    }
-  } else if (act === "ws-keep") {
-    card.keep = !card.keep;
-    if (card.keep) card.defer = null;
-  } else if (act === "ws-defer") toggleDefer(card);
+  else if (act === "ws-delete") card.deleted = !card.deleted;
+  else if (act === "ws-flag") toggleFlag(card);
   else if (act === "ws-reveal") card.revealed = !card.revealed;
   else if (act === "ws-edit") {
     if (card.deleted) return undefined;
@@ -758,7 +780,7 @@ function wsInput(key, el) {
     if (card) editField(card, el.getAttribute("data-field"), el.value);
   } else if (key === "ws-comment") {
     const card = wsCard(el.getAttribute("data-wid"));
-    if (card && card.defer) card.defer.comment = el.value; // no redraw, as for a field
+    if (card) card.flag.comment = el.value; // no redraw, as for a field
   } else if (key === "ws-move") {
     const card = wsCard(el.getAttribute("data-wid"));
     if (card) {
@@ -877,13 +899,11 @@ function wsCardHtml(c, isFragment) {
     (c.deleted ? " deleted" : "") +
     (isFragment ? " fragment" : "") +
     (c.noteId ? "" : " draft");
+  const plan = planCard(c);
   const badges =
-    (c.flaggedClozes.length && c.noteId
-      ? '<span class="badge">⚑ ' + c.flaggedClozes.map((k) => "c" + k).join(" ") + "</span>"
-      : "") +
+    (c.deleted ? "" : flagToggleHtml(c)) +
     (c.deleted ? '<span class="badge state">supprimée</span>' : "") +
-    (c.keep && !c.deleted ? '<span class="badge state ok">gardée</span>' : "") +
-    (c.defer && !c.deleted ? '<span class="badge state later">à revoir</span>' : "") +
+    (plan && plan.action === "keep" ? '<span class="badge state ok">gardée</span>' : "") +
     (c.moveTo ? '<span class="badge state">→ ' + esc(c.moveTo) + "</span>" : "");
   const versions =
     n > 1
@@ -901,18 +921,6 @@ function wsCardHtml(c, isFragment) {
     (c.noteId
       ? '<button class="ghost small' + (c.deleted ? "" : " dangerish") + '" data-act="ws-delete" data-wid="' + c.wid + '">' +
         (c.deleted ? "restaurer" : "supprimer") +
-        "</button>"
-      : "") +
-    (c.noteId && !c.deleted && !c.defer && c.vi === 0 && !tagsChanged(c)
-      ? '<button class="ghost small" data-act="ws-keep" data-wid="' + c.wid + '" title="résoudre sans changement">' +
-        (c.keep ? "ne pas garder" : "garder") +
-        "</button>"
-      : "") +
-    (!c.deleted && !c.keep
-      ? '<button class="ghost small" data-act="ws-defer" data-wid="' + c.wid + '" title="' +
-        (c.noteId ? "garder le flag et noter un commentaire, sans résoudre" : "créer la note flaguée, avec un commentaire") +
-        '">' +
-        (c.defer ? "ne pas différer" : "différer") +
         "</button>"
       : "") +
     (c.noteId && !c.deleted ? movePickerHtml(c) : "");
@@ -949,28 +957,48 @@ function wsCardHtml(c, isFragment) {
     "</div>" +
     meta +
     wsFieldsHtml(c) +
-    (c.defer && !c.deleted
+    (c.flag.on && !c.deleted
       ? wsCommentHtml(c)
       : c.noteId && c.reason
-        ? '<div class="reason"><span class="reason-label">raison du flag</span>' + nl2br(c.reason) + "</div>"
+        ? '<div class="reason"><span class="reason-label">raison du flag' + clozeLabels(c) + "</span>" + nl2br(c.reason) + "</div>"
         : "") +
     wsRevealHtml(c) +
     "</div>"
   );
 }
 
-/* The reason callout of a deferred card: the comment to be written (specs/workspace.md#body). */
+/* « · c2 » — the clozes that carried the flag in Anki, for the callout's label. */
+function clozeLabels(c) {
+  return c.flaggedClozes.length ? " · " + c.flaggedClozes.map((k) => "c" + k).join(" ") : "";
+}
+
+/* The ⚑ toggle of the card head (specs/workspace.md#card-head). */
+function flagToggleHtml(c) {
+  let title;
+  if (c.flag.on) title = "restera flaguée à la validation — cliquer pour la résoudre";
+  else if (c.ankiFlagged) title = "le flag sera levé à la validation — cliquer pour le garder";
+  else title = "sans flag — cliquer pour la flaguer, à revoir plus tard";
+  return (
+    '<button class="badge flag-toggle' + (c.flag.on ? " on" : "") + '" data-act="ws-flag" data-wid="' + c.wid +
+    '" title="' + title + '" aria-pressed="' + (c.flag.on ? "true" : "false") + '">⚑' +
+    (c.flag.on ? " à revoir" : "") +
+    "</button>"
+  );
+}
+
+/* The reason callout of a card whose flag is on: the comment to be written
+   (specs/workspace.md#body). */
 function wsCommentHtml(c) {
   if (!hasReasonField(c)) {
     return (
-      '<div class="reason defer"><span class="reason-label">à revoir</span>' +
+      '<div class="reason flagged"><span class="reason-label">à revoir' + clozeLabels(c) + "</span>" +
       "pas de champ " + esc(REASON_FIELD) + " : le flag sera posé sans commentaire</div>"
     );
   }
   return (
-    '<div class="reason defer"><span class="reason-label">raison du flag · sera écrite</span>' +
+    '<div class="reason flagged"><span class="reason-label">raison du flag' + clozeLabels(c) + " · sera écrite</span>" +
     '<textarea data-input="ws-comment" data-wid="' + c.wid + '" data-focus="ws-comment-' + c.wid + '" rows="2"' +
-    ' placeholder="pourquoi cette note reste à revoir">' + esc(c.defer.comment) + "</textarea></div>"
+    ' placeholder="pourquoi cette note reste à revoir">' + esc(c.flag.comment) + "</textarea></div>"
   );
 }
 
@@ -995,7 +1023,7 @@ function wsHidden(c) {
 }
 
 /* « Back Extra » is skipped: the reason callout is the only place it appears, and nothing
-   but the « vider Back Extra » toggle and a deferred card's comment writes it
+   but the « vider Back Extra » toggle and the comment of a card whose flag is on writes it
    (specs/workspace.md#body). */
 function wsFieldsHtml(c) {
   const fields = shownFields(c);

@@ -52,6 +52,7 @@ function draftCard(spec) {
     active: true,
     deleted: false,
     keep: false,
+    defer: null,
     moveTo: null,
     revealed: false,
     editing: null,
@@ -94,8 +95,10 @@ function tagsChanged(c) {
 function wsChanges() {
   const out = { edited: 0, created: 0, deleted: 0, kept: 0, deferred: 0, moved: 0 };
   (S.ws ? S.ws.cards : []).forEach((c) => {
-    if (!c.noteId) out.created++;
-    else if (c.deleted) out.deleted++;
+    if (!c.noteId) {
+      out.created++;
+      if (c.defer) out.deferred++; // created flagged: counts as both
+    } else if (c.deleted) out.deleted++;
     else {
       if (c.defer) out.deferred++; // an edited + deferred card counts once, as « à revoir »
       else if (c.vi > 0 || tagsChanged(c)) out.edited++;
@@ -103,7 +106,7 @@ function wsChanges() {
       if (c.moveTo) out.moved++;
     }
   });
-  out.total = out.edited + out.created + out.deleted + out.kept + out.deferred + out.moved;
+  out.total = (S.ws ? S.ws.cards : []).filter(cardChanged).length;
   return out;
 }
 
@@ -175,20 +178,22 @@ async function closeWorkspace(force) {
   await afterDecision({ resolvedId: root ? root.noteId : null, keepSelection: true });
 }
 
-/* Mark a card « à revoir » — or unmark it. The comment starts as the plain text of v0's
-   « Back Extra », so that the existing reason is completed rather than lost. */
+/* Mark a card « à revoir » — or unmark it. The comment starts as the plain text of
+   « Back Extra » as v0 holds it (the shown version, for a draft), so that the existing
+   reason is completed rather than lost. */
 function toggleDefer(card) {
   if (card.defer) {
     card.defer = null;
     return;
   }
-  card.defer = { comment: plainText(card.versions[0].fields[REASON_FIELD] || "") };
+  const fields = card.noteId ? card.versions[0].fields : shownFields(card);
+  card.defer = { comment: plainText(fields[REASON_FIELD] || "") };
   card.keep = false;
   if (hasReasonField(card)) S.refocus = "ws-comment-" + card.wid;
 }
 
 function hasReasonField(card) {
-  return Object.prototype.hasOwnProperty.call(card.versions[0].fields, REASON_FIELD);
+  return Object.prototype.hasOwnProperty.call(shownFields(card), REASON_FIELD);
 }
 
 /* ---------------- versions ---------------- */
@@ -591,6 +596,8 @@ function planFromWs() {
         fields: shownFields(c),
         tags: c.tags,
         source_ids: c.anchors || [],
+        defer: !!c.defer,
+        comment: c.defer ? c.defer.comment : null,
       });
     } else if (c.deleted) {
       cards.push({ wid: c.wid, action: "delete", note_id: c.noteId });
@@ -901,8 +908,10 @@ function wsCardHtml(c, isFragment) {
         (c.keep ? "ne pas garder" : "garder") +
         "</button>"
       : "") +
-    (c.noteId && !c.deleted && !c.keep
-      ? '<button class="ghost small" data-act="ws-defer" data-wid="' + c.wid + '" title="garder le flag et noter un commentaire, sans résoudre">' +
+    (!c.deleted && !c.keep
+      ? '<button class="ghost small" data-act="ws-defer" data-wid="' + c.wid + '" title="' +
+        (c.noteId ? "garder le flag et noter un commentaire, sans résoudre" : "créer la note flaguée, avec un commentaire") +
+        '">' +
         (c.defer ? "ne pas différer" : "différer") +
         "</button>"
       : "") +
@@ -940,7 +949,7 @@ function wsCardHtml(c, isFragment) {
     "</div>" +
     meta +
     wsFieldsHtml(c) +
-    (c.noteId && c.defer && !c.deleted
+    (c.defer && !c.deleted
       ? wsCommentHtml(c)
       : c.noteId && c.reason
         ? '<div class="reason"><span class="reason-label">raison du flag</span>' + nl2br(c.reason) + "</div>"

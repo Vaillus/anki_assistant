@@ -269,8 +269,9 @@ def _fmt_card(card: WorkspaceCard, anchors: Sequence[CorpusEntry] = ()) -> str:
         states.append("marquée à garder telle quelle")
     if card.defer:
         comment = (card.comment or "").strip()
+        flag = "sera créée flaguée" if card.note_id is None else "le flag reste"
         states.append(
-            "marquée à revoir plus tard (le flag reste"
+            f"marquée à revoir plus tard ({flag}"
             + (f", commentaire prévu : « {comment} »)" if comment else ")")
         )
     if card.move_to:

@@ -529,7 +529,7 @@ def test_validate_rejects_a_deferral_or_comment_in_the_wrong_place() -> None:
         ],
     )
     joined = "\n".join(workspace.validate(plan))
-    assert "w1 : seule une modification se diffère" in joined
+    assert "w1 : seule une modification ou une création se diffère" in joined
     assert "w2 : un commentaire accompagne une note différée" in joined
     assert "w3 : note_id manquant" in joined
     fine = ApplyPlan(
@@ -537,9 +537,51 @@ def test_validate_rejects_a_deferral_or_comment_in_the_wrong_place() -> None:
         cards=[
             CardPlan(wid="w1", action="defer", note_id=1, comment="plus tard"),
             edit("w2", 2, "x", defer=True, comment=""),
+            create("w3", "new", defer=True, comment="à compléter"),
         ],
     )
     assert workspace.validate(fine) == []
+    bad = ApplyPlan(deck="d", cards=[create("w1", "new", comment="x")])
+    assert workspace.validate(bad) == ["w1 : un commentaire accompagne une note différée"]
+
+
+def test_a_deferred_draft_is_created_flagged_with_its_comment(
+    anki: FailingAnki, store: SourceStore
+):
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            create("w1", "frag", deck="d", defer=True, comment="à compléter\navec l'exemple"),
+            create("w2", "other", deck="d"),
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok and report.errors == []
+    new, other = report.created["w1"], report.created["w2"]
+    assert anki.notes[new]["fields"] == {
+        "Text": "frag",
+        "Back Extra": "à compléter<br>avec l'exemple",
+    }
+    assert anki.flags_of(new) == [1]
+    assert anki.flags_of(other) == [0]
+    assert report.deferred == [new]
+    assert snap.flagged == [], "a created note needs no flag restore: rollback deletes it"
+
+
+def test_a_failure_after_a_deferred_draft_deletes_it(anki: FailingAnki, store: SourceStore):
+    gone = anki.add("d", flags=(1,))
+    anki.fail_on["deleteNotes"] = 1
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            create("w1", "frag", deck="d", defer=True, comment="later"),
+            CardPlan(wid="w2", action="delete", note_id=gone),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert not report.ok and report.rolled_back
+    assert report.created == {} and report.deferred == []
+    assert len(anki.notes) == 1 and gone in anki.notes
 
 
 def test_comment_html_escapes_and_keeps_line_breaks() -> None:

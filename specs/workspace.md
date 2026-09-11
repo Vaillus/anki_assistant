@@ -68,7 +68,7 @@ One line, left to right:
 - **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
 - **Actions** — « invalider », « supprimer » / « restaurer », « garder » / « ne pas garder », « différer » / « ne pas différer », « déplacer… » (a deck picker).
 
-« garder » is offered only on an untouched card (v0, tags unchanged) that is not deferred; « différer » on any existing note's card that is not deleted or kept. Marking a card deleted or kept drops its deferral, and vice versa.
+« garder » is offered only on an untouched card (v0, tags unchanged) that is not deferred; « différer » on any card, draft included, that is not deleted or kept. Marking a card deleted or kept drops its deferral, and vice versa.
 
 ### Card body
 
@@ -76,11 +76,11 @@ Fields are rendered with the display renderer ([review.md § Rendering](./review
 
 The reason callout sits at the bottom, under the fields, in every version — it always shows the reason as v0 held it. `Back Extra` is never shown among the fields and is never editable by hand; the only things that write it are the « vider Back Extra » toggle and the comment of a deferred card.
 
-On a **deferred** card the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it, so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped). When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
+On a **deferred** card the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped). When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
 
 Under a version proposed by Claude, its rationale in one muted line.
 
-A card marked **deleted** will have its note removed from Anki at [validation](#validation); the card is struck through and not editable. A **kept** card has its flag cleared at validation without being edited. A **deferred** (« à revoir ») card keeps its flag at validation — or receives one when it had none — and its `Back Extra` is set to the comment typed on the card, so that it comes back in the queue later with that comment as its reason. Combines with an edit (a partial fix, still flagged) and with a move; exclusive with kept and deleted. A **moved** card carries a destination deck, applied at validation; a card can be both edited and moved.
+A card marked **deleted** will have its note removed from Anki at [validation](#validation); the card is struck through and not editable. A **kept** card has its flag cleared at validation without being edited. A **deferred** (« à revoir ») card is not resolved at validation — an existing note keeps its flag (or receives one when it had none), a draft note is created already flagged — and its `Back Extra` is set to the comment typed on the card, so that it comes back in the queue later with that comment as its reason. Combines with an edit (a partial fix, still flagged) and with a move; exclusive with kept and deleted. A **moved** card carries a destination deck, applied at validation; a card can be both edited and moved.
 
 ### Editing
 
@@ -133,7 +133,7 @@ A draft note is added to Anki. An existing note's card is classified into one ac
 
 | Card | Anki writes | Flag |
 |---|---|---|
-| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json` | — |
+| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`. Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
 | Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |

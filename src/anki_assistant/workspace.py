@@ -84,14 +84,14 @@ class CardPlan:
     move_to: str | None = None
     parent_wid: str | None = None
     #: Deferred (« à revoir »): the flag stays (or is set), `Back Extra` becomes `comment`.
-    #: Implied by the action `defer`; a modifier on `edit`.
+    #: Implied by the action `defer`; a modifier on `edit` and `create`.
     defer: bool = False
     #: Plain text for `Back Extra`, only with a deferral. None leaves the field alone.
     comment: str | None = None
 
     @property
     def deferred(self) -> bool:
-        return self.action == "defer" or (self.action == "edit" and self.defer)
+        return self.action == "defer" or (self.action in ("edit", "create") and self.defer)
 
 
 @dataclass
@@ -189,6 +189,8 @@ def validate(plan: ApplyPlan) -> list[str]:
                 errors.append(f"{who} : champs manquants")
             if card.move_to:
                 errors.append(f"{who} : une note à créer ne se déplace pas")
+            if card.comment is not None and not card.defer:
+                errors.append(f"{who} : un commentaire accompagne une note différée")
             continue
         if card.note_id is None:
             errors.append(f"{who} : note_id manquant")
@@ -200,8 +202,8 @@ def validate(plan: ApplyPlan) -> list[str]:
             errors.append(f"{who} : champs manquants")
         if card.action == "delete" and card.move_to:
             errors.append(f"{who} : une note supprimée ne se déplace pas")
-        if card.defer and card.action != "edit":
-            errors.append(f"{who} : seule une modification se diffère (sinon action « defer »)")
+        if card.defer and card.action not in ("edit", "create"):
+            errors.append(f"{who} : seule une modification ou une création se diffère")
         if card.comment is not None and not card.deferred:
             errors.append(f"{who} : un commentaire accompagne une note différée")
     return errors
@@ -256,7 +258,9 @@ def _reason_to_clear(snap: NoteSnap) -> bool:
 
 def comment_html(comment: str) -> str:
     """The `Back Extra` value for a plain-text comment: escaped, one `<br>` per line break."""
-    return "<br>".join(html.escape(line.strip()) for line in comment.strip().splitlines())
+    return "<br>".join(
+        html.escape(line.strip(), quote=False) for line in comment.strip().splitlines()
+    )
 
 
 def _comment_for(card: CardPlan, snap: NoteSnap, report: ApplyReport) -> str | None:
@@ -292,17 +296,29 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
     try:
         for card in creates:
             step = f"création de {card.wid}"
+            fields = dict(card.fields or {})
+            if card.deferred and card.comment is not None:
+                if REASON_FIELD in fields:
+                    fields[REASON_FIELD] = comment_html(card.comment)
+                elif card.comment.strip():
+                    report.errors.append(
+                        f"{card.wid} : pas de champ {REASON_FIELD}, commentaire non écrit"
+                    )
             view = review.create(
                 client,
                 deck=card.deck or plan.deck,
                 model=str(card.model),
-                fields=dict(card.fields or {}),
+                fields=fields,
                 tags=list(card.tags or []),
             )
             snap.created.append(view.note_id)
             report.created[card.wid] = view.note_id
             if card.source_ids:
                 store.set_anchors(view.note_id, card.source_ids)
+            if card.deferred:
+                step = f"flag de {card.wid}"
+                client.set_flag(list(view.card_ids), 1)
+                report.deferred.append(view.note_id)
 
         for card in edits:
             nid = int(card.note_id or 0)

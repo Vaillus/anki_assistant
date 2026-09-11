@@ -382,12 +382,23 @@ function scheduleLogRefresh() {
   });
 }
 
-/* Narrow refresh used while a reply streams in, so the textarea keeps focus. */
+/* Pixels from the bottom within which the log still counts as « at the bottom ». */
+const LOG_STICK_PX = 40;
+
+/* Narrow refresh used while a reply streams in, so the textarea keeps focus. The log follows
+   the reply only while the reader is at the bottom; scrolled up, they stay where they are. */
 function refreshChatLog() {
   const log = document.getElementById("chat-log");
   if (!log) return;
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight <= LOG_STICK_PX;
+  const top = log.scrollTop;
   log.innerHTML = chatLogHtml();
-  log.scrollTop = log.scrollHeight;
+  log.scrollTop = atBottom ? log.scrollHeight : top;
+}
+
+function scrollChatLogToBottom() {
+  const log = document.getElementById("chat-log");
+  if (log) log.scrollTop = log.scrollHeight;
 }
 
 async function sendChat() {
@@ -415,6 +426,7 @@ async function sendChat() {
   ws.chatDraft = "";
   ws.chatBusy = true;
   draw();
+  scrollChatLogToBottom();
 
   // Landing a proposal may fetch a note; keep the order of arrival with a promise chain.
   let landing = Promise.resolve();

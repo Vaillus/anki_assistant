@@ -105,6 +105,9 @@ class WorkspaceCard:
     anchor_ids: list[str] = field(default_factory=list)
     deleted: bool = False
     keep: bool = False
+    #: Deferred (« à revoir »): flag kept, `comment` written to `Back Extra` at validation.
+    defer: bool = False
+    comment: str = ""
     move_to: str | None = None
     parent_wid: str | None = None
 
@@ -264,6 +267,12 @@ def _fmt_card(card: WorkspaceCard, anchors: Sequence[CorpusEntry] = ()) -> str:
         states.append("marquée supprimée")
     if card.keep:
         states.append("marquée à garder telle quelle")
+    if card.defer:
+        comment = (card.comment or "").strip()
+        states.append(
+            "marquée à revoir plus tard (le flag reste"
+            + (f", commentaire prévu : « {comment} »)" if comment else ")")
+        )
     if card.move_to:
         states.append(f"à déplacer vers {card.move_to}")
     lines = [head, f"- état : {', '.join(states)}"]

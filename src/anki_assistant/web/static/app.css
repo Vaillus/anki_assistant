@@ -427,6 +427,8 @@ select.chip.theme:hover { border-color: var(--line-strong); color: var(--ink); }
 .ws-move { height: auto; padding: 1px 6px; font-size: 12px; max-width: 160px; }
 .badge.state { background: var(--zerobg); color: var(--zeroink); font-weight: 500; }
 .badge.state.ok { background: var(--okbg); color: var(--ok); }
+.badge.state.later { background: var(--flagbg); color: var(--flag); border: 1px solid var(--flag); }
+.reason.defer textarea { display: block; width: 100%; min-height: 44px; margin-top: 2px; font-size: 13px; }
 .ws-pointer { font-size: 12px; color: var(--muted); margin: 4px 0; }
 button.dangerish { color: var(--danger); }
 .open-hint { margin-top: 6px; display: none; }

@@ -14,10 +14,11 @@ Resolving a flagged note usually means *working* on it: reading the reason, aski
 - **Root** — the note the workspace was opened on. Its deck is the **current deck** (for the prompt and for `search_notes`); its tags and anchors are the defaults of a created note.
 - **Card** — one slot of the workspace. A card is either an **existing note** (it has a `note_id`) or a **draft note** (a split fragment or a created note, not in Anki yet). Every card has a **workspace id** (`w1`, `w2`…), unique within the workspace, which is how Claude names it.
 - **Version** — the field values of a card at one point. An existing note's card starts at **v0**, the values in Anki, read-only. Each proposal by Claude adds a version; the user's hand edits modify the shown version in place. A draft note has no v0: its first version is Claude's.
-- **Changed** — an existing note's card whose shown version is not v0, or that is marked deleted, kept or moved. A draft note is always changed.
+- **Changed** — an existing note's card whose shown version is not v0, or that is marked deleted, kept, deferred or moved. A draft note is always changed.
 - **Active** — a card the next message is about. Every card is in Claude's context; the active ones are the target.
 - **Deleted** — a state of an existing note's card: the note is removed from Anki at validation. Reversible until then.
 - **Kept** — a state of an existing note's card that has no other change: resolved (flag cleared) at validation without being edited.
+- **Deferred** (« à revoir ») — a state of an existing note's card: at validation the note is *not* resolved — it keeps its flag (or receives one when it had none) and its `Back Extra` is set to the **comment** typed on the card, so that it comes back in the queue later with that comment as its reason. For a note that is not worth fixing now but that the user wants to understand at the next pass. Combines with an edit (a partial fix, still flagged) and with a move; exclusive with kept and deleted.
 - **Moved** — a card carrying a destination deck; applied at validation.
 - **Fragment** — a draft note created by a split, linked to its **parent** card (the note that was split).
 
@@ -46,7 +47,9 @@ Cards are listed root first, then in order of arrival. A fragment is shown right
 
 ### Card head
 
-One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the state badges (« ⚑ c2 » per flagged card as in the queue, « supprimée », « gardée », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider » (drop the shown version), « supprimer » / « restaurer », « garder » / « ne pas garder », « déplacer… » (a deck picker, same list as `list_decks`).
+One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the state badges (« ⚑ c2 » per flagged card as in the queue, « supprimée », « gardée », « à revoir », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider » (drop the shown version), « supprimer » / « restaurer », « garder » / « ne pas garder », « différer » / « ne pas différer », « déplacer… » (a deck picker, same list as `list_decks`).
+
+« garder » is offered only on an untouched card (v0, tags unchanged) that is not deferred; « différer » on any existing note's card that is not deleted or kept. Marking a card deleted or kept drops its deferral, and vice versa.
 
 The **activation toggle** is the head itself: clicking the head (outside a control) toggles the card between active and inactive. An inactive card is drawn at 55 % opacity. Every card is active when it enters the workspace.
 
@@ -54,7 +57,9 @@ The **activation toggle** is the head itself: clicking the head (outside a contr
 
 The reason callout (as in the queue) sits at the bottom of an existing note's card, under the fields, in every version — it is about the flag, not part of the card. It always shows the reason as v0 held it.
 
-`Back Extra` is never shown among the fields and is never editable by hand (as in the queue): the callout is the only place it appears, and the « vider Back Extra » toggle is the only thing that writes it.
+`Back Extra` is never shown among the fields and is never editable by hand (as in the queue): the callout is the only place it appears, and the only things that write it are the « vider Back Extra » toggle and the comment of a deferred card.
+
+On a **deferred** card the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it, so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped). Typing does not redraw. When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
 
 Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). **v0 is shown in question state**: the flagged clozes hidden, « Révéler » to show them, exactly as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full: a rewrite may renumber clozes, and the hidden state is for understanding the flag, not for proofreading the fix.
 
@@ -104,21 +109,22 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics (
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 déplacée » (zero counts omitted). Disabled when no card is changed and during the write. When the plan deletes at least one note, a confirmation lists them; nothing else asks for confirmation — the workspace itself is the review step.
+« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card both edited and deferred counts once, as « à revoir ». Disabled when no card is changed and during the write. When the plan deletes at least one note, a confirmation lists them; nothing else asks for confirmation — the workspace itself is the review step.
 
 ### What is written
 
-The **plan** is built from the cards, in this order of precedence per existing note's card: deleted → kept → edited (shown version ≠ v0), each optionally moved. Cards on v0 with no state are not in the plan and keep their flag.
+The **plan** is built from the cards, in this order of precedence per existing note's card: deleted → kept → edited (shown version ≠ v0) → deferred, each optionally moved; an edited card may also be deferred (the `defer` modifier of an `edit`). Cards on v0 with no state are not in the plan and keep their flag.
 
 | Card | Anki writes | Flag |
 |---|---|---|
 | Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), model, tags; anchors written to `sources.json` | — (new notes are unflagged) |
 | Existing, edited | `updateNote` with the shown version's fields (and tags if changed); when the plan carries a different `model`, `updateNoteModel` instead (swaps the note type, writes fields and tags in one call — c1's history is kept, c2+ become orphan cards removed by Check Database) | cleared |
 | Existing, kept | none | cleared |
+| Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |
 | Existing, moved (with either of the above) | `changeDeck` on all cards; anchors re-checked against the destination corpus ([sources.md § Anchors](./sources.md#anchors)) | cleared |
 | Existing, deleted | `deleteNotes` | — |
 
-**« vider Back Extra »** (header toggle, on by default): every *edited* note that had a reason gets `Back Extra` set to empty in the same `updateNote`. Kept notes are not touched, for the same reason « Garder » in the queue clears nothing: the note was fine.
+**« vider Back Extra »** (header toggle, on by default): every *edited* note that had a reason gets `Back Extra` set to empty in the same `updateNote`. Kept notes are not touched, for the same reason « Garder » in the queue clears nothing: the note was fine. Deferred notes are exempt: their `Back Extra` is the comment, whatever the toggle says.
 
 ### Order, snapshot, rollback
 
@@ -127,16 +133,16 @@ AnkiConnect has no transactions, so all-or-nothing is emulated. `workspace.apply
 1. **Validate** the plan's shape (unknown action, a create without fields, a note listed twice…) before touching Anki.
 2. **Snapshot** every existing note of the plan in one read: raw fields, tags, deck, model, card ids, flagged card ids.
 3. **Create** the draft notes (`review.create`, then anchors). A fragment inherits the parent's anchors; a created note gets the plan's `source_ids`.
-4. **Edit** (`review.edit` with `unflag=False`), `Back Extra` emptied when the toggle says so.
+4. **Edit** (`review.edit` with `unflag=False`), `Back Extra` emptied when the toggle says so, or set to the comment when the card is deferred. A deferred card that is not edited gets its comment written by its own `updateNote` here.
 5. **Move** (`changeDeck`, anchors re-checked).
-6. **Unflag** every edited, kept or moved note.
+6. **Unflag** every edited, kept or moved note that is not deferred. **Flag** (red, every card) each deferred note that carried no flag.
 7. **Delete**, one `deleteNotes` call for all of them. Their anchors are removed from `sources.json` best-effort (a failure there is reported, not fatal: « nettoyer » catches orphans).
 
-Deletion comes last so that a failure anywhere before it has lost no content. On the first failure the write stops and a **rollback** is attempted: created notes deleted, edited notes restored from the snapshot (fields, tags, flags put back with `reflag`), moved notes moved back. The response reports what failed and whether the rollback completed; the client keeps the workspace open, marks the cards concerned and shows the report. Draft cards that were created and not rolled back gain their `note_id` so a second « Valider » does not create them twice.
+Deletion comes last so that a failure anywhere before it has lost no content. On the first failure the write stops and a **rollback** is attempted: created notes deleted, edited notes restored from the snapshot (fields, tags, flags put back colour by colour, flags set by a deferral removed), moved notes moved back. The response reports what failed and whether the rollback completed; the client keeps the workspace open, marks the cards concerned and shows the report. Draft cards that were created and not rolled back gain their `note_id` so a second « Valider » does not create them twice.
 
 ### Undo
 
-The server keeps the snapshot of the **last successful validation** in memory (one, overwritten by the next validation, gone when the server restarts). The queue header shows « Annuler la dernière validation » while one is available (`GET /api/workspace/undo` says, at load and after each validation). Clicking it restores the snapshot: created notes deleted, edited notes' fields and tags put back, moves reverted, flags put back on the cards that carried one. The notes come back in the queue.
+The server keeps the snapshot of the **last successful validation** in memory (one, overwritten by the next validation, gone when the server restarts). The queue header shows « Annuler la dernière validation » while one is available (`GET /api/workspace/undo` says, at load and after each validation). Clicking it restores the snapshot: created notes deleted, edited notes' fields and tags put back (a deferred note's comment included), moves reverted, flags put back on the cards that carried one and removed from the cards a deferral flagged. The notes come back in the queue.
 
 Undo is **unavailable** when the validation deleted notes — a deleted note cannot be recreated with its history — and the button is not shown. It is **refused** (« modifiée depuis, annulation impossible ») when one of the notes no longer holds the values the validation wrote, which means it was edited since, in the app or in Anki; nothing is written then.
 
@@ -163,14 +169,16 @@ All under `/api`. Errors follow [review.md § API](./review.md#api) (502 AnkiCon
     { "wid": "w1", "action": "edit",   "note_id": 1732375559262, "fields": { "Text": "<raw>", "Back Extra": "" }, "tags": ["phd"], "move_to": null },
     { "wid": "w2", "action": "create", "parent_wid": "w1", "deck": "courant::00-Thèse", "model": "Cloze", "fields": { "Text": "<raw>", "Back Extra": "" }, "tags": ["phd"], "source_ids": ["r9wt4n"] },
     { "wid": "w3", "action": "keep",   "note_id": 1732375559999, "move_to": "courant::01-AI" },
-    { "wid": "w4", "action": "delete", "note_id": 1732375560001 } ] }
+    { "wid": "w4", "action": "delete", "note_id": 1732375560001 },
+    { "wid": "w5", "action": "defer",  "note_id": 1732375560002, "comment": "Trop vague, à recouper avec le cours §3", "move_to": null },
+    { "wid": "w6", "action": "edit",   "note_id": 1732375560003, "fields": { "Text": "<raw>", "Back Extra": "<raw>" }, "defer": true, "comment": "Reformulée, mais il manque l'exemple" } ] }
 ```
 
-`fields` on an `edit` are the **complete** raw values of the shown version (every field), so the server never merges. `tags` on `edit` is omitted when unchanged. `create` carries `parent_wid` only for fragments (the server does not use it — the client already resolved deck, tags and anchors — it is there for the report).
+`fields` on an `edit` are the **complete** raw values of the shown version (every field), so the server never merges. `tags` on `edit` is omitted when unchanged. `defer` (an `edit` only, default false) and the action `defer` mark the note as deferred; `comment` is the plain text to write to `Back Extra` and is only accepted with a deferral (`null` leaves the field as the plan otherwise has it). The server, not the client, turns the comment into field HTML. `create` carries `parent_wid` only for fragments (the server does not use it — the client already resolved deck, tags and anchors — it is there for the report).
 
 ```json
 { "ok": true, "created": { "w2": 1757400000001 }, "resolved": [1732375559262, 1732375559999],
-  "deleted": [1732375560001], "moved": [1732375559999],
+  "deferred": [1732375560002, 1732375560003], "deleted": [1732375560001], "moved": [1732375559999],
   "errors": [], "rolled_back": false, "undo_available": false }
 ```
 
@@ -181,11 +189,11 @@ All under `/api`. Errors follow [review.md § API](./review.md#api) (502 AnkiCon
 Pure functions over `AnkiClient` and `SourceStore`, no FastAPI imports, reusing `review.create`, `review.edit`, `review.move`, `review.delete`:
 
 ```python
-@dataclass class CardPlan: wid, action, note_id, fields, tags, model, deck, source_ids, move_to, parent_wid
+@dataclass class CardPlan: wid, action, note_id, fields, tags, model, deck, source_ids, move_to, parent_wid, defer, comment
 @dataclass class ApplyPlan: deck, clear_reason, cards
 @dataclass class NoteSnap: note_id, fields, tags, deck, model, card_ids, flags   # flags: card id -> flag, restored colour by colour
-@dataclass class Snapshot: notes: dict[int, NoteSnap]; created; deleted; moved; anchors_before; written; model_changed; unflagged
-@dataclass class ApplyReport: ok, created, resolved, deleted, moved, errors, rolled_back, undo_available
+@dataclass class Snapshot: notes: dict[int, NoteSnap]; created; deleted; moved; anchors_before; written; model_changed; unflagged; flagged
+@dataclass class ApplyReport: ok, created, resolved, deferred, deleted, moved, errors, rolled_back, undo_available
 
 def validate(plan) -> list[str]
 def take_snapshot(client, plan) -> Snapshot

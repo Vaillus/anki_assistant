@@ -514,3 +514,157 @@ def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, sto
     assert "updateNoteModel" not in anki.calls
     assert "updateNote" in anki.calls
     assert nid not in snap.model_changed
+
+
+# ---------------------------------------------------------------------------- defer
+
+
+def test_validate_rejects_a_deferral_or_comment_in_the_wrong_place() -> None:
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="keep", note_id=1, defer=True),
+            CardPlan(wid="w2", action="keep", note_id=2, comment="x"),
+            CardPlan(wid="w3", action="defer"),
+        ],
+    )
+    joined = "\n".join(workspace.validate(plan))
+    assert "w1 : seule une modification se diffère" in joined
+    assert "w2 : un commentaire accompagne une note différée" in joined
+    assert "w3 : note_id manquant" in joined
+    fine = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="defer", note_id=1, comment="plus tard"),
+            edit("w2", 2, "x", defer=True, comment=""),
+        ],
+    )
+    assert workspace.validate(fine) == []
+
+
+def test_comment_html_escapes_and_keeps_line_breaks() -> None:
+    assert workspace.comment_html(" a < b \n\n  c & d  ") == "a &lt; b<br><br>c &amp; d"
+    assert workspace.comment_html("") == ""
+
+
+def test_defer_keeps_the_flag_writes_the_comment_and_flags_an_unflagged_note(
+    anki: FailingAnki, store: SourceStore
+):
+    root = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(2, 0))
+    pulled = anki.add("d", fields={"Text": "u", "Back Extra": ""}, flags=(0, 0))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="defer", note_id=root, comment="why\nand more"),
+            CardPlan(wid="w2", action="defer", note_id=pulled, comment="à recouper", move_to="e"),
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+
+    assert report.ok and report.errors == []
+    assert anki.notes[root]["fields"] == {"Text": "t", "Back Extra": "why<br>and more"}
+    assert anki.flags_of(root) == [2, 0], "an existing flag is kept as it was"
+    assert anki.notes[pulled]["fields"]["Back Extra"] == "à recouper"
+    assert anki.flags_of(pulled) == [1, 1], "a note that carried none gets a red flag everywhere"
+    assert anki.decks_of(pulled) == ["e", "e"]
+    assert report.deferred == [root, pulled]
+    assert report.resolved == []
+    assert report.moved == [pulled]
+    assert report.undo_available is True
+    assert snap.flagged == [pulled]
+    assert snap.unflagged == []
+    assert snap.written[root] == {"Back Extra": "why<br>and more"}
+
+
+def test_edit_with_defer_writes_the_comment_instead_of_clearing_and_keeps_the_flag(
+    anki: FailingAnki, store: SourceStore
+):
+    nid = anki.add("d", fields={"Text": "old", "Back Extra": "why"}, flags=(3,))
+    plan = ApplyPlan(
+        deck="d",
+        clear_reason=True,
+        cards=[edit("w1", nid, "new", defer=True, comment="mieux, mais pas fini")],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok
+    assert anki.notes[nid]["fields"] == {"Text": "new", "Back Extra": "mieux, mais pas fini"}
+    assert anki.flags_of(nid) == [3]
+    assert report.deferred == [nid] and report.resolved == []
+
+
+def test_defer_without_comment_leaves_back_extra_alone(anki: FailingAnki, store: SourceStore):
+    nid = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(1,))
+    report, snap = workspace.apply(
+        anki, store, ApplyPlan(deck="d", cards=[CardPlan(wid="w1", action="defer", note_id=nid)])
+    )
+    assert report.ok and report.deferred == [nid]
+    assert anki.notes[nid]["fields"]["Back Extra"] == "why"
+    assert "updateNote" not in anki.calls
+    assert snap.written == {}
+
+
+def test_defer_on_a_note_type_without_back_extra_flags_and_reports(
+    anki: FailingAnki, store: SourceStore
+):
+    nid = anki.add("d", model="Basic", fields={"Front": "f", "Back": "b"}, flags=(0,))
+    plan = ApplyPlan(deck="d", cards=[CardPlan(wid="w1", action="defer", note_id=nid, comment="x")])
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok
+    assert anki.flags_of(nid) == [1]
+    assert anki.notes[nid]["fields"] == {"Front": "f", "Back": "b"}
+    assert report.errors == ["w1 : pas de champ Back Extra, commentaire non écrit"]
+
+
+def test_undo_reverts_a_deferral(anki: FailingAnki, store: SourceStore):
+    root = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(2, 0))
+    pulled = anki.add("d", fields={"Text": "u", "Back Extra": ""}, flags=(0,))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="defer", note_id=root, comment="later"),
+            edit("w2", pulled, "u2", defer=True, comment="partiel"),
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok and anki.flags_of(pulled) == [1]
+
+    undone = workspace.undo(anki, store, snap)
+    assert undone.ok and undone.errors == []
+    assert anki.notes[root]["fields"] == {"Text": "t", "Back Extra": "why"}
+    assert anki.flags_of(root) == [2, 0]
+    assert anki.notes[pulled]["fields"] == {"Text": "u", "Back Extra": ""}
+    assert anki.flags_of(pulled) == [0], "the flag set by the deferral is removed"
+
+
+def test_failure_after_a_deferral_rolls_its_flag_and_comment_back(
+    anki: FailingAnki, store: SourceStore
+):
+    pulled = anki.add("d", fields={"Text": "u", "Back Extra": ""}, flags=(0,))
+    gone = anki.add("d", flags=(1,))
+    anki.fail_on["deleteNotes"] = 1
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="defer", note_id=pulled, comment="later"),
+            CardPlan(wid="w2", action="delete", note_id=gone),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert not report.ok and report.rolled_back
+    assert report.deferred == []
+    assert anki.flags_of(pulled) == [0]
+    assert anki.notes[pulled]["fields"]["Back Extra"] == ""
+    assert gone in anki.notes
+
+
+def test_api_accepts_a_deferred_plan(api: TestClient, anki: FailingAnki):
+    nid = anki.add("d", fields={"Text": "t", "Back Extra": ""}, flags=(0,))
+    body = {
+        "deck": "d",
+        "cards": [{"wid": "w1", "action": "defer", "note_id": nid, "comment": "plus tard"}],
+    }
+    r = api.post("/api/workspace/apply", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["deferred"] == [nid]
+    assert anki.flags_of(nid) == [1]
+    assert anki.notes[nid]["fields"]["Back Extra"] == "plus tard"

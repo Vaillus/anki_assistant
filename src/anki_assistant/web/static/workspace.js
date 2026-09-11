@@ -28,6 +28,7 @@ function cardFromNote(n, parentWid) {
     active: true,
     deleted: false,
     keep: false,
+    defer: null, // { comment } when marked « à revoir » (specs/workspace.md#vocabulary)
     moveTo: null,
     revealed: false,
     editing: null, // field name while a textarea is open
@@ -80,7 +81,9 @@ function shownFields(c) {
 /* An existing note's card is changed when it is not on v0 or carries a state; a draft always is. */
 function cardChanged(c) {
   if (!c.noteId) return true;
-  return c.vi > 0 || c.deleted || c.keep || !!c.moveTo || tagsChanged(c) || shownModel(c) !== c.model;
+  return (
+    c.vi > 0 || c.deleted || c.keep || !!c.defer || !!c.moveTo || tagsChanged(c) || shownModel(c) !== c.model
+  );
 }
 
 function tagsChanged(c) {
@@ -89,17 +92,18 @@ function tagsChanged(c) {
 
 /* Counts for the « Valider » label and the close confirmation. */
 function wsChanges() {
-  const out = { edited: 0, created: 0, deleted: 0, kept: 0, moved: 0 };
+  const out = { edited: 0, created: 0, deleted: 0, kept: 0, deferred: 0, moved: 0 };
   (S.ws ? S.ws.cards : []).forEach((c) => {
     if (!c.noteId) out.created++;
     else if (c.deleted) out.deleted++;
     else {
-      if (c.vi > 0 || tagsChanged(c)) out.edited++;
+      if (c.defer) out.deferred++; // an edited + deferred card counts once, as « à revoir »
+      else if (c.vi > 0 || tagsChanged(c)) out.edited++;
       else if (c.keep) out.kept++;
       if (c.moveTo) out.moved++;
     }
   });
-  out.total = out.edited + out.created + out.deleted + out.kept + out.moved;
+  out.total = out.edited + out.created + out.deleted + out.kept + out.deferred + out.moved;
   return out;
 }
 
@@ -169,6 +173,22 @@ async function closeWorkspace(force) {
   S.ws = null;
   draw();
   await afterDecision({ resolvedId: root ? root.noteId : null, keepSelection: true });
+}
+
+/* Mark a card « à revoir » — or unmark it. The comment starts as the plain text of v0's
+   « Back Extra », so that the existing reason is completed rather than lost. */
+function toggleDefer(card) {
+  if (card.defer) {
+    card.defer = null;
+    return;
+  }
+  card.defer = { comment: plainText(card.versions[0].fields[REASON_FIELD] || "") };
+  card.keep = false;
+  if (hasReasonField(card)) S.refocus = "ws-comment-" + card.wid;
+}
+
+function hasReasonField(card) {
+  return Object.prototype.hasOwnProperty.call(card.versions[0].fields, REASON_FIELD);
 }
 
 /* ---------------- versions ---------------- */
@@ -337,6 +357,8 @@ function cardsForServer() {
     anchor_ids: c.anchors || [],
     deleted: c.deleted,
     keep: c.keep,
+    defer: !!c.defer,
+    comment: c.defer ? c.defer.comment : "",
     move_to: c.moveTo,
     parent_wid: c.parentWid,
   }));
@@ -554,7 +576,8 @@ async function revertSourceProposal(mi, pi) {
 
 /* ---------------- validation ---------------- */
 
-/* The plan of specs/workspace.md#what-is-written: deleted → kept → edited, each maybe moved. */
+/* The plan of specs/workspace.md#what-is-written: deleted → kept → edited → deferred, each
+   maybe moved; an edited card may carry the `defer` modifier. */
 function planFromWs() {
   const cards = [];
   S.ws.cards.forEach((c) => {
@@ -576,7 +599,13 @@ function planFromWs() {
       if (tagsChanged(c)) card.tags = c.tags;
       const em = shownModel(c);
       if (em !== c.model) card.model = em;
+      if (c.defer) {
+        card.defer = true;
+        card.comment = c.defer.comment;
+      }
       cards.push(card);
+    } else if (c.defer) {
+      cards.push({ wid: c.wid, action: "defer", note_id: c.noteId, comment: c.defer.comment, move_to: c.moveTo });
     } else if (c.keep || c.moveTo) {
       cards.push({ wid: c.wid, action: "keep", note_id: c.noteId, move_to: c.moveTo });
     }
@@ -691,8 +720,14 @@ function wsClick(act, el, e) {
   else if (act === "ws-invalidate") invalidateVersion(card);
   else if (act === "ws-delete") {
     card.deleted = !card.deleted;
-    if (card.deleted) card.keep = false;
-  } else if (act === "ws-keep") card.keep = !card.keep;
+    if (card.deleted) {
+      card.keep = false;
+      card.defer = null;
+    }
+  } else if (act === "ws-keep") {
+    card.keep = !card.keep;
+    if (card.keep) card.defer = null;
+  } else if (act === "ws-defer") toggleDefer(card);
   else if (act === "ws-reveal") card.revealed = !card.revealed;
   else if (act === "ws-edit") {
     if (card.deleted) return undefined;
@@ -714,6 +749,9 @@ function wsInput(key, el) {
   } else if (key === "ws-field") {
     const card = wsCard(el.getAttribute("data-wid"));
     if (card) editField(card, el.getAttribute("data-field"), el.value);
+  } else if (key === "ws-comment") {
+    const card = wsCard(el.getAttribute("data-wid"));
+    if (card && card.defer) card.defer.comment = el.value; // no redraw, as for a field
   } else if (key === "ws-move") {
     const card = wsCard(el.getAttribute("data-wid"));
     if (card) {
@@ -764,6 +802,7 @@ function wsHeadHtml() {
   if (ch.created) parts.push(ch.created + " créée(s)");
   if (ch.deleted) parts.push(ch.deleted + " supprimée(s)");
   if (ch.kept) parts.push(ch.kept + " gardée(s)");
+  if (ch.deferred) parts.push(ch.deferred + " à revoir");
   if (ch.moved) parts.push(ch.moved + " déplacée(s)");
   const disabled = !ch.total || ws.applying || ws.chatBusy ? " disabled" : "";
   return (
@@ -837,6 +876,7 @@ function wsCardHtml(c, isFragment) {
       : "") +
     (c.deleted ? '<span class="badge state">supprimée</span>' : "") +
     (c.keep && !c.deleted ? '<span class="badge state ok">gardée</span>' : "") +
+    (c.defer && !c.deleted ? '<span class="badge state later">à revoir</span>' : "") +
     (c.moveTo ? '<span class="badge state">→ ' + esc(c.moveTo) + "</span>" : "");
   const versions =
     n > 1
@@ -856,9 +896,14 @@ function wsCardHtml(c, isFragment) {
         (c.deleted ? "restaurer" : "supprimer") +
         "</button>"
       : "") +
-    (c.noteId && !c.deleted && c.vi === 0 && !tagsChanged(c)
+    (c.noteId && !c.deleted && !c.defer && c.vi === 0 && !tagsChanged(c)
       ? '<button class="ghost small" data-act="ws-keep" data-wid="' + c.wid + '" title="résoudre sans changement">' +
         (c.keep ? "ne pas garder" : "garder") +
+        "</button>"
+      : "") +
+    (c.noteId && !c.deleted && !c.keep
+      ? '<button class="ghost small" data-act="ws-defer" data-wid="' + c.wid + '" title="garder le flag et noter un commentaire, sans résoudre">' +
+        (c.defer ? "ne pas différer" : "différer") +
         "</button>"
       : "") +
     (c.noteId && !c.deleted ? movePickerHtml(c) : "");
@@ -895,9 +940,28 @@ function wsCardHtml(c, isFragment) {
     "</div>" +
     meta +
     wsFieldsHtml(c) +
-    (c.noteId && c.reason ? '<div class="reason"><span class="reason-label">raison du flag</span>' + nl2br(c.reason) + "</div>" : "") +
+    (c.noteId && c.defer && !c.deleted
+      ? wsCommentHtml(c)
+      : c.noteId && c.reason
+        ? '<div class="reason"><span class="reason-label">raison du flag</span>' + nl2br(c.reason) + "</div>"
+        : "") +
     wsRevealHtml(c) +
     "</div>"
+  );
+}
+
+/* The reason callout of a deferred card: the comment to be written (specs/workspace.md#body). */
+function wsCommentHtml(c) {
+  if (!hasReasonField(c)) {
+    return (
+      '<div class="reason defer"><span class="reason-label">à revoir</span>' +
+      "pas de champ " + esc(REASON_FIELD) + " : le flag sera posé sans commentaire</div>"
+    );
+  }
+  return (
+    '<div class="reason defer"><span class="reason-label">raison du flag · sera écrite</span>' +
+    '<textarea data-input="ws-comment" data-wid="' + c.wid + '" data-focus="ws-comment-' + c.wid + '" rows="2"' +
+    ' placeholder="pourquoi cette note reste à revoir">' + esc(c.defer.comment) + "</textarea></div>"
   );
 }
 
@@ -922,7 +986,8 @@ function wsHidden(c) {
 }
 
 /* « Back Extra » is skipped: the reason callout is the only place it appears, and nothing
-   but the « vider Back Extra » toggle writes it (specs/workspace.md#body). */
+   but the « vider Back Extra » toggle and a deferred card's comment writes it
+   (specs/workspace.md#body). */
 function wsFieldsHtml(c) {
   const fields = shownFields(c);
   const hidden = wsHidden(c);

@@ -130,7 +130,7 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. 
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card whose flag is on counts once, as « à revoir », edited or not; a draft with the flag on counts as created and as « à revoir ». Disabled when the plan is empty and during the write. On a freshly opened workspace the plan already holds the root as kept: « Valider · 1 gardée » is the workspace's « Garder ». When the plan deletes at least one note, a confirmation lists them.
+« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card counts under every action it carries: an edited card with the flag on is both « modifiée » and « à revoir », a draft with the flag on both « créée » and « à revoir », a moved card also « déplacée ». Disabled when the plan is empty and during the write. On a freshly opened workspace the plan already holds the root as kept: « Valider · 1 gardée » is the workspace's « Garder ». When the plan deletes at least one note, a confirmation lists them.
 
 ### What is written
 
@@ -140,7 +140,7 @@ A draft note is added to Anki. Per existing note's card, in this order: deleted 
 
 | Card | Anki writes | Flag |
 |---|---|---|
-| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`. Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
+| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`. Deferred: `Back Extra` is the comment in the same `addNote`, whether or not the proposal gave the field, as long as the note type has it (`modelFieldNames`) | — (new notes are unflagged), unless deferred: red on every card |
 | Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |

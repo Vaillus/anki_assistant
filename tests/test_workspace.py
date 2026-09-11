@@ -568,6 +568,39 @@ def test_a_deferred_draft_is_created_flagged_with_its_comment(
     assert snap.flagged == [], "a created note needs no flag restore: rollback deletes it"
 
 
+def test_a_deferred_draft_gets_its_comment_even_when_the_proposal_left_the_field_out(
+    anki: FailingAnki, store: SourceStore
+):
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="create",
+                model="Cloze",
+                fields={"Text": "t"},
+                deck="d",
+                defer=True,
+                comment="à finir",
+            ),
+            CardPlan(
+                wid="w2",
+                action="create",
+                model="Basic",
+                fields={"Front": "f", "Back": "b"},
+                deck="d",
+                defer=True,
+                comment="x",
+            ),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok
+    assert anki.notes[report.created["w1"]]["fields"]["Back Extra"] == "à finir"
+    assert anki.flags_of(report.created["w2"]) == [1]
+    assert report.errors == ["w2 : pas de champ Back Extra, commentaire non écrit"]
+
+
 def test_a_failure_after_a_deferred_draft_deletes_it(anki: FailingAnki, store: SourceStore):
     gone = anki.add("d", flags=(1,))
     anki.fail_on["deleteNotes"] = 1

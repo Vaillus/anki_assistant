@@ -14,7 +14,7 @@ Opening builds the **root** card — the note the workspace was opened on — an
 
 Closing:
 
-- **× or `Esc`** discards everything: cards, versions, conversation. When at least one card is [changed](#the-button), a confirmation says how many changes will be lost. Nothing is written to Anki.
+- **× (top right) or `Esc`** discards everything: cards, versions, conversation. When the user changed something by hand — a version, a state, a flag toggled, a comment — a confirmation says how many cards will lose their changes; the implicit resolution of the root does not count. Nothing is written to Anki either way.
 - **« Valider »** writes the changes ([Validation](#validation)) and then closes.
 
 After closing, the queue and deck counts are re-fetched. After a validation the next flagged note is selected; after a discard the selection stays on the root.
@@ -64,23 +64,30 @@ One line, left to right:
 
 - **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity.
 - **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags.
-- **State badges** — flag per flagged Anki card as in the queue, « supprimée », « gardée », « à revoir », « → deck ».
+- **⚑ flag toggle** — outlined when off; filled, reading « ⚑ à revoir », when on.
+- **State badges** — « supprimée », « gardée », « → deck ».
 - **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
-- **Actions** — « invalider », « supprimer » / « restaurer », « garder » / « ne pas garder », « différer » / « ne pas différer », « déplacer… » (a deck picker).
+- **Actions** — « invalider », « supprimer » / « restaurer », « déplacer… » (a deck picker).
 
-« garder » is offered only on an untouched card (v0, tags unchanged) that is not deferred; « différer » on any card, draft included, that is not deleted or kept. Marking a card deleted or kept drops its deferral, and vice versa.
+The flag toggle is the only control of the flag: clicking it turns the flag on or off and changes nothing else. It is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head any more — the card is drawn as the note will be, resolved — but stay in the reason callout's label (« raison du flag · c2 ») and keep driving the question state of v0.
 
 ### Card body
 
 Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). The original version from Anki (**v0**) is shown in question state: flagged clozes hidden, « Révéler » to show them, as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full.
 
-The reason callout sits at the bottom, under the fields, in every version — it always shows the reason as v0 held it. `Back Extra` is never shown among the fields and is never editable by hand; the only things that write it are the « vider Back Extra » toggle and the comment of a deferred card.
+The reason callout sits at the bottom, under the fields, in every version — it always shows the reason as v0 held it, with the flagged clozes in its label. `Back Extra` is never shown among the fields and is never editable by hand; the only things that write it are the « vider Back Extra » toggle and the comment of a card whose flag is on.
 
-On a **deferred** card the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped). When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
+When the **flag is on** the callout becomes the **comment**: a `<textarea>` labelled « raison du flag · sera écrite », prefilled with the plain text of `Back Extra` as v0 holds it (as the shown version holds it, for a draft), so that the user completes or rewrites the existing reason rather than losing it. What the textarea holds at validation is written to `Back Extra` (plain text; line breaks become `<br>`, markup is escaped) — only if the user changed it, so an untouched `Back Extra` is not rewritten. When the note type has no `Back Extra`, the callout says so (« pas de champ Back Extra : le flag sera posé sans commentaire ») and nothing is written but the flag.
 
 Under a version proposed by Claude, its rationale in one muted line.
 
-A card marked **deleted** will have its note removed from Anki at [validation](#validation); the card is struck through and not editable. A **kept** card has its flag cleared at validation without being edited. A **deferred** (« à revoir ») card is not resolved at validation — an existing note keeps its flag (or receives one when it had none), a draft note is created already flagged — and its `Back Extra` is set to the comment typed on the card, so that it comes back in the queue later with that comment as its reason. Combines with an edit (a partial fix, still flagged) and with a move; exclusive with kept and deleted. A **moved** card carries a destination deck, applied at validation; a card can be both edited and moved.
+A card marked **deleted** will have its note removed from Anki at [validation](#validation); the card is struck through and not editable.
+
+Each card carries a **flag**: whether the note is flagged *after* validation, shown as the ⚑ toggle in the card head. **Off** means resolved: the flag is cleared at validation. **On** (« à revoir ») means the note stays — or becomes — flagged, and its `Back Extra` is set to the comment typed on the card, so that it shows up in the queue later with that comment as its reason; a draft with the flag on is created already flagged. The **root opens with the flag off**: opening a workspace is resolving the note, and the user turns the flag back on to keep it in the queue. A note brought in by Claude opens with its flag as Anki holds it; a draft opens off. The flag combines with an edit (a partial fix, still flagged) and with a move; a deleted card has none. In the plan and the API a card whose flag is on is **deferred** (`defer`).
+
+A **kept** card is an untouched card (v0, tags unchanged), flagged in Anki, whose flag is off: resolved at validation without being edited. Not a gesture of its own — it is what the root is when the user validates without touching anything, the counterpart of « Garder » in the queue.
+
+A **moved** card carries a destination deck, applied at validation; a card can be both edited and moved.
 
 ### Editing
 
@@ -123,13 +130,13 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. 
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). Disabled when no card is **changed** — an existing note's card whose shown version is not v0, or that is marked deleted, kept, deferred or moved; a draft note is always changed — and during the write. When the plan deletes at least one note, a confirmation lists them.
+« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted). A card whose flag is on counts once, as « à revoir », edited or not; a draft with the flag on counts as created and as « à revoir ». Disabled when the plan is empty and during the write. On a freshly opened workspace the plan already holds the root as kept: « Valider · 1 gardée » is the workspace's « Garder ». When the plan deletes at least one note, a confirmation lists them.
 
 ### What is written
 
 The **plan** — the set of writes to perform — is built from the cards.
 
-A draft note is added to Anki. An existing note's card is classified into one action: a card can be deleted, kept and edited at the same time, so **deleted** wins over kept, which wins over edited (shown version ≠ v0), which wins over deferred; an edited card may also be deferred (the `defer` modifier of an `edit`). On top of any action, the card can also carry a **move** to another deck. Cards still on v0 with no state are not in the plan and keep their flag.
+A draft note is added to Anki. Per existing note's card, in this order: deleted → `delete`; edited (shown version ≠ v0, or tags changed) → `edit`, with the `defer` modifier when the flag is on; otherwise, flag on → `defer` when the note is not flagged in Anki, the comment was changed or the card is moved; flag off → `keep` when the note is flagged in Anki or the card is moved. Any other card is not in the plan: a note brought in for a look, flag as Anki holds it, is left alone. `comment` is sent only when the user changed it.
 
 | Card | Anki writes | Flag |
 |---|---|---|

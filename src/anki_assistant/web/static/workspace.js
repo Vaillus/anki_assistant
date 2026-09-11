@@ -685,7 +685,8 @@ async function validateWorkspace() {
     report = await API.wsApply(plan);
   } catch (e) {
     ws.applying = false;
-    ws.report = { ok: false, errors: [e.message], rolled_back: false, created: {} };
+    // A refused plan (422) or a transport error: the server wrote nothing.
+    ws.report = { ok: false, errors: [e.message], rolled_back: false, nothing_written: true, created: {} };
     draw();
     return;
   }
@@ -864,7 +865,11 @@ function wsReportHtml() {
   return (
     '<div class="banner"><div class="grow">' +
     "<b>Validation échouée.</b> " +
-    (r.rolled_back ? "Tout a été remis en place." : "Certaines écritures n'ont pas pu être annulées.") +
+    (r.nothing_written
+      ? "Rien n'a été écrit."
+      : r.rolled_back
+        ? "Tout a été remis en place."
+        : "Certaines écritures n'ont pas pu être annulées.") +
     (r.errors || []).map((x) => "<br>" + esc(x)).join("") +
     '</div><button class="ghost" data-act="ws-dismiss-report">×</button></div>'
   );

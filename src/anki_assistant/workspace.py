@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient
+from anki_assistant.client import AnkiClient, AnkiConnectError
 from anki_assistant.models import strip_html
 from anki_assistant.review import REASON_FIELD, NoteNotFound
 from anki_assistant.sources import SourceStore
@@ -43,6 +43,7 @@ __all__ = [
     "Snapshot",
     "anchors_after_move",
     "apply",
+    "check_fields",
     "comment_html",
     "take_snapshot",
     "undo",
@@ -240,6 +241,54 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
     return snap
 
 
+def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> None:
+    """Fit the field names of every created or edited note to its note type, before any write.
+
+    A name that differs only by case is corrected in place to the type's spelling. An unknown
+    name, or an empty first field on a note to create (Anki refuses it as an empty note), raises
+    `PlanError` naming the card, the field and the type's fields. Proposals are the usual
+    source: Claude may spell a field from memory instead of reading the type.
+    """
+    targets: dict[str, str] = {}
+    for card in plan.cards:
+        if card.action == "create":
+            targets[card.wid] = str(card.model)
+        elif card.action == "edit":
+            targets[card.wid] = card.model or snap.notes[int(card.note_id or 0)].model
+    if not targets:
+        return
+    fields_of: dict[str, list[str]] = {}
+    errors: list[str] = []
+    for model in sorted(set(targets.values())):
+        try:
+            fields_of[model] = list(client.model_field_names(model))
+        except AnkiConnectError as exc:
+            errors.append(f"type de note « {model} » : {exc}")
+    for card in plan.cards:
+        model = targets.get(card.wid)
+        if model is None or model not in fields_of:
+            continue
+        names = fields_of[model]
+        by_lower = {name.lower(): name for name in names}
+        fixed: dict[str, str] = {}
+        for name, value in (card.fields or {}).items():
+            real = name if name in names else by_lower.get(name.lower())
+            if real is None:
+                errors.append(
+                    f"{card.wid} : champ « {name} » inconnu du type {model}"
+                    f" (champs : {', '.join(names)})"
+                )
+                continue
+            fixed[real] = value
+        if card.action == "create" and names and not strip_html(fixed.get(names[0], "")).strip():
+            errors.append(
+                f"{card.wid} : le premier champ ({names[0]}) est vide, Anki refuse la note"
+            )
+        card.fields = fixed
+    if errors:
+        raise PlanError(" ; ".join(errors))
+
+
 # --------------------------------------------------------------------------- apply
 
 
@@ -277,11 +326,13 @@ def _comment_for(card: CardPlan, snap: NoteSnap, report: ApplyReport) -> str | N
 
 def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[ApplyReport, Snapshot]:
     """Write the plan in the safe order; on failure roll back and report. Never raises past
-    validation and the snapshot (a malformed plan -> PlanError, an unknown note -> NoteNotFound)."""
+    validation, the snapshot and the field check (a malformed plan or an unknown field ->
+    PlanError, an unknown note -> NoteNotFound)."""
     errors = validate(plan)
     if errors:
         raise PlanError(" ; ".join(errors))
     snap = take_snapshot(client, plan)
+    check_fields(client, plan, snap)
     report = ApplyReport()
 
     creates = [c for c in plan.cards if c.action == "create"]

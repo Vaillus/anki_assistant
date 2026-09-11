@@ -133,7 +133,7 @@ The **plan** is built from the cards. Per existing note's card, in this order: d
 AnkiConnect has no transactions, so all-or-nothing is emulated. `workspace.apply` proceeds:
 
 1. **Validate** the plan's shape (unknown action, a create without fields, a note listed twice…) before touching Anki.
-2. **Snapshot** every existing note of the plan in one read: raw fields, tags, deck, model, card ids, flagged card ids.
+2. **Snapshot** every existing note of the plan in one read: raw fields, tags, deck, model, card ids, flagged card ids. Then **check the field names** of every created or edited note against its note type (`modelFieldNames`): a name that differs only by case is corrected to the type's spelling; an unknown name, or an empty first field on a created note (which Anki would refuse as an empty note), is refused with a message naming the card, the field and the type's fields — nothing is written. Proposals are the usual source: Claude may spell a field from memory instead of reading the type.
 3. **Create** the draft notes (`review.create`, then anchors). A fragment inherits the parent's anchors; a created note gets the plan's `source_ids`. A deferred draft is flagged (red, every card) right after its creation; a rollback deletes it like any created note.
 4. **Edit** (`review.edit` with `unflag=False`), `Back Extra` emptied when the toggle says so, or set to the comment when the card is deferred. A deferred card that is not edited gets its comment written by its own `updateNote` here.
 5. **Move** (`changeDeck`, anchors re-checked).
@@ -161,7 +161,7 @@ All under `/api`. Errors follow [review.md § API](./review.md#api) (502 AnkiCon
 | Method & path | Body | Returns |
 |---|---|---|
 | `POST /api/notes/lookup` | `{ note_ids: [int] }` | `Note[]` (same shape as `GET /api/notes/{id}`; unknown ids dropped, order kept) |
-| `POST /api/workspace/apply` | `ApplyPlan` (below) | `ApplyReport` (below); `200` whether or not every write succeeded — `ok` says |
+| `POST /api/workspace/apply` | `ApplyPlan` (below) | `ApplyReport` (below); `200` whether or not every write succeeded — `ok` says; `422` when the plan is malformed or a field name is unknown to its note type (nothing written) |
 | `POST /api/workspace/undo` | — | `ApplyReport`; `409` when there is nothing to undo, when the last validation deleted notes, or when a note was modified since |
 | `GET /api/workspace/undo` | — | `{ available: bool }` — whether the button should be shown |
 

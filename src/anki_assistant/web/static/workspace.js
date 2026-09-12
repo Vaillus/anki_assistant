@@ -579,6 +579,24 @@ async function applySourceProposal(mi, pi) {
   }
 }
 
+/* The « + corpus » button on a cited source under a reply (specs/sources.md). */
+async function addCitedSource(el) {
+  if (!S.ws || S.busy) return;
+  const url = el.getAttribute("data-url");
+  if (!url) return;
+  S.busy = true;
+  draw();
+  try {
+    await API.addSource(S.ws.deck, { target: url, kind: "web" });
+    S.busy = false;
+    await loadCorpus();
+  } catch (e) {
+    S.error = e.message;
+    S.busy = false;
+    draw();
+  }
+}
+
 /* A source proposal that anchored notes changed their anchors server-side: re-fetch them. */
 function refreshAnchorsOf(noteIds) {
   noteIds.forEach((id) => {
@@ -733,6 +751,7 @@ function wsClick(act, el, e) {
   if (act === "ws-revert-src") {
     return revertSourceProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
   }
+  if (act === "ws-add-cited") return addCitedSource(el);
   if (act === "attach-src") return attachSource(el.getAttribute("data-src"));
   if (act === "detach-src") return detachSource(el.getAttribute("data-src"));
   if (act === "ws-dismiss-report") {
@@ -1135,6 +1154,8 @@ function bodyHtml(m) {
 function sourcesHtml(m) {
   const sources = m.sources || [];
   if (!sources.length) return "";
+  const corpus = ((S.corpus || {}).sources) || [];
+  const corpusUrls = new Set(corpus.filter((s) => s.kind === "web").map((s) => s.target));
   const items = sources.map((s) => {
     let host = "";
     try {
@@ -1142,10 +1163,22 @@ function sourcesHtml(m) {
     } catch (e) {
       host = "";
     }
+    const inCorpus = corpusUrls.has(s.url);
+    const addBtn =
+      s.url && !inCorpus
+        ? ' <button class="ghost small add-to-corpus" data-act="ws-add-cited" data-url="' +
+          esc(s.url) +
+          '" data-title="' +
+          esc(s.title || "") +
+          '">+ corpus</button>'
+        : inCorpus
+          ? ' <span class="muted small">dans le corpus</span>'
+          : "";
     return (
       '<li><span class="n">[' + s.n + "]</span> " +
       '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.title || s.url) + "</a>" +
       (s.title && host ? ' <span class="host">' + esc(host) + "</span>" : "") +
+      addBtn +
       "</li>"
     );
   });

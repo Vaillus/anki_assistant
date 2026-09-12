@@ -353,6 +353,8 @@ a { color: var(--accent); }
 .sources li { margin: 2px 0; }
 .sources .n { font-family: var(--mono); color: var(--muted); }
 .sources .host { color: var(--muted); }
+.sources .add-to-corpus { margin-left: 4px; padding: 0 5px; font-size: 11px; color: var(--webink); border-color: var(--webink); }
+.sources .add-to-corpus:hover { background: var(--webbg); }
 /* ---------- chat: source chips and source proposals (specs/chat.md) ---------- */
 
 .chip.src { background: var(--obsidianbg); color: var(--obsidianink); }

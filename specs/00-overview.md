@@ -4,7 +4,7 @@
 
 ## What the app does
 
-A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged [notes](./notes.md), the deck's [sources](./sources.md) (Obsidian notes, PDFs) side by side, and, once a note is opened in the [workspace](./workspace.md), a [conversation with Claude](./chat.md) that reads the deck's notes and sources on demand and proposes edits, splits and creations that land on the workspace as versions and cards. Everything is written into Anki through AnkiConnect, in one validation per workspace.
+A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged [notes](./notes.md), the deck's [sources](./sources.md) (Obsidian notes, PDFs, web pages) side by side, and, once a note is opened in the [workspace](./workspace.md), a [conversation with Claude](./chat.md) that reads the deck's notes and sources on demand and proposes edits, splits and creations that land on the workspace as versions and cards. Everything is written into Anki through AnkiConnect, in one validation per workspace.
 
 The user flags a card during an Anki review when something is wrong with it (too vague, wrong deck, should be split, needs a sibling card…). The reason is often typed into the note's `Back Extra` field ([notes.md § Reason](./notes.md#reason-back-extra)). This app is where those flags get resolved.
 
@@ -28,6 +28,7 @@ graph LR
     API --> Sources["SourceStore (sources.py) · sources.json"]
     Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
     Sources --> PDF["PDF files · pypdf"]
+    Sources -- fetch --> Web["Web pages · httpx"]
     API --> Chat["chat.py · Anthropic API"]
 ```
 

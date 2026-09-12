@@ -70,6 +70,8 @@ class CardIn(BaseModel):
     anchor_ids: list[str] = Field(default_factory=list)
     deleted: bool = False
     keep: bool = False
+    defer: bool = False
+    comment: str = ""
     move_to: str | None = None
     parent_wid: str | None = None
 

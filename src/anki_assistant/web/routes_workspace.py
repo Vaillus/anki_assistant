@@ -21,7 +21,7 @@ router = APIRouter()
 
 class CardIn(BaseModel):
     wid: str
-    action: Literal["edit", "create", "delete", "keep"]
+    action: Literal["edit", "create", "delete", "keep", "defer"]
     note_id: int | None = None
     fields: dict[str, str] | None = None
     tags: list[str] | None = None
@@ -30,6 +30,8 @@ class CardIn(BaseModel):
     source_ids: list[str] | None = None
     move_to: str | None = None
     parent_wid: str | None = None
+    defer: bool = False
+    comment: str | None = None
 
 
 class PlanIn(BaseModel):

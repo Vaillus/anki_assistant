@@ -34,7 +34,7 @@ The server keeps nothing between requests. On every **turn** — one user messag
 
 3. **Attached sources** — the full text of each source the user has attached (see [How source text enters context](#how-source-text-enters-context) below): its header and the output of `Source.text()`, truncation warning included. An **attached source** stays in the prompt on every turn until the user removes it or the workspace closes. Total attached text is capped at 150 000 characters (sources included in order, the last one truncated); the cap is stated in the prompt.
 
-4. **Cards of the workspace** — every card, the root first, then in workspace order. For each card: its **workspace id** (`w1`), its `note_id` when it exists in Anki or « brouillon, pas encore dans Anki » otherwise, whether it is **active** or **inactive**, its states (« supprimée », « gardée », « → deck »), its parent when it is a fragment, the deck, the **note type** (Anki's schema for a note — its fields, card templates and CSS; `model` in Anki's API, but "note type" throughout this spec so that "model" only ever means the LLM), tags, the flagged cards as cloze labels (« c2 »), the reason, the anchors (source ids and targets) if any, and the **raw field values of the shown version** (each field as stored: HTML with the `{{c1::…}}` markers intact). When the shown version is not v0, the v0 fields follow under « version d'origine (Anki) », so that Claude sees what has already changed — hand edits included. Intermediate versions are not sent. Claude must produce fields in the same raw syntax.
+4. **Cards of the workspace** — every card, the root first, then in workspace order. For each card: its **workspace id** (`w1`), its `note_id` when it exists in Anki or « brouillon, pas encore dans Anki » otherwise, whether it is **active** or **inactive**, its states (« supprimée », « gardée », « à revoir » with its comment, « → deck »), its parent when it is a fragment, the deck, the **note type** (Anki's schema for a note — its fields, card templates and CSS; `model` in Anki's API, but "note type" throughout this spec so that "model" only ever means the LLM), tags, the flagged cards as cloze labels (« c2 »), the reason, the anchors (source ids and targets) if any, and the **raw field values of the shown version** (each field as stored: HTML with the `{{c1::…}}` markers intact). When the shown version is not v0, the v0 fields follow under « version d'origine (Anki) », so that Claude sees what has already changed — hand edits included. Intermediate versions are not sent. Claude must produce fields in the same raw syntax.
 
 ### Prompt caching
 
@@ -144,11 +144,11 @@ System prompt layout and the `cache_control: ephemeral` placement: see [Prompt c
       "tags": ["phd"], "flagged_clozes": [2], "reason": "For a given sensor ?", "anchor_ids": ["r9wt4n"],
       "fields": { "Text": "<raw, shown version>", "Back Extra": "<raw>" },
       "original_fields": { "Text": "<raw, v0>", "Back Extra": "<raw>" },
-      "deleted": false, "keep": false, "move_to": null, "parent_wid": null },
+      "deleted": false, "keep": false, "defer": false, "comment": "", "move_to": null, "parent_wid": null },
     { "wid": "w2", "note_id": null, "active": true, "deck": "courant::00-Thèse", "model": "Cloze",
       "tags": ["phd"], "flagged_clozes": [], "reason": "", "anchor_ids": ["r9wt4n"],
       "fields": { "Text": "<raw>", "Back Extra": "" }, "original_fields": null,
-      "deleted": false, "keep": false, "move_to": null, "parent_wid": "w1" } ],
+      "deleted": false, "keep": false, "defer": false, "comment": "", "move_to": null, "parent_wid": "w1" } ],
   "messages": [ { "role": "user", "content": "Cette carte est trop vague, tu proposes quoi ?" } ] }
 ```
 

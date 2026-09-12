@@ -229,6 +229,23 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
     assert context.index("Carte w1") < context.index("Carte w2")
 
 
+def test_card_context_says_when_a_card_is_deferred_and_with_which_comment() -> None:
+    cards = [
+        card(defer=True, comment="  trop vague, voir le cours  "),
+        card(wid="w2", note_id=NOTE_ID + 1, defer=True),
+        card(wid="w3", note_id=NOTE_ID + 2),
+        card(wid="w4", note_id=None, defer=True, comment="brouillon à finir"),
+    ]
+    context = chat.build_system("d", [], [], cards)[3]["text"]
+    assert "(sera créée flaguée, commentaire prévu : « brouillon à finir »)" in context
+    assert (
+        "marquée à revoir plus tard "
+        "(le flag reste, commentaire prévu : « trop vague, voir le cours »)"
+    ) in context
+    assert "marquée à revoir plus tard (le flag reste)" in context
+    assert context.count("à revoir plus tard") == 3
+
+
 def test_standing_instructions_say_only_what_the_spec_lists() -> None:
     text = chat.build_system("d", [], [], [])[0]["text"]
     for needle in ("français", "propose_create_source", "propose_edit_source", "cloze", "actives"):

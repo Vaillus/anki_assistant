@@ -4,7 +4,9 @@
 
 ## Purpose
 
-When reviewing a flagged note the user wants the original material within reach, and Claude needs it in context to verify or rewrite. A deck therefore points to a **corpus**: an ordered list of sources.
+When reviewing a flagged note the user wants the original material within reach, and Claude needs it in context to verify or rewrite. A deck therefore points to a **corpus**: an ordered list of sources — Obsidian notes, PDFs, and **web pages**, since the material a deck was made from is as often a Wikipedia article or a set of online lecture notes as a file on disk.
+
+The corpus is not closed: a source is added from the Source tab's form, or proposed by Claude in the conversation once it has found a page worth keeping ([chat.md § Proposal tools](./chat.md#proposal-tools)).
 
 A corpus can be large (ten notes for a big deck). A single note usually comes from one or two of them. **Anchors** record which ones, so that the Source tab opens on the right documents and the chat can load those alone instead of the whole corpus (see [chat.md](./chat.md#context)).
 
@@ -21,7 +23,8 @@ A corpus can be large (ten notes for a big deck). A single note usually comes fr
       { "id": "m3x8pa", "kind": "pdf", "target": "~/Documents/these/stone_search.pdf", "pages": "12-19", "note": "chap. 2" }
     ],
     "courant::04-maths::dérivés": [
-      { "id": "r9wt4n", "kind": "obsidian", "target": "maths/différentiabilité" }
+      { "id": "r9wt4n", "kind": "obsidian", "target": "maths/différentiabilité" },
+      { "id": "w5hc2e", "kind": "web", "target": "https://en.wikipedia.org/wiki/Differentiable_function" }
     ]
   },
   "anchors": {
@@ -34,9 +37,9 @@ A corpus can be large (ten notes for a big deck). A single note usually comes fr
 ### Source entry
 
 - `id` — 6 lowercase base32 characters, generated when the entry is created, never changed. **The id is the identity of a source**: anchors point to it, and renaming a vault note or moving a PDF (editing `target`) keeps the anchors intact.
-- `kind` — `"obsidian"` or `"pdf"`.
-- `target` — note name relative to the vault root, with or without `.md` (obsidian), or a filesystem path, `~` allowed (pdf).
-- `pages` — optional, pdf only. `"12-19"`, `"7"`, `"3-5,9"`. 1-based, inclusive. Absent = whole document.
+- `kind` — `"obsidian"`, `"pdf"` or `"web"`. Auto-detected from the target when not given: an `http://` or `https://` URL is `web`, a target ending in `.pdf` is `pdf`, anything else is `obsidian`.
+- `target` — note name relative to the vault root, with or without `.md` (obsidian), a filesystem path, `~` allowed (pdf), or an absolute `http(s)` URL (web — anything else is refused).
+- `pages` — optional, pdf only (refused on another kind). `"12-19"`, `"7"`, `"3-5,9"`. 1-based, inclusive. Absent = whole document.
 - `note` — optional free text shown next to the source.
 - **Backward compatibility:** a deck value that is a single object (the 0.1 format) is read as a one-element list; an entry without `id` gets one on load. Both are rewritten on next save.
 
@@ -64,6 +67,9 @@ Lifecycle rules (enforced by `workspace.apply` at validation, see [workspace.md]
 |---|---|---|---|
 | obsidian | `<vault>/<target>.md` is a file | `obsidian://open?vault=<name>&file=<target>` (percent-encoded, `%20` for spaces, never `+`) | file content |
 | pdf | path is a file | `file://` URI | `pypdf` text of the selected pages, pages joined with `\n\n--- page N ---\n\n` |
+| web | always true — a URL is not checked without a request; a page that cannot be fetched reports it through `SourceText.warning` instead | the URL itself | the page fetched by the server and reduced to text (below) |
+
+A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when it is needed and cached in memory. A page whose content the user wants to keep as it is today is a `propose_create_source` (a note in the vault), not a web source.
 
 ## Text extraction
 
@@ -80,6 +86,7 @@ class SourceText:
 
 - Obsidian: read the file; strip YAML front matter (`---` block at the top); keep the Markdown as is.
 - PDF: open with `pypdf`, extract the pages in `pages` (or all). Cache the extraction in memory keyed by `(path, mtime, pages)` — PDFs are slow to parse and the same corpus is requested on every note.
+- Web: `GET` the URL with `httpx` (redirects followed, `WEB_TIMEOUT` = 15 s, a browser-like `User-Agent` since some sites refuse the default one). An HTML body goes through `html_to_text`: `script`, `style`, `noscript`, `svg`, the head and the site chrome (`nav`, `footer`, `aside`) are dropped; when the page wraps its content in `<main>` or `<article>`, only that part is kept; block elements become line breaks, headings keep their level as `#` marks, list items get a `- `, whitespace is folded. The page `<title>` is the first line. No readability heuristics beyond that: a page that hides its content behind scripts comes back thin, and the Source tab shows what Claude would get. A `text/plain` body is kept as is; any other content type gives an empty text and the warning « contenu non textuel (`<content-type>`) ». A failed request (network error, HTTP status ≥ 400) gives an empty text and the warning « page inaccessible : … ». The text of a fetched page is cached in memory by URL for the life of the server; a failure is cached for `WEB_RETRY_SECONDS` = 60 s so that an offline session does not wait for a timeout on every corpus load.
 - Truncate to `max_chars` with `truncated=True`. A whole PDF without `pages` gets the warning above so the user learns to set a range.
 
 ## Writing to the vault
@@ -93,10 +100,11 @@ The vault is the user's own notes; these two constraints are the whole safety st
 
 ## UI — Source tab (column 3)
 
-- Header per source: kind chip (`obsidian` violet, `pdf` red), target, `pages`/`note` in muted text, « héritée de … » when inherited, ⚠ when the file is missing, an « ouvrir ↗ » link to `uri`, and « ancrée à cette note » in accent colour on each source the selected note is anchored to. **Anchored sources are listed first, in anchor order, and expanded; the others are collapsed** to their header.
+- Header per source: kind chip (`obsidian` violet, `pdf` red, `web` blue), target, `pages`/`note` in muted text, « héritée de … » when inherited, ⚠ when the file is missing, an « ouvrir ↗ » link to `uri` (a new tab for a web source), and « ancrée à cette note » in accent colour on each source the selected note is anchored to. **Anchored sources are listed first, in anchor order, and expanded; the others are collapsed** to their header.
 - Below: the extracted text in a scrollable monospace block (first 4 000 chars, « afficher plus » expands to the full `text`).
 - Anchor control: on the selected note in column 2, one chip per anchor « ⚓ différentiabilité » (× removes it) and a « ⚓ ancrer… » chip opening a menu of the effective corpus sources not yet anchored. A dangling anchor shows as « ⚓ source hors corpus ».
-- Footer: « + ajouter une source » → a small form: kind (auto-detected from the target: ends with `.pdf` → pdf, else obsidian), target with autocompletion over vault notes (`/api/vault/notes?q=`), pages, note. Saving writes to `sources.json` on the **selected deck** (not the ancestor), so adding a source to a sub-deck stops inheritance for that sub-deck — the form says so when the current corpus is inherited, with a « copier les sources héritées d'abord » checkbox (on by default).
+- Footer: « + ajouter une source » → a small form: target (a vault note with autocompletion over `/api/vault/notes?q=`, a PDF path, or a URL), kind (auto-detected from the target as in [Source entry](#source-entry), overridable), pages (pdf only, the field is hidden otherwise), note. Saving writes to `sources.json` on the **selected deck** (not the ancestor), so adding a source to a sub-deck stops inheritance for that sub-deck — the form says so when the current corpus is inherited, with a « copier les sources héritées d'abord » checkbox (on by default).
+- The conversation is the other way in: Claude's `propose_add_source` ([chat.md § Proposal tools](./chat.md#proposal-tools)) is an inline card with « Appliquer » that calls `POST /api/sources`; the source lands on the selected deck under the same materialisation rule, inherited entries always copied first.
 - Each source row has « retirer ». On an inherited corpus, « retirer » writes the remaining entries onto the selected deck (same rule as adding: the corpus is materialised and inheritance stops). Removing the last own entry deletes the deck entry and inheritance resumes. When the source has anchors, the confirm says how many and that they will be removed.
 - Footer, right: « n notes ancrées disparues · nettoyer » when `GET /api/sources/anchors/orphans` returns a non-empty list for the collection; hidden otherwise. Clicking calls `prune` and refreshes.
 
@@ -107,6 +115,7 @@ The vault is the user's own notes; these two constraints are the whole safety st
 | `GET /api/sources` | — | the whole `decks` mapping, lists only |
 | `GET /api/sources/corpus?deck=&note_id=` | — | `{ deck, inherited_from: str \| null, anchored: [source_id], sources: SourceView[] }` — `anchored` lists the note's anchors in order (`[]` without `note_id`) |
 | `PUT /api/sources?deck=` | `SourceEntry[]` (validated; empty list = delete entry; entries without `id` get one; anchors to ids no longer present are removed) | `{ deck, sources, removed_anchors: int }` |
+| `POST /api/sources?deck=` | `{ target, kind?, pages?, note?, anchor_note_ids?, id? }` — one entry **appended** to the deck's own corpus (an inherited corpus is materialised first, ids kept); `kind` defaults to the auto-detection; `anchor_note_ids` and `id` as on `POST /api/sources/notes` | `{ deck, source: SourceView }`; 400 on an invalid target (a web target that is not an `http(s)` URL, pages on a non-pdf) |
 | `GET /api/vault/notes?q=` | — | `string[]`, up to 50 note names containing `q` case-insensitively, `.md` stripped, sorted |
 | `GET /api/sources/anchors?note_id=` | — | `{ note_id, anchors: [{ source_id, status: "valid" \| "dangling" }] }` |
 | `PUT /api/sources/anchors?note_id=` | `{ source_ids: [str] }` (full list, order kept; `[]` clears) | same as GET; 404 if a source id is unknown |
@@ -124,7 +133,7 @@ The vault is the user's own notes; these two constraints are the whole safety st
 
 The deck goes in the query string, not the path: deck names contain `::` and spaces. Source ids are path-safe, so they go in the path.
 
-`text` in `corpus` is the full extracted text (already capped by `max_chars`); the frontend does its own 4 000-char fold. `chat.py` calls `SourceStore.corpus(deck)` + `Source.text()` directly, not the HTTP API.
+`text` in `corpus` is the full extracted text (already capped by `max_chars`); the frontend does its own 4 000-char fold. `chat.py` calls `SourceStore.corpus(deck)` + `Source.text()` directly, not the HTTP API. For a web source `exists` is always true and `uri` is the URL; a page that could not be fetched has an empty `text` and the reason in `warning`.
 
 ## Module `sources.py`
 
@@ -139,8 +148,11 @@ SourceStore.anchors_to(source_id) -> list[int]
 SourceStore.anchored_note_ids() -> list[int]
 SourceStore.remove_anchors(note_ids) -> int
 SourceStore.by_id(source_id) -> Source | None
+SourceStore.add_source(deck, source) -> Source              # append to the own corpus, materialising first
 SourceStore.create_note(deck, name, content) -> Source     # FileExistsError if present
-SourceStore.replace_in_note(source_id, old, new) -> None   # ValueError: 0 or 2+ matches, or pdf
+SourceStore.replace_in_note(source_id, old, new) -> None   # ValueError: 0 or 2+ matches, or not obsidian
+detect_kind(target) -> Kind                                # "web" | "pdf" | "obsidian"
+html_to_text(html) -> str                                  # the reduction described in Text extraction
 ```
 
-`set_corpus(deck, entries)` assigns ids to new entries and drops anchors whose source id disappears from that deck's list (returns the count through the route). The CLI `anki source …` keeps working on the first entry and gains `anki source anchor NOTE_ID SOURCE_ID…` (sets the full list).
+`set_corpus(deck, entries)` assigns ids to new entries and drops anchors whose source id disappears from that deck's list (returns the count through the route). `add_source` is what `POST /api/sources` and `create_note` share: materialise an inherited corpus on the deck (ids kept, so anchors survive), append, save. `Source.from_dict` refuses a web target that is not an `http(s)` URL and `pages` on a non-pdf entry. The CLI `anki source …` keeps working on the first entry and gains `anki source anchor NOTE_ID SOURCE_ID…` (sets the full list); `anki source set` accepts a URL and `--kind web`.

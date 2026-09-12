@@ -191,8 +191,8 @@ async function saveNewSource() {
   }
   const inherited = !!(S.corpus && S.corpus.inherited_from);
   const base = !inherited || f.copyInherited !== false ? currentEntries() : [];
-  const entry = { kind: f.kind === "pdf" ? "pdf" : "obsidian", target };
-  if (String(f.pages || "").trim()) entry.pages = String(f.pages).trim();
+  const entry = { kind: SOURCE_KINDS.indexOf(f.kind) >= 0 ? f.kind : detectKind(target), target };
+  if (entry.kind === "pdf" && String(f.pages || "").trim()) entry.pages = String(f.pages).trim();
   if (String(f.note || "").trim()) entry.note = String(f.note).trim();
   f.saving = true;
   f.error = "";
@@ -302,13 +302,21 @@ document.addEventListener("input", (e) => {
   if (!S.srcForm) return;
   if (key === "src-target") {
     S.srcForm.target = el.value;
-    // kind auto-detected from the target: ends with .pdf → pdf, else obsidian
-    S.srcForm.kind = /\.pdf\s*$/i.test(el.value) ? "pdf" : "obsidian";
+    // kind auto-detected from the target (specs/sources.md#source-entry)
+    const kind = detectKind(el.value);
+    const changed = kind !== S.srcForm.kind;
+    S.srcForm.kind = kind;
     const sel = document.querySelector('[data-input="src-kind"]');
-    if (sel) sel.value = S.srcForm.kind;
-    if (S.srcForm.kind === "obsidian") lookupVaultNotes(el.value.trim());
+    if (sel) sel.value = kind;
+    if (changed) {
+      // the pages field only exists for a pdf: redraw, keeping the caret in the target
+      S.refocus = "src-target";
+      draw();
+    }
+    if (kind === "obsidian") lookupVaultNotes(el.value.trim());
   } else if (key === "src-kind") {
     S.srcForm.kind = el.value;
+    draw();
   } else if (key === "src-pages") {
     S.srcForm.pages = el.value;
   } else if (key === "src-note") {

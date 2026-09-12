@@ -242,6 +242,14 @@ async function lookupNotes(ids) {
   return (await API.lookup(missing)) || [];
 }
 
+/* Proposals that write into sources.json or the vault on click, not at validation. They stay
+   in the log as cards with « Appliquer » (specs/chat.md#proposal-tools). */
+const SOURCE_PROPOSALS = ["add_source", "create_source", "edit_source"];
+
+function isSourceProposal(kind) {
+  return SOURCE_PROPOSALS.indexOf(kind) >= 0;
+}
+
 /* One proposal event → a version, fragment cards, a draft card or a badge. Returns the
    pointer text shown in the log. Source proposals are not handled here (they stay inline). */
 async function landProposal(input, kind) {
@@ -345,7 +353,7 @@ function historyForServer() {
     (m.added || []).forEach((a) => bits.push("[ajout: " + a.count + " notes]"));
     (m.proposals || []).forEach((p) => {
       if (p.landed) bits.push("[proposition: " + p.kind + " " + p.landed + "]");
-      else if (p.kind === "create_source" || p.kind === "edit_source") {
+      else if (isSourceProposal(p.kind)) {
         bits.push("[proposition: " + p.kind + (p.applied ? " (appliquée)" : "") + "]");
       }
     });
@@ -475,12 +483,13 @@ async function sendChat() {
           input: d.input || {},
           sourceId: d.source_id || null,
           name: (d.input || {}).name || "",
+          target: (d.input || {}).target || "",
           applied: false,
           landed: "",
           error: "",
         };
         reply.proposals.push(p);
-        if (p.kind !== "create_source" && p.kind !== "edit_source") {
+        if (!isSourceProposal(p.kind)) {
           later(async () => {
             if (S.ws !== ws) return;
             try {
@@ -531,7 +540,20 @@ async function applySourceProposal(mi, pi) {
   S.busy = true;
   draw();
   try {
-    if (p.kind === "create_source") {
+    if (p.kind === "add_source") {
+      const target = String(p.target != null ? p.target : input.target || "").trim();
+      if (!target) throw new Error("indique une cible");
+      const entry = {
+        target,
+        kind: SOURCE_KINDS.indexOf(input.kind) >= 0 ? input.kind : detectKind(target),
+        anchor_note_ids: input.anchor_note_ids || [],
+        id: p.sourceId || "",
+      };
+      if (entry.kind === "pdf" && input.pages) entry.pages = String(input.pages);
+      if (input.note) entry.note = String(input.note);
+      await API.addSource(S.ws.deck, entry);
+      refreshAnchorsOf(input.anchor_note_ids || []);
+    } else if (p.kind === "create_source") {
       const name = String(p.name != null ? p.name : input.name || "").trim();
       if (!name) throw new Error("indique un nom de note");
       await API.createSourceNote({
@@ -541,13 +563,7 @@ async function applySourceProposal(mi, pi) {
         anchor_note_ids: input.anchor_note_ids || [],
         id: p.sourceId || null,
       });
-      (input.anchor_note_ids || []).forEach((id) => {
-        const c = wsCardByNote(id);
-        if (c) {
-          c.anchors = null;
-          loadCardAnchors(c);
-        }
-      });
+      refreshAnchorsOf(input.anchor_note_ids || []);
     } else if (p.kind === "edit_source") {
       await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
     } else {
@@ -561,6 +577,17 @@ async function applySourceProposal(mi, pi) {
     S.busy = false;
     draw();
   }
+}
+
+/* A source proposal that anchored notes changed their anchors server-side: re-fetch them. */
+function refreshAnchorsOf(noteIds) {
+  noteIds.forEach((id) => {
+    const c = wsCardByNote(id);
+    if (c) {
+      c.anchors = null;
+      loadCardAnchors(c);
+    }
+  });
 }
 
 async function revertSourceProposal(mi, pi) {
@@ -630,7 +657,9 @@ async function validateWorkspace() {
     if (!ok) return;
   }
   const unapplied = ws.chat.some((m) =>
-    (m.proposals || []).some((p) => p.kind === "create_source" && !p.applied),
+    (m.proposals || []).some(
+      (p) => (p.kind === "add_source" || p.kind === "create_source") && !p.applied,
+    ),
   );
   if (unapplied) {
     const ok = window.confirm(
@@ -749,10 +778,10 @@ function wsInput(key, el) {
       card.moveTo = el.value || null;
       draw();
     }
-  } else if (key === "psrc-name") {
+  } else if (key === "psrc-name" || key === "psrc-target") {
     const msg = ws.chat[Number(el.getAttribute("data-mi"))];
     const p = msg && msg.proposals && msg.proposals[Number(el.getAttribute("data-pi"))];
-    if (p) p.name = el.value;
+    if (p) p[key === "psrc-name" ? "name" : "target"] = el.value;
   }
 }
 
@@ -1153,7 +1182,7 @@ function msgHtml(m, mi) {
 /* Card proposals are one pointer line; source proposals keep their inline card. */
 function proposalHtml(p, mi, pi) {
   const input = p.input || {};
-  if (p.kind !== "create_source" && p.kind !== "edit_source") {
+  if (!isSourceProposal(p.kind)) {
     return (
       '<div class="ws-pointer">' +
       (p.error ? "proposition " + esc(p.kind) + " refusée : " + esc(p.error) : p.landed ? esc(p.kind) + " " + p.landed : esc(p.kind) + " …") +
@@ -1161,7 +1190,28 @@ function proposalHtml(p, mi, pi) {
     );
   }
   let diff = "";
-  if (p.kind === "create_source") {
+  if (p.kind === "add_source") {
+    const target = p.target != null ? p.target : input.target || "";
+    const kind = SOURCE_KINDS.indexOf(input.kind) >= 0 ? input.kind : detectKind(target);
+    const anchors = input.anchor_note_ids || [];
+    const meta = [];
+    if (kind === "pdf" && input.pages) meta.push("pages " + esc(input.pages));
+    if (input.note) meta.push(esc(input.note));
+    diff =
+      '<div class="muted small"><span class="kind ' + esc(kind) + '">' + esc(kind) + "</span> " +
+      (kind === "web" ? "page web" : kind === "pdf" ? "PDF" : "note du vault") +
+      " à ajouter au corpus de " + esc(S.ws.deck) +
+      (meta.length ? " · " + meta.join(" · ") : "") + "</div>" +
+      '<input class="mono src-name" data-input="psrc-target" data-mi="' + mi + '" data-pi="' + pi + '" value="' +
+      esc(target) +
+      '" placeholder="https://… · note du vault · ~/doc.pdf"' +
+      (p.applied ? " disabled" : "") +
+      ">" +
+      (kind === "web" && target
+        ? '<div class="small"><a href="' + esc(target) + '" target="_blank" rel="noopener">ouvrir ↗</a></div>'
+        : "") +
+      (anchors.length ? '<div class="muted small">ancre : ' + anchors.map(short).join(" ") + "</div>" : "");
+  } else if (p.kind === "create_source") {
     const anchors = input.anchor_note_ids || [];
     diff =
       '<div class="muted small">note Obsidian à créer dans le vault, ajoutée au corpus de ' + esc(S.ws.deck) + "</div>" +
@@ -1186,7 +1236,9 @@ function proposalHtml(p, mi, pi) {
     : '<button class="primary" data-act="ws-apply-src"' + at + disabled + ">Appliquer</button>";
   return (
     '<div class="proposal' + (p.applied ? " applied" : "") + '">' +
-    '<div class="proposal-head"><span class="pkind">' + (p.kind === "create_source" ? "nouvelle source" : "source") + "</span>" +
+    '<div class="proposal-head"><span class="pkind">' +
+    (p.kind === "add_source" ? "ajout de source" : p.kind === "create_source" ? "nouvelle source" : "source") +
+    "</span>" +
     '<span class="grow"></span>' + head + "</div>" +
     (input.rationale ? '<div class="rationale">' + nl2br(input.rationale) + "</div>" : "") +
     '<div class="diff">' + diff + "</div>" +

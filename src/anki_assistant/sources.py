@@ -12,7 +12,8 @@ the ANKI_SOURCES env var):
            "note": "chap. 2"}
         ],
         "courant::01-AI::little book of deep learning": [
-          {"id": "r9wt4n", "kind": "pdf", "target": "~/lbdl.pdf"}
+          {"id": "r9wt4n", "kind": "pdf", "target": "~/lbdl.pdf"},
+          {"id": "w5hc2e", "kind": "web", "target": "https://fleuret.org/francois/lbdl.html"}
         ]
       },
       "anchors": {
@@ -28,6 +29,9 @@ rewritten as a list on next save; an entry without `id` gets one on load.
 
 `anchors` maps an Anki note id (JSON key, so a string) to the ids of the sources the note was
 made from. Nothing is written into Anki: only this file knows a note is anchored.
+
+A `web` source is a pointer, not a snapshot: nothing of the page is stored, its text is fetched
+when needed (`_fetch_web_cached`) and reduced to plain text by `html_to_text`.
 """
 
 from __future__ import annotations
@@ -36,21 +40,34 @@ import json
 import os
 import re
 import secrets
+import time
 import urllib.parse
 from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal
 
+import httpx
 import pypdf
 
 DEFAULT_VAULT = Path("~/Documents/Vault").expanduser()
-Kind = Literal["pdf", "obsidian"]
+Kind = Literal["pdf", "obsidian", "web"]
+KINDS: tuple[Kind, ...] = ("pdf", "obsidian", "web")
 
 DEFAULT_MAX_CHARS = 60_000
 
+#: Seconds allowed for fetching a web source.
+WEB_TIMEOUT = 15.0
+#: A failed fetch is remembered this long before it is tried again, so that an offline session
+#: does not wait for a timeout on every corpus load.
+WEB_RETRY_SECONDS = 60.0
+#: Some sites refuse the default `python-httpx/x.y` agent with a 403; a browser-like one is fine.
+WEB_USER_AGENT = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) anki-assistant"
+
 _PAGES_RE = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
+_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
 _ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567"  # lowercase base32
 
@@ -72,9 +89,16 @@ def default_store_path() -> Path:
     return Path(__file__).resolve().parents[2] / "sources.json"
 
 
+def is_url(target: str) -> bool:
+    """True for an absolute http(s) URL without whitespace."""
+    return bool(_URL_RE.match(target.strip()))
+
+
 def detect_kind(target: str) -> Kind:
-    """A .pdf target is a PDF; anything else is treated as an Obsidian note."""
-    return "pdf" if target.lower().endswith(".pdf") else "obsidian"
+    """An http(s) URL is a web page, a .pdf target a PDF; anything else an Obsidian note."""
+    if is_url(target):
+        return "web"
+    return "pdf" if target.strip().lower().endswith(".pdf") else "obsidian"
 
 
 def is_valid_pages(pages: str) -> bool:
@@ -125,6 +149,177 @@ def _strip_front_matter(text: str) -> str:
     return _FRONT_MATTER_RE.sub("", text, count=1)
 
 
+# ------------------------------------------------------------------- web pages
+
+#: Elements whose content is not page text: code, styling, and the site's chrome.
+_SKIPPED_TAGS = frozenset(
+    {"script", "style", "noscript", "template", "svg", "head", "nav", "footer", "aside"}
+)
+#: When a page marks its content with one of these, only that content is kept.
+_MAIN_TAGS = frozenset({"main", "article"})
+#: Elements that start a new line (block-level, roughly).
+_BLOCK_TAGS = frozenset(
+    {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "dd",
+        "details",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "header",
+        "hr",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "summary",
+        "table",
+        "tbody",
+        "thead",
+        "tr",
+        "ul",
+    }
+)
+_HEADING_TAGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+
+
+class _TextExtractor(HTMLParser):
+    """Reduce an HTML document to readable plain text: block structure kept as line breaks,
+    headings as `#` marks, list items as `- `, everything else folded. Site chrome
+    (`nav`, `footer`, `aside`) is dropped, and when the page wraps its content in `<main>` or
+    `<article>` only that part is kept."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self._chunks: list[str] = []
+        #: The chunks that fell inside a `<main>` / `<article>`; preferred when non-empty.
+        self._main_chunks: list[str] = []
+        self._skip_depth = 0
+        self._main_depth = 0
+        self._in_title = False
+        self._in_pre = 0
+
+    def _emit(self, chunk: str) -> None:
+        self._chunks.append(chunk)
+        if self._main_depth:
+            self._main_chunks.append(chunk)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "title":
+            self._in_title = True
+            return
+        if tag in _SKIPPED_TAGS:
+            self._skip_depth += 1
+            return
+        if self._skip_depth:
+            return
+        if tag in _MAIN_TAGS:
+            self._main_depth += 1
+        if tag in _HEADING_TAGS:
+            self._emit("\n\n" + "#" * _HEADING_TAGS[tag] + " ")
+        elif tag == "li":
+            self._emit("\n- ")
+        elif tag in ("td", "th"):
+            self._emit("\t")
+        elif tag in _BLOCK_TAGS:
+            self._emit("\n")
+            if tag == "pre":
+                self._in_pre += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+            return
+        if tag in _SKIPPED_TAGS:
+            if self._skip_depth:
+                self._skip_depth -= 1
+            return
+        if self._skip_depth:
+            return
+        if tag in _MAIN_TAGS and self._main_depth:
+            self._main_depth -= 1
+        # A closing `li` adds nothing: the next item or the list's end breaks the line.
+        if tag in _HEADING_TAGS or tag in _BLOCK_TAGS:
+            self._emit("\n")
+            if tag == "pre" and self._in_pre:
+                self._in_pre -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+            return
+        if self._skip_depth:
+            return
+        self._emit(data if self._in_pre else re.sub(r"\s+", " ", data))
+
+    def text(self) -> str:
+        chunks = self._main_chunks if "".join(self._main_chunks).strip() else self._chunks
+        raw = "".join(chunks)
+        lines = [line.strip() for line in raw.split("\n")]
+        folded = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+        title = " ".join(self.title.split())
+        return f"{title}\n\n{folded}" if title else folded
+
+
+def html_to_text(html: str) -> str:
+    """Plain text of an HTML page, the `<title>` as its first line (specs/sources.md)."""
+    parser = _TextExtractor()
+    parser.feed(html)
+    parser.close()
+    return parser.text()
+
+
+def _fetch_web(url: str) -> tuple[str, str]:
+    """`(text, warning)` of a page, uncached. Never raises: a failure is the warning."""
+    try:
+        response = httpx.get(
+            url,
+            follow_redirects=True,
+            timeout=WEB_TIMEOUT,
+            headers={"User-Agent": WEB_USER_AGENT},
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return "", f"page inaccessible : HTTP {exc.response.status_code}"
+    except httpx.HTTPError as exc:
+        return "", f"page inaccessible : {exc.__class__.__name__}: {exc}"
+    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type in ("text/html", "application/xhtml+xml", ""):
+        return html_to_text(response.text), ""
+    if content_type.startswith("text/"):
+        return response.text, ""
+    return "", f"contenu non textuel ({content_type})"
+
+
+#: url -> (fetched_at, text, warning). A success lives for the process; a failure is retried
+#: after WEB_RETRY_SECONDS.
+_WEB_TEXT_CACHE: dict[str, tuple[float, str, str]] = {}
+
+
+def _fetch_web_cached(url: str) -> tuple[str, str]:
+    cached = _WEB_TEXT_CACHE.get(url)
+    now = time.monotonic()
+    if cached is not None:
+        fetched_at, text, warning = cached
+        if not warning or now - fetched_at < WEB_RETRY_SECONDS:
+            return text, warning
+    text, warning = _fetch_web(url)
+    _WEB_TEXT_CACHE[url] = (now, text, warning)
+    return text, warning
+
+
 @dataclass
 class Vault:
     name: str = "Vault"
@@ -164,16 +359,23 @@ class Source:
 
     @classmethod
     def from_dict(cls, deck: str, raw: dict[str, Any]) -> Source:
-        kind = raw.get("kind")
-        if kind not in ("pdf", "obsidian"):
-            raise ValueError(f"{deck}: kind must be 'pdf' or 'obsidian', got {kind!r}")
+        target = str(raw.get("target") or "").strip()
+        if not target:
+            raise ValueError(f"{deck}: target must not be blank")
+        kind = raw.get("kind") or detect_kind(target)
+        if kind not in KINDS:
+            raise ValueError(f"{deck}: kind must be one of {', '.join(KINDS)}, got {kind!r}")
+        if kind == "web" and not is_url(target):
+            raise ValueError(f"{deck}: a web target must be an http(s) URL, got {target!r}")
         pages = raw.get("pages") or ""
         if not is_valid_pages(pages):
             raise ValueError(f"{deck}: invalid pages format {pages!r}")
+        if pages and kind != "pdf":
+            raise ValueError(f"{deck}: pages only apply to a pdf source")
         return cls(
             deck=deck,
             kind=kind,
-            target=raw["target"],
+            target=target,
             pages=pages,
             note=raw.get("note", ""),
             id=str(raw.get("id") or "") or new_source_id(),
@@ -200,7 +402,9 @@ class Source:
         return vault.path / rel
 
     def uri(self, vault: Vault) -> str:
-        """A URI macOS can open: file:// for a PDF, obsidian:// for a note."""
+        """A URI macOS can open: file:// for a PDF, obsidian:// for a note, the URL for a page."""
+        if self.kind == "web":
+            return self.target
         if self.kind == "pdf":
             return Path(self.target).expanduser().resolve().as_uri()
         file_arg = self.target[:-3] if self.target.endswith(".md") else self.target
@@ -210,6 +414,10 @@ class Source:
         return f"obsidian://open?vault={vault_q}&file={file_q}"
 
     def exists(self, vault: Vault) -> bool:
+        """Whether the target is there. A URL is not checked (that would be a request on every
+        deck listing); a page that cannot be fetched says so through `text().warning`."""
+        if self.kind == "web":
+            return True
         path = self.pdf_path() if self.kind == "pdf" else self.note_path(vault)
         return bool(path and path.exists())
 
@@ -226,7 +434,15 @@ class Source:
         Obsidian: file content with the leading YAML front matter stripped. PDF: `pypdf` text of
         the pages in `self.pages` (or the whole document), pages joined with
         "\\n\\n--- page N ---\\n\\n"; extraction is cached in memory on (path, mtime, pages).
+        Web: the page fetched and reduced to text (`html_to_text`), cached by URL; a page that
+        cannot be fetched gives an empty text and the reason in `warning`.
         """
+        if self.kind == "web":
+            body, warning = _fetch_web_cached(self.target)
+            truncated = len(body) > max_chars
+            return SourceText(
+                text=body[:max_chars], truncated=truncated, n_pages=None, warning=warning
+            )
         if self.kind == "obsidian":
             path = self.note_path(vault)
             if path is None or not path.exists():
@@ -451,6 +667,23 @@ class SourceStore:
                 del self.anchor_map[note_id]
         return removed
 
+    # ------------------------------------------------------------- appending
+
+    def add_source(self, deck: str, source: Source) -> Source:
+        """Append `source` to the deck's own corpus and save.
+
+        An inherited corpus is materialised on `deck` first — ids kept, so anchors survive —
+        which is the rule of the Source tab's form; this is what `POST /api/sources` and
+        `create_note` share. The entry is validated as on load (kind, url, pages); a missing id
+        gets one. Returns the stored entry, written on `deck`.
+        """
+        entry = Source.from_dict(deck, source.to_dict())
+        own = self.corpora.get(deck)
+        if own is None:
+            own = [replace(inherited, deck=deck) for inherited in self.corpus(deck)]
+        self.set_corpus(deck, [*own, entry])
+        return entry
+
     # ---------------------------------------------------------- vault writes
 
     def create_note(
@@ -459,8 +692,8 @@ class SourceStore:
         """Write `<vault>/<name>.md` and add it to the deck's own corpus.
 
         Refuses if the file exists (FileExistsError). `name` is vault-relative, `/` allowed
-        (parent directories are created), `.md` optional. An inherited corpus is materialised
-        on `deck` first, as when a source is added from the form. `source_id` lets a caller who
+        (parent directories are created), `.md` optional. The corpus is appended to through
+        `add_source` (an inherited corpus is materialised first). `source_id` lets a caller who
         announced the id beforehand (the chat's create-source proposal) keep it.
         """
         clean = name.strip().strip("/")
@@ -472,21 +705,17 @@ class SourceStore:
             raise FileExistsError(f"{target}.md existe déjà dans le vault")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-
-        source = Source(deck=deck, kind="obsidian", target=target, id=source_id or new_source_id())
-        own = self.corpora.get(deck)
-        if own is None:
-            # Materialise the inherited corpus on this deck; ids are kept so anchors survive.
-            own = [replace(inherited, deck=deck) for inherited in self.corpus(deck)]
-        self.set_corpus(deck, [*own, source])
-        return source
+        return self.add_source(
+            deck, Source(deck=deck, kind="obsidian", target=target, id=source_id or "")
+        )
 
     def replace_in_note(self, source_id: str, old: str, new: str) -> None:
         """Replace `old` with `new` in an obsidian source's file; `old` must occur exactly once.
 
-        KeyError for an unknown id; ValueError for a pdf source, or when `old` occurs 0 or 2+
-        times (the message says which). The bounded, reviewable replacement is the whole safety
-        story of writing into the vault — and what makes undoing it a swap of `old` and `new`.
+        KeyError for an unknown id; ValueError for a pdf or web source, or when `old` occurs 0
+        or 2+ times (the message says which). The bounded, reviewable replacement is the whole
+        safety story of writing into the vault — and what makes undoing it a swap of `old` and
+        `new`.
         """
         source = self.by_id(source_id)
         if source is None:

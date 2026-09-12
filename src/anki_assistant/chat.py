@@ -2,7 +2,8 @@
 
 No FastAPI or Anki imports here — `web/routes_chat.py` turns `ChatEvent`s into SSE lines and
 builds the read tools. From `sources.py` only `new_source_id` is used (a pure function), so that
-the create-source proposal can announce the id the source will carry once the user applies it.
+the add-source and create-source proposals can announce the id the source will carry once the
+user applies it.
 
 Model choice
 ------------
@@ -227,19 +228,22 @@ Règles :
 identifiant d'espace (`target: "w3"`) ; une note qui n'est pas encore dans l'espace se désigne \
 par son identifiant Anki en chiffres, elle y sera ajoutée.
 - Quand tu proposes un changement concret, utilise les outils de proposition (propose_edit, \
-propose_split, propose_create, propose_move, propose_create_source, propose_edit_source) au \
-lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; le même défaut sur \
-plusieurs notes = un propose_edit par note. Chaque proposition devient une version ou une carte \
-que l'utilisateur relit, retouche ou écarte, puis valide en bloc : tu n'écris jamais dans Anki. \
-Pour montrer des notes à l'utilisateur sans les modifier, add_notes les ajoute à l'espace.
+propose_split, propose_create, propose_move, propose_add_source, propose_create_source, \
+propose_edit_source) au lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; \
+le même défaut sur plusieurs notes = un propose_edit par note. Chaque proposition devient une \
+version ou une carte que l'utilisateur relit, retouche ou écarte, puis valide en bloc : tu \
+n'écris jamais dans Anki. Pour montrer des notes à l'utilisateur sans les modifier, add_notes \
+les ajoute à l'espace.
 - Le web (web_search, puis web_fetch pour lire une page en entier) sert à deux choses : \
 confronter une carte à l'extérieur quand le corpus ne suffit pas, et **trouver des sources à \
 ajouter** — un article, un livre, une page de référence. Le corpus n'est pas fermé : une page \
-qui mérite d'être gardée devient une source par propose_create_source, et le contenu de carte \
-que tu tires du web arrive avec la proposition de source qui le fonde, pas tout seul. Ne recopie \
-pas d'URL dans ta réponse : les passages tirés du web sont cités automatiquement (renvoi numéroté \
-vers la page, liste des sources sous la réponse) ; une URL en clair ne sert qu'à recommander une \
-page que tu n'as pas citée.
+qui mérite d'être gardée s'ajoute au corpus par propose_add_source (son URL ; le serveur relit \
+la page quand il en a besoin), ou se consigne dans le vault par propose_create_source quand \
+c'est une synthèse qu'il faut garder ; et le contenu de carte que tu tires du web arrive avec \
+la proposition de source qui le fonde, pas tout seul. Ne recopie pas d'URL dans ta réponse : \
+les passages tirés du web sont cités automatiquement (renvoi numéroté vers la page, liste des \
+sources sous la réponse) ; une URL en clair ne sert qu'à recommander une page que tu n'as pas \
+citée.
 - Les champs sont des valeurs de champ Anki **brutes** : HTML, marqueurs de cloze \
 `{{c1::réponse}}` ou `{{c1::réponse::indice}}` conservés. Produis les tiens dans la même syntaxe \
 et garde-la valide : numéros contigus à partir de c1, accolades équilibrées, au moins un cloze \
@@ -556,9 +560,13 @@ TOOL_KINDS: dict[str, str] = {
     "propose_split": "split",
     "propose_create": "create",
     "propose_move": "move",
+    "propose_add_source": "add_source",
     "propose_create_source": "create_source",
     "propose_edit_source": "edit_source",
 }
+
+#: Proposals that bring a new source into the corpus: answered with the id it will carry.
+NEW_SOURCE_KINDS: frozenset[str] = frozenset({"add_source", "create_source"})
 
 #: Proposal tools whose `target` names a card (or a note to add as a card).
 TARGETED: frozenset[str] = frozenset({"propose_edit", "propose_split", "propose_move"})
@@ -662,7 +670,7 @@ def web_tool_defs() -> list[dict[str, Any]]:
 
 
 def proposal_tools() -> list[dict[str, Any]]:
-    """The six proposal tools. Each call becomes one `proposal` event for the client."""
+    """The seven proposal tools. Each call becomes one `proposal` event for the client."""
     return [
         {
             "name": "propose_edit",
@@ -763,12 +771,59 @@ def proposal_tools() -> list[dict[str, Any]]:
             ),
         },
         {
+            "name": "propose_add_source",
+            "description": (
+                "Proposer d'ajouter au corpus du deck courant une source qui existe déjà : une "
+                "page web (son URL — le serveur la relit quand il en a besoin, rien n'est "
+                "copié), une note du vault ou un PDF sur disque. Typiquement après un web_fetch "
+                "sur une page qui mérite d'être gardée. Le résultat de l'outil donne "
+                "l'identifiant que la source aura une fois ajoutée : réutilise-le dans "
+                "`source_ids` de propose_create."
+            ),
+            "input_schema": _obj(
+                {
+                    "target": {
+                        "type": "string",
+                        "description": (
+                            "URL http(s) de la page, nom d'une note du vault (relatif à sa "
+                            "racine, sans `.md`) ou chemin d'un PDF. L'utilisateur peut le "
+                            "corriger avant d'appliquer."
+                        ),
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["web", "obsidian", "pdf"],
+                        "description": (
+                            "Type de la source. Omettre pour le déduire de la cible (URL → web, "
+                            "`.pdf` → pdf, sinon obsidian)."
+                        ),
+                    },
+                    "pages": {
+                        "type": "string",
+                        "description": "PDF seulement : plage de pages, ex. « 12-19 », « 3-5,9 ».",
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Commentaire court affiché à côté de la source.",
+                    },
+                    "anchor_note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Notes Anki à ancrer à cette source une fois ajoutée.",
+                    },
+                    "rationale": _RATIONALE,
+                },
+                required=["target", "rationale"],
+            ),
+        },
+        {
             "name": "propose_create_source",
             "description": (
                 "Proposer de créer une note Obsidian dans le vault et de l'ajouter au corpus du "
-                "deck courant — pour consigner ce qu'une conversation a établi. Le résultat de "
-                "l'outil donne l'identifiant que la source aura une fois créée : réutilise-le "
-                "dans `source_ids` de propose_create."
+                "deck courant — pour consigner ce qu'une conversation a établi (pour une page "
+                "web qui existe déjà, préférer propose_add_source). Le résultat de l'outil "
+                "donne l'identifiant que la source aura une fois créée : réutilise-le dans "
+                "`source_ids` de propose_create."
             ),
             "input_schema": _obj(
                 {
@@ -798,7 +853,7 @@ def proposal_tools() -> list[dict[str, Any]]:
             "description": (
                 "Proposer de remplacer un passage d'une source Obsidian par un autre. `old` doit "
                 "apparaître exactement une fois dans la source (copie-le tel quel) ; le "
-                "remplacement est refusé sinon."
+                "remplacement est refusé sinon. Une source pdf ou web ne se modifie pas."
             ),
             "input_schema": _obj(
                 {
@@ -1166,9 +1221,10 @@ async def stream_chat(
     `messages` are plain `{role, content: str}` turns. Proposal calls are surfaced as `proposal`
     events and answered with a `"ok"` tool result so Claude can keep talking; they land on the
     workspace and are written at validation. A targeted proposal is checked against the roster
-    first: an unknown target or a full workspace is an error tool result and no event. A
-    create-source proposal is answered with the id the source will carry, so that Claude can
-    anchor the notes it proposes next to it; the same id travels in the event (`source_id`).
+    first: an unknown target or a full workspace is an error tool result and no event. An
+    add-source or create-source proposal is answered with the id the source will carry, so that
+    Claude can anchor the notes it proposes next to it; the same id travels in the event
+    (`source_id`).
     Read calls are executed through `read_tools`, surfaced as `reading` events, and answered
     with the text the tool returned (or an error tool result, so Claude can react instead of
     the turn failing). `add_notes` runs `get_notes` and, when the cap allows, also streams an
@@ -1261,7 +1317,7 @@ async def stream_chat(
                             continue
                     data: dict[str, Any] = {"id": block.id, "kind": kind, "input": tool_input}
                     answer = "ok"
-                    if kind == "create_source":
+                    if kind in NEW_SOURCE_KINDS:
                         data["source_id"] = new_source_id()
                         answer = (
                             f"ok — une fois appliquée, la source aura l'identifiant "

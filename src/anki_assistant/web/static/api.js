@@ -57,6 +57,7 @@ const API = {
   // sources — the deck goes in the query string, deck names contain "::"
   corpus: (deck) => jfetch("/api/sources/corpus?deck=" + q(deck)),
   putSources: (deck, entries) => jfetch("/api/sources?deck=" + q(deck), jsonBody("PUT", entries)),
+  addSource: (deck, entry) => jfetch("/api/sources?deck=" + q(deck), jsonBody("POST", entry)),
   vaultNotes: (query) => jfetch("/api/vault/notes?q=" + q(query)),
   anchors: (noteId) => jfetch("/api/sources/anchors?note_id=" + noteId),
   createSourceNote: (body) => jfetch("/api/sources/notes", jsonBody("POST", body)),

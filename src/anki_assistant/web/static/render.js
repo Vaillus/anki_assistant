@@ -306,7 +306,13 @@ function sourceRow(s, i) {
     "</b>" +
     (meta.length ? ' <span class="muted small">· ' + meta.join(" · ") + "</span>" : "") +
     '<span class="grow"></span>' +
-    (s.uri ? '<a href="' + esc(s.uri) + '" class="small">ouvrir ↗</a> ' : "") +
+    (s.uri
+      ? '<a href="' +
+        esc(s.uri) +
+        '" class="small"' +
+        (s.kind === "web" ? ' target="_blank" rel="noopener"' : "") +
+        ">ouvrir ↗</a> "
+      : "") +
     '<button class="ghost small" data-act="remove-src" data-i="' +
     i +
     '">retirer</button>' +
@@ -314,7 +320,11 @@ function sourceRow(s, i) {
     (inherited ? '<div class="muted small">héritée de ' + esc(s.on_deck) + "</div>" : "") +
     (s.exists === false ? '<div class="warn">⚠ fichier introuvable</div>' : "") +
     (s.warning ? '<div class="warn">⚠ ' + esc(s.warning) + "</div>" : "") +
-    (text ? '<pre class="excerpt">' + esc(shown) + "</pre>" : '<div class="muted small">(aucun texte extrait)</div>') +
+    (text
+      ? '<pre class="excerpt">' + esc(shown) + "</pre>"
+      : '<div class="muted small">' +
+        (s.kind === "web" ? "(page sans texte)" : "(aucun texte extrait)") +
+        "</div>") +
     (text.length > FOLD
       ? '<button class="ghost small" data-act="expand-src" data-i="' +
         i +
@@ -330,28 +340,29 @@ function sourceRow(s, i) {
 function sourceForm() {
   const f = S.srcForm || {};
   const inherited = !!(S.corpus && S.corpus.inherited_from);
+  const kind = SOURCE_KINDS.indexOf(f.kind) >= 0 ? f.kind : "obsidian";
+  const options = SOURCE_KINDS.map(
+    (k) => '<option value="' + k + '"' + (k === kind ? " selected" : "") + ">" + k + "</option>",
+  ).join("");
   return (
     '<div class="src-form">' +
     "<b>Nouvelle source</b>" +
     (S.srcForm.error ? '<div class="banner">' + esc(S.srcForm.error) + "</div>" : "") +
-    "<label>cible (note du vault ou chemin de PDF)</label>" +
+    "<label>cible (note du vault, chemin de PDF ou URL)</label>" +
     '<input data-input="src-target" data-focus="src-target" list="vault-notes" value="' +
     esc(f.target || "") +
-    '" placeholder="Allocation sur des angles disjoints">' +
+    '" placeholder="Allocation sur des angles disjoints · ~/doc.pdf · https://…">' +
     '<datalist id="vault-notes"></datalist>' +
     "<label>type</label>" +
     '<select data-input="src-kind">' +
-    '<option value="obsidian"' +
-    (f.kind === "pdf" ? "" : " selected") +
-    ">obsidian</option>" +
-    '<option value="pdf"' +
-    (f.kind === "pdf" ? " selected" : "") +
-    ">pdf</option>" +
+    options +
     "</select>" +
-    "<label>pages (pdf, ex. 12-19)</label>" +
-    '<input data-input="src-pages" value="' +
-    esc(f.pages || "") +
-    '">' +
+    (kind === "pdf"
+      ? "<label>pages (ex. 12-19)</label>" +
+        '<input data-input="src-pages" value="' +
+        esc(f.pages || "") +
+        '">'
+      : "") +
     "<label>note</label>" +
     '<input data-input="src-note" value="' +
     esc(f.note || "") +

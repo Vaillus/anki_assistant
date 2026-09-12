@@ -288,7 +288,14 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
 
 def test_standing_instructions_say_only_what_the_spec_lists() -> None:
     text = chat.build_system("d", [], [], [])[0]["text"]
-    for needle in ("français", "propose_create_source", "propose_edit_source", "cloze", "actives"):
+    for needle in (
+        "français",
+        "propose_add_source",
+        "propose_create_source",
+        "propose_edit_source",
+        "cloze",
+        "actives",
+    ):
         assert needle in text
     assert 'class="context"' in text  # conventions of the collection, stated as facts
     # Not the prompt's business (specs/chat.md#what-claude-receives).
@@ -339,6 +346,7 @@ def test_tools_are_the_proposals_then_the_read_tools_then_the_web_tools() -> Non
         "propose_split",
         "propose_create",
         "propose_move",
+        "propose_add_source",
         "propose_create_source",
         "propose_edit_source",
     ]
@@ -397,6 +405,10 @@ def test_tool_schemas_match_the_spec_tables() -> None:
     assert split_new["items"]["required"] == ["fields"]
     assert by_name["propose_create_source"]["required"] == ["name", "content", "rationale"]
     assert "anchor_note_ids" in by_name["propose_create_source"]["properties"]
+    add = by_name["propose_add_source"]
+    assert add["required"] == ["target", "rationale"]
+    assert add["properties"]["kind"]["enum"] == ["web", "obsidian", "pdf"]
+    assert {"pages", "note", "anchor_note_ids"} <= set(add["properties"])
     assert by_name["propose_edit_source"]["required"] == ["source_id", "old", "new", "rationale"]
 
     search = by_name["search_notes"]
@@ -587,6 +599,26 @@ def test_create_source_proposal_announces_the_future_source_id() -> None:
     assert result["tool_use_id"] == "toolu_s"
     assert source_id in result["content"]
     assert "propose_create" in result["content"]
+
+
+def test_add_source_proposal_announces_the_future_source_id_too() -> None:
+    block = tool_use_block(
+        "toolu_a",
+        "propose_add_source",
+        {"target": "https://en.wikipedia.org/wiki/KKT", "rationale": "r"},
+    )
+    client = FakeAnthropic(
+        [([], final_message([block], "tool_use")), ([], final_message([], "end_turn"))]
+    )
+    events = run_chat(client)
+    proposal = events[0].data
+    assert proposal["kind"] == "add_source"
+    assert proposal["input"]["target"] == "https://en.wikipedia.org/wiki/KKT"
+    source_id = proposal["source_id"]
+    assert len(source_id) == 6 and source_id.islower()
+    result = client.messages.calls[1]["messages"][2]["content"][0]
+    assert source_id in result["content"]
+    assert "is_error" not in result
 
 
 def _one_tool_turn(block: Any) -> FakeAnthropic:

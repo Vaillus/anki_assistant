@@ -12,11 +12,19 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from anki_assistant import review
 from anki_assistant.client import AnkiClient
-from anki_assistant.sources import Kind, Source, SourceStore, is_valid_pages, vault_notes
+from anki_assistant.sources import (
+    Kind,
+    Source,
+    SourceStore,
+    detect_kind,
+    is_url,
+    is_valid_pages,
+    vault_notes,
+)
 from anki_assistant.web.routes_review import _anki_errors
 
 router = APIRouter()
@@ -29,7 +37,8 @@ class SourceEntryIn(BaseModel):
     #: Empty for a new entry: the store assigns one. Sent back as-is for an existing entry so
     #: that rewriting a corpus (the form) keeps the ids the anchors point to.
     id: str = ""
-    kind: Kind
+    #: Omitted = auto-detected from the target (specs/sources.md#source-entry).
+    kind: Kind | None = None
     target: str
     pages: str = ""
     note: str = ""
@@ -46,7 +55,34 @@ class SourceEntryIn(BaseModel):
     def _target_not_blank(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("target must not be blank")
-        return v
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _kind_fits_target(self) -> SourceEntryIn:
+        if self.kind is None:
+            self.kind = detect_kind(self.target)
+        if self.kind == "web" and not is_url(self.target):
+            raise ValueError("a web target must be an http(s) URL")
+        if self.pages and self.kind != "pdf":
+            raise ValueError("pages only apply to a pdf source")
+        return self
+
+    def to_source(self, deck: str) -> Source:
+        return Source(
+            deck=deck,
+            kind=self.kind or detect_kind(self.target),
+            target=self.target,
+            pages=self.pages,
+            note=self.note,
+            id=self.id,
+        )
+
+
+class AddSourceIn(SourceEntryIn):
+    """`POST /api/sources`: one entry appended to the deck's own corpus."""
+
+    #: Notes to anchor to the new source in the same call.
+    anchor_note_ids: list[int] = Field(default_factory=list)
 
 
 class SourceView(BaseModel):
@@ -198,16 +234,29 @@ def get_corpus(deck: str, request: Request, note_id: int | None = None) -> Corpu
 def put_sources(deck: str, entries: list[SourceEntryIn], request: Request) -> DeckSourcesResponse:
     """Replace the corpus written on `deck` (query param). An empty list body deletes the entry."""
     store = _store(request)
-    sources = [
-        Source(deck=deck, kind=e.kind, target=e.target, pages=e.pages, note=e.note, id=e.id)
-        for e in entries
-    ]
-    _, removed = store.set_corpus(deck, sources)
+    _, removed = store.set_corpus(deck, [e.to_source(deck) for e in entries])
     return DeckSourcesResponse(
         deck=deck,
         sources=[_to_view(store, source) for source in store.corpus(deck)],
         removed_anchors=removed,
     )
+
+
+@router.post("/sources", response_model=SourceResponse)
+def add_source(deck: str, body: AddSourceIn, request: Request) -> SourceResponse:
+    """Append one entry to the corpus written on `deck` (query param).
+
+    An inherited corpus is materialised on the deck first (specs/sources.md#api). `id` lets the
+    chat keep the id it announced to Claude; `anchor_note_ids` anchors those notes to it.
+    """
+    store = _store(request)
+    try:
+        source = store.add_source(deck, body.to_source(deck))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    for note_id in body.anchor_note_ids:
+        store.add_anchor(note_id, source.id)
+    return SourceResponse(deck=deck, source=_to_view(store, source))
 
 
 @router.get("/vault/notes")
@@ -264,7 +313,8 @@ def create_vault_note(body: VaultNoteIn, request: Request) -> SourceResponse:
 
 @router.patch("/sources/{source_id}/text", response_model=SourceResponse)
 def replace_source_text(source_id: str, body: ReplaceIn, request: Request) -> SourceResponse:
-    """Replace one passage of an obsidian source. 409 when `old` occurs 0 or 2+ times."""
+    """Replace one passage of an obsidian source. 409 when `old` occurs 0 or 2+ times; 400 on
+    a pdf or web source, which are read-only."""
     store = _store(request)
     source = store.by_id(source_id)
     if source is None:

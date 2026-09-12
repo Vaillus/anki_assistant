@@ -7,10 +7,19 @@ import os
 import time
 from pathlib import Path
 
+import httpx
 import pypdf
 import pytest
 
-from anki_assistant.sources import Source, SourceStore, Vault, vault_notes
+import anki_assistant.sources as sources_module
+from anki_assistant.sources import (
+    Source,
+    SourceStore,
+    Vault,
+    detect_kind,
+    html_to_text,
+    vault_notes,
+)
 
 
 def _write_pdf(path: Path, n_pages: int) -> None:
@@ -300,13 +309,169 @@ def test_vault_notes_missing_vault_returns_empty(tmp_path: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_pdf_cache():
-    """The PDF text cache is process-global; make sure other test modules don't leak into it."""
-    import anki_assistant.sources as sources_module
-
+def _isolate_caches():
+    """The PDF and web text caches are process-global; keep test modules from leaking into
+    each other."""
     sources_module._PDF_TEXT_CACHE.clear()
+    sources_module._WEB_TEXT_CACHE.clear()
     yield
     sources_module._PDF_TEXT_CACHE.clear()
+    sources_module._WEB_TEXT_CACHE.clear()
+
+
+# ------------------------------------------------------------------ web pages
+
+PAGE = """<!doctype html><html><head><title>  KKT   conditions </title>
+<style>body{color:red}</style><script>var x = 1;</script></head>
+<body><nav><ul><li>Home</li><li>About</li></ul></nav>
+<h1>Karush–Kuhn–Tucker</h1>
+<p>First   paragraph, with <b>bold</b> and an &amp; entity.</p>
+<h2>Conditions</h2><ol><li>stationarity</li><li>primal feasibility</li></ol>
+<pre>  keep   spacing  </pre><svg><text>ignored</text></svg></body></html>"""
+
+
+def test_html_to_text_keeps_structure_and_drops_chrome() -> None:
+    text = html_to_text(PAGE)
+    assert text.startswith("KKT conditions\n\n")
+    assert "Home" not in text and "About" not in text  # <nav> is chrome
+    assert "# Karush–Kuhn–Tucker" in text
+    assert "First paragraph, with bold and an & entity." in text
+    assert "## Conditions\n\n- stationarity\n- primal feasibility" in text
+    assert "keep   spacing" in text  # inside <pre> the spacing is not folded
+    for gone in ("var x", "color:red", "ignored", "\n\n\n"):
+        assert gone not in text
+
+
+def test_html_to_text_prefers_the_main_element_when_there_is_one() -> None:
+    page = (
+        "<title>T</title><header><p>site banner</p></header>"
+        "<main><h1>Article</h1><p>the content</p></main>"
+        "<div><p>related links</p></div>"
+    )
+    text = html_to_text(page)
+    assert text == "T\n\n# Article\n\nthe content"
+    # Without <main>/<article>, everything but the chrome is kept.
+    assert "site banner" in html_to_text("<header><p>site banner</p></header><p>x</p>")
+
+
+def _web_source() -> Source:
+    return Source(deck="a", kind="web", target="https://example.org/kkt", id="web000")
+
+
+def _mock_get(monkeypatch: pytest.MonkeyPatch, handler) -> list[str]:  # noqa: ANN001
+    """Route `httpx.get` to `handler(request) -> httpx.Response`; returns the URLs requested."""
+    calls: list[str] = []
+
+    def fake_get(url: str, **kwargs) -> httpx.Response:  # noqa: ANN003
+        calls.append(url)
+        assert kwargs["follow_redirects"] is True
+        assert "User-Agent" in kwargs["headers"]
+        request = httpx.Request("GET", url)
+        response = handler(request)
+        response.request = request
+        return response
+
+    monkeypatch.setattr(sources_module.httpx, "get", fake_get)
+    return calls
+
+
+def test_web_source_text_is_the_fetched_page_reduced_and_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _mock_get(
+        monkeypatch,
+        lambda req: httpx.Response(
+            200, text=PAGE, headers={"content-type": "text/html; charset=utf-8"}
+        ),
+    )
+    source = _web_source()
+    vault = Vault()
+    assert source.exists(vault) is True  # never a request
+    assert source.uri(vault) == "https://example.org/kkt"
+    assert detect_kind("https://example.org/kkt") == "web"
+    assert detect_kind("HTTP://x.y/z.pdf") == "web"  # a URL, whatever it ends with
+    assert detect_kind("~/doc.pdf") == "pdf"
+    assert detect_kind("maths/kkt") == "obsidian"
+
+    text = source.text(vault)
+    assert text.text.startswith("KKT conditions")
+    assert text.warning == "" and text.n_pages is None and text.truncated is False
+    assert source.text(vault, max_chars=5).text == "KKT c"
+    assert source.text(vault, max_chars=5).truncated is True
+    assert calls == ["https://example.org/kkt"], "fetched once, then served from the cache"
+
+
+def test_web_source_failure_is_a_warning_and_retried_after_a_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            httpx.Response(503, text="down"),
+            httpx.Response(200, text="plain body", headers={"content-type": "text/plain"}),
+        ]
+    )
+    calls = _mock_get(monkeypatch, lambda req: next(responses))
+    now = [0.0]
+    monkeypatch.setattr(sources_module.time, "monotonic", lambda: now[0])
+    source, vault = _web_source(), Vault()
+
+    first = source.text(vault)
+    assert first.text == "" and first.warning == "page inaccessible : HTTP 503"
+    now[0] = sources_module.WEB_RETRY_SECONDS - 1
+    assert source.text(vault).warning == first.warning and len(calls) == 1, "failure cached"
+
+    now[0] = sources_module.WEB_RETRY_SECONDS + 1
+    assert source.text(vault).text == "plain body"
+    assert len(calls) == 2
+
+
+def test_web_source_network_error_and_non_text_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("nope", request=req)
+
+    _mock_get(monkeypatch, boom)
+    assert _web_source().text(Vault()).warning.startswith("page inaccessible : ConnectError")
+
+    sources_module._WEB_TEXT_CACHE.clear()
+    pdf_headers = {"content-type": "application/pdf"}
+    _mock_get(monkeypatch, lambda req: httpx.Response(200, content=b"%PDF", headers=pdf_headers))
+    text = _web_source().text(Vault())
+    assert text.text == "" and text.warning == "contenu non textuel (application/pdf)"
+
+
+def test_from_dict_validates_web_targets_and_pages() -> None:
+    web = Source.from_dict("a", {"target": " https://x.org/p "})
+    assert web.kind == "web" and web.target == "https://x.org/p"
+    with pytest.raises(ValueError, match="http"):
+        Source.from_dict("a", {"kind": "web", "target": "not a url"})
+    with pytest.raises(ValueError, match="pages"):
+        Source.from_dict("a", {"kind": "web", "target": "https://x.org", "pages": "1-2"})
+    with pytest.raises(ValueError, match="kind"):
+        Source.from_dict("a", {"kind": "epub", "target": "x"})
+    with pytest.raises(ValueError, match="blank"):
+        Source.from_dict("a", {"kind": "obsidian", "target": "  "})
+
+
+def test_add_source_appends_and_materialises_an_inherited_corpus(tmp_path: Path) -> None:
+    store = SourceStore(path=tmp_path / "sources.json")
+    store.set_corpus("a", [Source(deck="a", kind="obsidian", target="x", id="inh000")])
+    store.set_anchors(1, ["inh000"])
+
+    added = store.add_source("a::b", Source(deck="a::b", kind="web", target="https://x.org/p"))
+    assert len(added.id) == 6 and added.deck == "a::b"
+    assert [s.id for s in store.corpora["a::b"]] == ["inh000", added.id]
+    assert store.corpus("a") == [Source(deck="a", kind="obsidian", target="x", id="inh000")]
+    assert store.anchors(1) == ["inh000"]
+
+    kept = store.add_source("a::b", Source(deck="", kind="pdf", target="p.pdf", id="keep00"))
+    assert kept.id == "keep00" and kept.deck == "a::b"
+    assert [s.id for s in SourceStore(path=store.path).corpus("a::b")] == [
+        "inh000",
+        added.id,
+        "keep00",
+    ]
+    with pytest.raises(ValueError):
+        store.add_source("a::b", Source(deck="a::b", kind="web", target="nope"))
 
 
 # --------------------------------------------------------------- ids and anchors
@@ -478,6 +643,49 @@ def test_api_put_sources_keeps_ids_and_reports_removed_anchors(tmp_path: Path) -
         ).status_code
         == 404
     )
+
+
+def test_api_post_source_appends_with_detected_kind_anchors_and_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api, store = _api(tmp_path)
+    _mock_get(
+        monkeypatch,
+        lambda req: httpx.Response(
+            200, text="<title>T</title><p>body</p>", headers={"content-type": "text/html"}
+        ),
+    )
+    res = api.post(
+        "/api/sources",
+        params={"deck": "a::b"},
+        json={"target": "https://x.org/p", "anchor_note_ids": [7, 8], "id": "chat00"},
+    )
+    assert res.status_code == 200, res.text
+    view = res.json()["source"]
+    assert view["kind"] == "web" and view["id"] == "chat00" and view["on_deck"] == "a::b"
+    assert view["exists"] is True and view["uri"] == "https://x.org/p"
+    assert view["text"] == "T\n\nbody" and view["anchored_count"] == 2
+    assert [s.id for s in store.corpus("a::b")] == ["note00", "chat00"], "inherited copied first"
+    assert store.anchors(7) == ["note00", "chat00"] and store.anchors(8) == ["chat00"]
+
+    assert api.post("/api/sources", params={"deck": "a"}, json={"target": "  "}).status_code == 422
+    bad = api.post(
+        "/api/sources", params={"deck": "a"}, json={"kind": "web", "target": "not a url"}
+    )
+    assert bad.status_code == 422
+    pages = api.post(
+        "/api/sources", params={"deck": "a"}, json={"target": "https://x.org", "pages": "1"}
+    )
+    assert pages.status_code == 422
+    # The form's full rewrite accepts the web kind and keeps the id.
+    put = api.put(
+        "/api/sources",
+        params={"deck": "a::b"},
+        json=[{"id": "chat00", "kind": "web", "target": "https://x.org/p"}],
+    )
+    assert put.status_code == 200 and put.json()["sources"][0]["id"] == "chat00"
+    # A web source is read-only.
+    assert api.patch("/api/sources/chat00/text", json={"old": "a", "new": "b"}).status_code == 400
 
 
 def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@
 
 ## What the app does
 
-A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged notes, the deck's sources (Obsidian notes, PDFs) side by side, and, once a note is opened in its workspace, a Claude chat that knows the deck, the sources and the cards being worked on. Everything is written into Anki through AnkiConnect, in one validation per workspace.
+A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged notes, the deck's sources (Obsidian notes, PDFs, web pages) side by side, and, once a note is opened in its workspace, a Claude chat that knows the deck, the sources and the cards being worked on. Everything is written into Anki through AnkiConnect, in one validation per workspace.
 
 Hugo flags a card during a review when something is wrong with it (too vague, wrong deck, should be split, needs a sibling card…). The reason is often typed into the note's `Back Extra` field. This app is where those flags get resolved.
 
@@ -13,7 +13,7 @@ Hugo flags a card during a review when something is wrong with it (too vague, wr
 - **Card** — what Anki schedules. A Cloze note with three clozes yields three cards.
 - **Note** — the editable object (fields + tags). **The review unit is the note**: a note is *flagged* when any of its cards carries a flag; *resolving* a note clears the flag on all its cards. Flag colours carry no meaning here — any flag means "to review".
 - **Reason** — the plain text of the `Back Extra` field of a flagged note (when the model has such a field). Displayed prominently as "why this was flagged"; Claude reads it; resolving a note offers to clear it.
-- **Source** — a document a deck was made from: an Obsidian note in the vault, or a PDF on disk (optionally restricted to a page range). A deck has a **corpus**: an ordered list of sources. A deck with no corpus of its own inherits its nearest ancestor's corpus (`a::b::c` → `a::b` → `a`). Every source has a stable **id**.
+- **Source** — a document a deck was made from: an Obsidian note in the vault, a PDF on disk (optionally restricted to a page range), or a web page (a URL the server fetches when its text is needed). A deck has a **corpus**: an ordered list of sources, extended from the Source tab or by a proposal of Claude. A deck with no corpus of its own inherits its nearest ancestor's corpus (`a::b::c` → `a::b` → `a`). Every source has a stable **id**.
 - **Anchor** — a source of its deck's corpus a note was made from; a note can have several. Stored in `sources.json` (note id → list of source ids), never in Anki. Opens the Source tab on the right documents and lets the chat load those alone. See [sources.md](./sources.md#anchors).
 - **Decision** — what the user does with a flagged note from the queue: keep (clear the flag), skip, or open it in the workspace. See [review.md](./review.md#decisions).
 - **Workspace** — the overlay opened on a note: the note and the changes being prepared for it as **cards** on the left, a conversation with Claude on the right. A card holds **versions** (v0 = Anki, then Claude's proposals and the user's edits); a split adds **fragment** cards; cards can be **active** (the next message is about them), deleted, kept or moved. One « Valider » writes everything, all or nothing; the × discards everything. See [workspace.md](./workspace.md).
@@ -51,6 +51,7 @@ graph LR
     API --> Sources["SourceStore (sources.py) · sources.json"]
     Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
     Sources --> PDF["PDF files · pypdf"]
+    Sources -- fetch --> Web["Web pages · httpx"]
     API --> Chat["chat.py · Anthropic API"]
 ```
 

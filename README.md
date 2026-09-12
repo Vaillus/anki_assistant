@@ -1,7 +1,7 @@
 # anki-assistant
 
 Revoir efficacement les cartes Anki flaguées : une interface web locale qui montre, deck par deck,
-les notes à retravailler, les sources du deck (notes Obsidian, PDF) à côté, et un chat Claude qui
+les notes à retravailler, les sources du deck (notes Obsidian, PDF, pages web) à côté, et un chat Claude qui
 propose des modifications applicables en un clic. Tout est écrit directement dans Anki via
 l'add-on [AnkiConnect](https://foosoft.net/projects/anki-connect/).
 
@@ -61,20 +61,22 @@ anki.invoke("anyAnkiConnectAction", param=1)  # passe-plat générique
 
 ## Sources des decks
 
-Chaque deck peut être associé à une source : un PDF, ou une note du vault Obsidian.
+Chaque deck peut être associé à des sources : un PDF, une note du vault Obsidian, ou une page
+web (une URL, relue par le serveur quand son texte est demandé — rien n'est copié).
 Le mapping vit dans `sources.json` (surchargeable avec la variable `ANKI_SOURCES`).
 
 ```bash
 uv run anki source set "courant::00-Thèse" "Allocation sur des angles disjoints"
 uv run anki source set "courant::01-AI::little book of deep learning" ~/Docs/lbdl.pdf
+uv run anki source set "courant::04-maths::dérivés" https://en.wikipedia.org/wiki/Derivative
 uv run anki source get "courant::01-AI::little book of deep learning::4"  # hérité du parent
 uv run anki source list
 uv run anki source missing        # decks sans source + cibles introuvables
 uv run anki source open "courant::00-Thèse"
 ```
 
-Le type est déduit de la cible : un chemin en `.pdf` donne un PDF, tout le reste est traité
-comme une note du vault. `--kind` force le choix.
+Le type est déduit de la cible : une URL `http(s)` donne une page web, un chemin en `.pdf` un
+PDF, tout le reste est traité comme une note du vault. `--kind` force le choix.
 
 Un sous-deck sans entrée propre hérite de la source du deck parent le plus proche : mapper
 `courant::01-AI::little book of deep learning` couvre donc ses sous-decks `::1` à `::6`.

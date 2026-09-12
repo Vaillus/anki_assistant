@@ -57,6 +57,8 @@
   --obsidianink: var(--om-magenta);
   --pdfbg: color-mix(in srgb, var(--om-red) 14%, var(--bg));
   --pdfink: var(--om-red);
+  --webbg: color-mix(in srgb, var(--om-blue) 16%, var(--bg));
+  --webink: var(--om-blue);
   --noteselbg: color-mix(in srgb, var(--om-accent) 10%, var(--bg));
   --notehover: var(--om-dark-background);
   --assistantbg: var(--om-dark-background);
@@ -166,6 +168,7 @@ a { color: var(--accent); }
 }
 .kind.obsidian { background: var(--obsidianbg); color: var(--obsidianink); }
 .kind.pdf { background: var(--pdfbg); color: var(--pdfink); }
+.kind.web { background: var(--webbg); color: var(--webink); }
 
 .chip {
   display: inline-flex;

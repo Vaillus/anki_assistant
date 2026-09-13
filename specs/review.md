@@ -85,18 +85,6 @@ All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note �
 | `DELETE /api/notes/{id}` | Delete a note |
 | `GET /api/models` | All note types and their field names |
 
-**`GET /api/notes?deck=`** — returns `{ deck, total, flagged, notes: Note[] }`.
-
-**`POST /api/notes/lookup`** — body `{ note_ids: [int] }`, returns `Note[]`. Unknown ids are silently dropped; order is preserved.
-
-**`PATCH /api/notes/{id}`** — body `{ fields?, tags?, unflag?, reflag? }`, returns `Note`. `unflag` defaults to `true` when omitted. `reflag` puts a flag back on the listed card ids (used by the workspace's undo); the colour is red, since colours carry no meaning.
-
-**`POST /api/notes/{id}/split`** — body `{ original: { fields, tags? } | null, new_notes: [{ model?, fields, tags? }] }`, returns `{ original: Note | null, created: Note[] }`. When `original` is `null` the original note is deleted after the new notes are created. [Anchors](./sources.md#anchors) are copied onto the created notes; when the original is deleted its anchors are removed.
-
-**`POST /api/notes`** — body `{ deck, model, fields, tags?, source_ids? }`, returns `Note`. Anchors the new note to `source_ids` when given.
-
-**`POST /api/notes/{id}/move`** — body `{ deck }`, returns `Note`. Each of the note's anchors is re-checked against the destination deck's [corpus](./sources.md): an anchor survives only if its source is in that corpus.
-
 The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 
 ## Frontend

@@ -69,28 +69,33 @@ The transform guarantees:
 
 ## API
 
-All routes are under `/api`. Errors from AnkiConnect surface as HTTP 502 `{ "detail": "<message>" }`; unknown note → 404; Anki unreachable → 503.
+All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note → 404, Anki unreachable → 503. All error bodies are `{ "detail": "<message>" }`.
 
-| Method & path | Body | Returns |
-|---|---|---|
-| `GET /api/decks` | — | `Deck[]` |
-| `GET /api/notes?deck=` | — | `{ deck, total, flagged, notes: Note[] }` |
-| `GET /api/notes/{id}` | — | `Note` |
-| `POST /api/notes/lookup` | `{ note_ids: [int] }` | `Note[]` (unknown ids dropped, order kept) |
-| `POST /api/notes/{id}/keep` | — | `Note` (flags cleared) |
-| `PATCH /api/notes/{id}` | `{ fields?, tags?, unflag?, reflag? }` | `Note` |
-| `POST /api/notes/{id}/split` | `{ original: { fields, tags? } \| null, new_notes: [{ model?, fields, tags? }] }` | `{ original: Note \| null, created: Note[] }` |
-| `POST /api/notes` | `{ deck, model, fields, tags?, source_ids? }` | `Note` |
-| `POST /api/notes/{id}/move` | `{ deck }` | `Note` |
-| `DELETE /api/notes/{id}` | — | `204` |
-| `GET /api/models` | — | `{ "Cloze": ["Text", "Back Extra"], … }` |
+| Route | Purpose |
+|---|---|
+| `GET /api/decks` | All decks with flagged counts and source kinds |
+| `GET /api/notes?deck=` | Notes for a deck and its sub-decks |
+| `GET /api/notes/{id}` | One note |
+| `POST /api/notes/lookup` | Several notes by id |
+| `POST /api/notes/{id}/keep` | Clear the flag, change nothing else |
+| `PATCH /api/notes/{id}` | Update fields, tags, flag state |
+| `POST /api/notes/{id}/split` | Split a note into fragments |
+| `POST /api/notes` | Create a note |
+| `POST /api/notes/{id}/move` | Move a note to another deck |
+| `DELETE /api/notes/{id}` | Delete a note |
+| `GET /api/models` | All note types and their field names |
 
-Notes on specific routes:
+**`GET /api/notes?deck=`** — returns `{ deck, total, flagged, notes: Note[] }`.
 
-- **`split`** — `original: null` deletes the original note after the new notes are created successfully. The route copies the original's anchors onto the created notes, and removes the original's anchors when it is deleted.
-- **`PATCH`** — `unflag` defaults to `true` when omitted. `reflag` puts a flag back on the listed card ids (used by the workspace's undo); the colour is red, since colours carry no meaning.
-- **`POST /api/notes`** — anchors the new note to `source_ids` when given.
-- **`move`** — re-checks each of the note's anchors against the destination deck's corpus: an anchor survives only if its source is in that corpus.
+**`POST /api/notes/lookup`** — body `{ note_ids: [int] }`, returns `Note[]`. Unknown ids are silently dropped; order is preserved.
+
+**`PATCH /api/notes/{id}`** — body `{ fields?, tags?, unflag?, reflag? }`, returns `Note`. `unflag` defaults to `true` when omitted. `reflag` puts a flag back on the listed card ids (used by the workspace's undo); the colour is red, since colours carry no meaning.
+
+**`POST /api/notes/{id}/split`** — body `{ original: { fields, tags? } | null, new_notes: [{ model?, fields, tags? }] }`, returns `{ original: Note | null, created: Note[] }`. When `original` is `null` the original note is deleted after the new notes are created. [Anchors](./sources.md#anchors) are copied onto the created notes; when the original is deleted its anchors are removed.
+
+**`POST /api/notes`** — body `{ deck, model, fields, tags?, source_ids? }`, returns `Note`. Anchors the new note to `source_ids` when given.
+
+**`POST /api/notes/{id}/move`** — body `{ deck }`, returns `Note`. Each of the note's anchors is re-checked against the destination deck's [corpus](./sources.md): an anchor survives only if its source is in that corpus.
 
 The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 

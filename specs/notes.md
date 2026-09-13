@@ -41,12 +41,7 @@ Other types work — the app iterates whatever fields the type declares — but 
 
 A Cloze note's `Text` field contains one or more **cloze deletions**: `{{c1::answer}}` or `{{c1::answer::hint}}`. The number after `c` is the **cloze number**; each distinct number produces one card.
 
-Rules for producing cloze fields (stated to Claude as facts in the system prompt):
-
-- Numbers are contiguous starting from `c1`.
-- Braces are balanced — every `{{` has its `}}`.
-- A Cloze note has at least one cloze deletion.
-- The answer is non-greedy: `{{c1::a::b}}` is answer `a`, hint `b`, not answer `a::b`.
+The main rule for producing cloze fields: numbers are contiguous starting from `c1`. The chat prompt states this and a few other constraints (balanced braces, at least one deletion, non-greedy answer) as facts to Claude.
 
 The renderer (`render.py`) parses cloze markers with a regex (`{{c(\d+)::(.*?)(?:::(.*?))?}}`), escapes the surrounding text first, then wraps each cloze in `<span class="cloze" data-n="N" data-hint="…">answer</span>`. The hint, when present, lives in a `data-hint` attribute so the UI can show `[hint]` in question state.
 

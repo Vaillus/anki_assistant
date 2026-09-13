@@ -19,42 +19,27 @@ By default only decks with a rolled-up count above zero are shown; a toggle show
 
 ## Queue (column 2)
 
-The **queue** is the list of notes for the selected deck, comprising the deck and all its sub-decks (Anki's `deck:"X"` semantics). Each note carries a `deck` field saying where it actually lives.
-
-### Ordering
-
-Flagged notes first, then unflagged; within each group by note id ascending (creation order).
-
-### Filtering
-
-The queue shows flagged notes only by default. A toggle ("voir toutes") shows the whole deck; unflagged notes appear at 55 % opacity. When the queue is empty the column shows "Rien à revoir ici."
-
-### Note display
-
-Each note in the queue shows:
-
-- An **identity line**: flag badge (with flagged-card labels for Cloze notes — see [Question state](#question-state)), short id (`#` + last 4 digits), note type, card count, tags, and a "garder" control for flagged notes.
-- **Rendered fields** — every field except `Back Extra`, rendered through the [display transform](#rendering). In question state, the flagged clozes are hidden.
-- **Reason callout** — a labelled block below the fields showing the [reason](./notes.md#reason-back-extra), when the note is flagged and the reason is non-empty. This is the only place `Back Extra` appears in the queue.
-
-### Selection
+The **queue** is the list of notes for the selected deck, comprising the deck and all its sub-decks (Anki's `deck:"X"` semantics). Each note carries a `deck` field saying where it actually lives. Flagged notes come first, then unflagged; within each group by note id ascending (creation order). The queue shows flagged notes only by default; a toggle ("voir toutes") shows the whole deck, unflagged notes at 55 % opacity. When the queue is empty the column shows "Rien à revoir ici."
 
 One note is selected at a time. After a deck change the first flagged note is selected. After a decision resolves a note, the next flagged note in the visible list is selected (or nothing if the queue is empty). Keyboard navigation: `j`/`↓` and `k`/`↑` move the selection.
 
+Each note shows three things, top to bottom:
+
+1. **Identity line** — short id (`#` + last 4 digits), note type, card count, tags. Flagged notes get a flag badge and a "garder" control. When the note is a flagged Cloze, the badge names the flagged cards ("⚑ c2", one label per flagged card).
+2. **Fields** — every field except `Back Extra`, rendered through the [display transform](#rendering). Flagged Cloze notes are shown with their flagged clozes hidden by default (see [Question state](#question-state)).
+3. **Reason callout** — when the note is flagged and the [reason](./notes.md#reason-back-extra) is non-empty, a labelled block below the fields shows it. This is the only place `Back Extra` appears in the queue. Shown regardless of question state.
+
 ## Question state
 
-A card is flagged from its **question side**: the flagged cloze is hidden, the others are visible. Showing the whole note at once often makes the reason for the flag unreadable, because the answer is right there. Question state solves this by presenting a flagged note the way it looked when the flag was placed.
+A card is flagged from its question side — the flagged cloze is hidden, the others visible. Showing the whole note with every answer exposed makes the reason for the flag hard to read. So a flagged Cloze note is shown the way it looked when the flag was placed: the flagged clozes hidden, the rest visible.
 
-### Rules
+Concretely, when a flagged note's rendered fields contain cloze deletions:
 
-A flagged note whose rendered fields contain cloze deletions is shown **hidden** by default:
-
-- Every cloze whose number matches a flagged card (card ordinal N → cloze c(N+1)) is replaced by its hint (or `[…]` when there is no hint). Its cloze-number label is kept.
+- Every cloze whose number matches a flagged card (card ordinal N → cloze c(N+1)) is replaced by its hint, or `[…]` when there is no hint. Its cloze-number label is kept.
 - Other clozes stay visible, as they would in Anki.
-- The note header names the flagged cards: "⚑ c2" (one label per flagged card).
-- "Révéler" (`Espace` on the selected note, or clicking a hidden cloze) switches the note to its full view; the same control switches back. The state is per note, kept in browser memory, reset when the deck changes or the queue is refetched after a decision.
+- "Révéler" (`Espace` on the selected note, or clicking a hidden cloze) switches to the full view; the same control switches back. The state is per note, kept in browser memory, reset when the deck changes or the queue is refetched after a decision.
 
-Unflagged notes, notes with no cloze deletion in their rendered fields, and notes whose flagged cards match no cloze (numbering gap) are shown in full, with no reveal control.
+Notes that don't match — unflagged, no cloze deletion in their fields, or flagged cards that match no cloze (numbering gap) — are shown in full, with no reveal control.
 
 The reason callout is shown in both states — it is about the flag, not part of the card.
 

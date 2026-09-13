@@ -35,7 +35,9 @@ Other types work — the app iterates whatever fields the type declares — but 
 
 `Back Extra` is never shown among the editable fields (queue or workspace) and is never editable by hand. A checkbox at validation offers to clear it ("vider Back Extra"). See [workspace.md § Validation](./workspace.md#validation).
 
-## Cloze markers
+## Field syntax
+
+### Cloze markers
 
 A Cloze note's `Text` field contains one or more **cloze deletions**: `{{c1::answer}}` or `{{c1::answer::hint}}`. The number after `c` is the **cloze number**; each distinct number produces one card.
 
@@ -48,7 +50,7 @@ Rules for producing cloze fields (stated to Claude as facts in the system prompt
 
 The renderer (`render.py`) parses cloze markers with a regex (`{{c(\d+)::(.*?)(?:::(.*?))?}}`), escapes the surrounding text first, then wraps each cloze in `<span class="cloze" data-n="N" data-hint="…">answer</span>`. The hint, when present, lives in a `data-hint` attribute so the UI can show `[hint]` in question state.
 
-## Context header
+### Context header
 
 Many notes start with a **context header**: a short topic label in a `<div class="context">…</div>` as the first line of the field, so that a cloze read in isolation is not ambiguous. Example:
 

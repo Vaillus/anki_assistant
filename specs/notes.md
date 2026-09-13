@@ -43,7 +43,7 @@ A Cloze note's `Text` field contains one or more **cloze deletions**: `{{c1::ans
 
 The main rule for producing cloze fields: numbers are contiguous starting from `c1`. The chat prompt states this and a few other constraints (balanced braces, at least one deletion, non-greedy answer) as facts to Claude.
 
-The renderer (`render.py`) parses cloze markers with a regex (`{{c(\d+)::(.*?)(?:::(.*?))?}}`), escapes the surrounding text first, then wraps each cloze in `<span class="cloze" data-n="N" data-hint="…">answer</span>`. The hint, when present, lives in a `data-hint` attribute so the UI can show `[hint]` in question state.
+The renderer (`render.py`) converts each cloze into a span the UI can toggle between two states: revealed (shows the answer) and hidden (shows the hint, or `[...]` if there is no hint).
 
 ### Context header
 

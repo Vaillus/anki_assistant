@@ -1,26 +1,17 @@
 # Review
 
-> The review surface: columns 1–2 of the page, the note-level view of a deck, and the decisions that write to Anki.
+> The main page of the app: a three-column layout plus the workspace overlay.
 
-## Purpose
+The page at `/` is a single screen split into three columns — the deck tree on the left, the queue of [notes](./notes.md) for the selected deck in the centre, and the Source tab ([sources.md](./sources.md)) on the right — plus the [workspace](./workspace.md) overlay that opens on a note for editing. This spec covers columns 1–2 and the decisions that write to Anki; the Source tab and the workspace have their own specs.
 
-Show, for one deck, the notes that need attention (flagged) with the rest of the deck one click away, and let the user resolve each note with a single decision. A resolved note leaves the list immediately.
-
-## Vocabulary
-
-Terms this spec uses but does not own — follow the link for the full definition:
-
-- **Note**, **card**, **note type**, **field** — [notes.md](./notes.md). The review unit is the note, not the card.
-- **Reason** — the plain text of a flagged note's `Back Extra` field. [notes.md § Reason](./notes.md#reason-back-extra).
-- **Source**, **corpus**, **anchor** — [sources.md](./sources.md). A deck's corpus feeds the Source tab (column 3) and the chat's context.
-- **Workspace** — the overlay opened on a note for editing. [workspace.md](./workspace.md). Everything that edits a note (rewrite, split, create, move, delete) happens there.
+The goal is to show, for one deck, the notes that need attention (flagged) with the rest of the deck one click away, and let the user resolve each note with a single decision. A resolved note leaves the list immediately.
 
 ## Deck tree (column 1)
 
 Column 1 lists every deck as a row indented by its depth in the `::` hierarchy. Each row shows:
 
 - The deck's **leaf name** (the last `::` segment).
-- **Source-kind indicators** — the kinds of the deck's effective corpus (own or inherited), deduplicated, in order. Empty when the deck has no corpus.
+- **Source-kind indicators** — the kinds of the deck's effective [corpus](./sources.md) (own or inherited), deduplicated, in order. Empty when the deck has no corpus.
 - **Own count** — the number of flagged notes whose cards live in exactly this deck.
 - **Rolled-up count** — the number of flagged notes in this deck and all its sub-decks, counting each note once even when its flagged cards straddle two sub-decks. Shown as an outlined badge only when it exceeds the own count.
 
@@ -44,7 +35,7 @@ Each note in the queue shows:
 
 - An **identity line**: flag badge (with flagged-card labels for Cloze notes — see [Question state](#question-state)), short id (`#` + last 4 digits), note type, card count, tags, and a "garder" control for flagged notes.
 - **Rendered fields** — every field except `Back Extra`, rendered through the [display transform](#rendering). In question state, the flagged clozes are hidden.
-- **Reason callout** — a labelled block below the fields showing the reason, when the note is flagged and the reason is non-empty. This is the only place `Back Extra` appears in the queue.
+- **Reason callout** — a labelled block below the fields showing the [reason](./notes.md#reason-back-extra), when the note is flagged and the reason is non-empty. This is the only place `Back Extra` appears in the queue.
 
 ### Selection
 
@@ -83,7 +74,7 @@ After **Garder** and after a workspace validation, the client refetches the deck
 
 The queue header shows "Annuler la dernière validation" while the server holds a snapshot from the last workspace validation ([workspace.md § Undo](./workspace.md#undo)).
 
-The decisions themselves — what a split, a move or a delete writes, how anchors follow the note — are specified in [workspace.md § Validation](./workspace.md#validation). `review.py` holds the functions that perform them, used by `workspace.apply`, and the HTTP routes below stay available for the CLI and the tests.
+The decisions themselves — what a split, a move or a delete writes, how [anchors](./sources.md#anchors) follow the note — are specified in [workspace.md § Validation](./workspace.md#validation). `review.py` holds the functions that perform them, used by `workspace.apply`, and the HTTP routes below stay available for the CLI and the tests.
 
 ## Rendering
 

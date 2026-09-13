@@ -19,7 +19,7 @@ By default only decks with a rolled-up count above zero are shown; a toggle show
 
 ## Queue (column 2)
 
-The **queue** is the list of notes for the selected deck, comprising the deck and all its sub-decks (Anki's `deck:"X"` semantics). Each note carries a `deck` field saying where it actually lives. Flagged notes come first, then unflagged; within each group by note id ascending (creation order). The queue shows flagged notes only by default; a toggle ("voir toutes") shows the whole deck, unflagged notes at 55 % opacity. When the queue is empty the column shows "Rien à revoir ici."
+The **queue** is the list of notes for the selected deck and all its sub-decks. Each note carries a `deck` field saying where it actually lives. Flagged notes come first, then unflagged; within each group by note id ascending (creation order). The queue shows flagged notes only by default; a toggle ("voir toutes") shows the whole deck, unflagged notes at 55 % opacity. When the queue is empty the column shows "Rien à revoir ici."
 
 One note is selected at a time. After a deck change the first flagged note is selected. After a decision resolves a note, the next flagged note in the visible list is selected (or nothing if the queue is empty). Keyboard navigation: `j`/`↓` and `k`/`↑` move the selection.
 

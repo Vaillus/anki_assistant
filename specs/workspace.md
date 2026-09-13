@@ -176,6 +176,26 @@ All under `/api`. Errors follow [review.md § API](./review.md#api) (502 AnkiCon
 
 `errors` is empty on success; on failure it names each failed step (« création de w2 : … », « annulation : … »). `rolled_back` is true when every rollback step succeeded. `undo_available` is true after a successful validation that deleted nothing.
 
+## Module `review.py`
+
+Pure functions over `AnkiClient` (and `SourceStore` for deck source kinds), no FastAPI imports, so they can be unit-tested with a fake client:
+
+```python
+def list_decks(client, store) -> list[DeckSummary]
+def list_notes(client, deck) -> DeckNotes
+def get_note(client, note_id) -> NoteView
+def keep(client, note_id) -> NoteView
+def get_notes(client, note_ids) -> list[NoteView]
+def search_notes(client, query, limit=50) -> list[NoteView]
+def edit(client, note_id, fields=None, tags=None, unflag=True, reflag=None) -> NoteView
+def split(client, note_id, original, new_notes) -> SplitResult
+def create(client, deck, model, fields, tags) -> NoteView
+def move(client, note_id, deck) -> NoteView
+def delete(client, note_id) -> None
+```
+
+`AnkiClient` gains what these need (e.g. `unflag_note(note_id)`, `note_card_ids(note_id)`), nothing UI-specific.
+
 ## Module `workspace.py`
 
 Pure functions over `AnkiClient` and `SourceStore`, no FastAPI imports, reusing `review.create`, `review.edit`, `review.move`, `review.delete`:

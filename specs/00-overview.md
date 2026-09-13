@@ -40,7 +40,7 @@ One page, `/`, laid out as **three columns** (validated by prototype, variant A)
         └──────────────────────────────────┴────────────────────────┘
 ```
 
-Detailed behaviour: [review.md](./review.md) (columns 1–2), [sources.md](./sources.md) (Source tab), [workspace.md](./workspace.md) (the overlay), [chat.md](./chat.md) (the conversation). Conventions of the notes themselves (raw field syntax, context header): [notes.md](./notes.md).
+Detailed behaviour: [review.md](./review.md) (columns 1–2), [sources.md](./sources.md) (Source tab), [workspace.md](./workspace.md) (the overlay), [chat.md](./chat.md) (the conversation). Conventions of the notes themselves (raw field syntax, context header): [notes.md](./notes.md). Visual identity and colour system: [theme.md](./theme.md).
 
 There is also a CLI (`uv run anki …`) over the same client; it predates the web UI and stays as a debugging tool. Not specced beyond `README.md`.
 

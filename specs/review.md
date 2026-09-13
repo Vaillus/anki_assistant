@@ -31,21 +31,15 @@ Each note shows three things, top to bottom:
 
 ## Question state
 
-A card is flagged from its question side — the flagged cloze is hidden, the others visible. Showing the whole note with every answer exposed makes the reason for the flag hard to read. So a flagged Cloze note is shown the way it looked when the flag was placed: the flagged clozes hidden, the rest visible.
+A flagged Cloze note starts with its flagged clozes hidden and the rest visible — the question side the reviewer saw when they placed the flag. Card ordinal N hides cloze c(N+1). A hidden cloze shows its hint, or `[…]` when there is no hint; the cloze-number label stays.
 
-Concretely, when a flagged note's rendered fields contain cloze deletions:
+"Révéler" (`Espace` on the selected note, or clicking a hidden cloze) switches to full view; the same gesture switches back. The state is per note, reset when the deck changes or the queue is refetched after a decision.
 
-- Every cloze whose number matches a flagged card (card ordinal N → cloze c(N+1)) is replaced by its hint, or `[…]` when there is no hint. Its cloze-number label is kept.
-- Other clozes stay visible, as they would in Anki.
-- "Révéler" (`Espace` on the selected note, or clicking a hidden cloze) switches to the full view; the same control switches back. The state is per note, kept in browser memory, reset when the deck changes or the queue is refetched after a decision.
-
-Notes that don't match — unflagged, no cloze deletion in their fields, or flagged cards that match no cloze (numbering gap) — are shown in full, with no reveal control.
-
-The reason callout is shown in both states — it is about the flag, not part of the card.
+Notes without hideable clozes — unflagged, no cloze deletions in their fields, or flagged cards whose ordinals match no cloze — are shown in full, with no reveal control.
 
 ## Decisions
 
-The queue offers three gestures on a note. Everything that edits a note happens in the workspace; the queue's own decisions are flag-only.
+The queue offers three gestures on a note. Everything that edits a note happens in the [workspace](./workspace.md); the queue's own decisions are flag-only.
 
 | Gesture | Trigger | Anki writes | Flag | Queue effect |
 |---|---|---|---|---|
@@ -55,24 +49,22 @@ The queue offers three gestures on a note. Everything that edits a note happens 
 
 **Garder** clears nothing but the flag: the flag was a false alarm, the note is fine, its `Back Extra` stays. No confirmation. Clearing a flag means setting the flag value to zero on every card of the note.
 
-After **Garder** and after a workspace validation, the client refetches the deck's notes and the deck counts, then selects the next flagged note. A discarded workspace refetches too but leaves the selection where it was.
+After Garder and after a workspace validation, the deck tree and queue refresh and the next flagged note is selected. A discarded workspace refreshes too but leaves the selection where it was. The queue header shows "Annuler la dernière validation" while the server holds a snapshot from the last workspace validation ([workspace.md § Undo](./workspace.md#undo)).
 
-The queue header shows "Annuler la dernière validation" while the server holds a snapshot from the last workspace validation ([workspace.md § Undo](./workspace.md#undo)).
-
-The decisions themselves — what a split, a move or a delete writes, how [anchors](./sources.md#anchors) follow the note — are specified in [workspace.md § Validation](./workspace.md#validation). `review.py` holds the functions that perform them, used by `workspace.apply`, and the HTTP routes below stay available for the CLI and the tests.
+What each workspace action writes — splits, moves, deletes, how [anchors](./sources.md#anchors) follow — is specified in [workspace.md § Validation](./workspace.md#validation). The functions that perform them live in `review.py`, used by the workspace's apply route and available to the CLI and tests through the [API](#api).
 
 ## Rendering
 
-`render_field(raw) → display HTML` turns one raw Anki field value into safe display HTML. There is a Python implementation (`render.py`) and a JS port in the frontend; both follow the same rules.
+Every note field except `Back Extra` goes through a display transform before it appears in the queue or the workspace. The transform turns a raw Anki field value into safe display HTML. There is a Python implementation (`render.py`) and a JS port in the frontend; both follow the same rules.
 
 The transform guarantees:
 
-- **No injection.** Nothing from the note can produce markup in the output. The raw value is escaped before any display markup is re-introduced.
-- **Line breaks preserved.** Anki's `<br>`, closing `</p>`, `</div>`, `</li>` tags each become a line break.
-- **Images replaced.** An `<img>` with an `alt` attribute becomes the alt text (Anki's rendered LaTeX images carry the source as alt). An `<img>` without useful alt text becomes `[image]`.
+- **No injection.** The raw value is escaped before any display markup is introduced. Nothing from the note can produce arbitrary markup.
+- **Line breaks preserved.** Anki's `<br>` and block-closing tags each become a line break.
+- **Images replaced.** An image with an alt attribute becomes the alt text (Anki's rendered LaTeX images carry the LaTeX source as alt). An image without useful alt becomes `[image]`.
 - **All other tags stripped.**
-- **Cloze deletions marked up.** Each `{{cN::answer}}` or `{{cN::answer::hint}}` becomes a highlighted span carrying the cloze number and, when present, the hint. The UI shows the cloze number as a small label before each one, since most notes carry several clozes and the flag is per card.
-- **Context header extracted.** A context header at the start of the field is extracted and styled separately from the body. See [notes.md § Context header](./notes.md#context-header).
+- **Cloze deletions marked up.** Each cloze deletion is displayed with its number as a label and, when present, its hint. The number is needed because most notes carry several clozes and the flag is per card.
+- **Context header extracted.** A [context header](./notes.md#context-header) at the start of the field is extracted and styled separately from the body.
 - **MathJax untouched.** `\(…\)`, `\[…\]`, `[$]…[/$]` delimiters are left as text.
 
 ## API
@@ -104,7 +96,7 @@ The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md
 
 ## Frontend
 
-Single page, vanilla JS, no framework or bundler. Scripts load in order: `state.js` (state object and helpers), `api.js`, `render.js` (three-column layout), `workspace.js` (the overlay), `app.js` (events and boot). One in-memory state object; every state change triggers a full re-render.
+Single page, vanilla JS, no framework or bundler. Scripts load in order: `state.js` (state and helpers), `api.js`, `render.js` (three-column layout), `workspace.js` (the overlay), `app.js` (events and boot). One in-memory state object; every state change triggers a full re-render.
 
 ### Keyboard
 
@@ -119,7 +111,7 @@ With the workspace closed and no input focused:
 | `Entrée` | Ouvrir (open workspace on selected note) |
 | `Espace` | Toggle question state (reveal / hide flagged clozes) |
 
-Keys are ignored while an input, textarea, or select is focused. Workspace-open keyboard: see [workspace.md § Keyboard](./workspace.md#keyboard).
+Keys are ignored while an input, textarea, or select is focused. Workspace keyboard shortcuts are specified in [workspace.md § Keyboard](./workspace.md#keyboard).
 
 There are no dialogs: every edit happens on a workspace card. Native `confirm()` is used for the two confirmations (discarding a workspace with changes, validating a plan that deletes).
 
@@ -146,9 +138,9 @@ The theme picker lives in the header of column 1. It lists every theme grouped b
 
 With no stored choice, the OS preference (`prefers-color-scheme`) picks between two defaults — Tokyo Night (dark) and Catppuccin Latte (light) — and is followed live. The resolved theme is stamped on `<html>` as `data-theme` by an inline script in `index.html`, before the stylesheets, so a reload never flashes another theme.
 
-## Logo
+### Logo
 
-A pixel-art star (`static/star.svg`): a flat-colour sprite traced from source artwork. It appears as the mark in the header of column 1 (before the "Decks" title) and as the favicon. It is the one visual that does not follow the theme — the colours live in the image, not in `app.css`.
+A pixel-art star (`static/star.svg`): a flat-colour sprite traced from source artwork. It appears as the mark in the column 1 header and as the favicon. It is the one visual that does not follow the theme — the colours live in the image, not in `app.css`.
 
 ## Module `review.py`
 

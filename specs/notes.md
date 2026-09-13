@@ -20,7 +20,7 @@ A field value is stored as an HTML fragment written by Anki's editor: `<br>` for
 
 ## Note types the app handles
 
-The app is **note-type-agnostic**: no code compares model names. A note's type is an opaque string carried through from AnkiConnect, and the field list comes from Anki at runtime. In practice, the collection uses two types:
+The app does not hardcode note type names — it iterates whatever fields Anki declares for the type. In practice, the collection uses two types:
 
 | Note type | Fields | Cards produced |
 |---|---|---|

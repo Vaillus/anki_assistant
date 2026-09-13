@@ -1,16 +1,14 @@
 # Sources
 
-> A deck's corpus: the documents it was made from, how they are stored, resolved, displayed, turned into text for Claude, **anchored** to individual notes, and written back to the vault.
+> A deck's corpus: the documents it was made from, how they are stored and resolved, what text the app extracts from them, which notes are anchored to them, and the two ways the app writes back into the vault.
 
-## Purpose
+## Corpus
 
-When reviewing a flagged note the user wants the original material within reach, and Claude needs it in context to verify or rewrite. A deck therefore points to a **corpus**: an ordered list of sources.
+A deck's **corpus** is an ordered list of **sources**. A source is one document the deck was made from: a **vault note** — a Markdown file in the user's Obsidian **vault** — or a **PDF** on disk, optionally restricted to a page range. "Note" on its own keeps its meaning from [notes.md](./notes.md): an Anki note.
 
-A corpus can be large (ten notes for a big deck). A single note usually comes from one or two of them. **Anchors** record which ones, so that the Source tab opens on the right documents and the chat can load those alone instead of the whole corpus (see [chat.md](./chat.md#context)).
+Every source carries a stable **id**. The id is the identity of the source: [anchors](#anchors) point to it, so renaming a vault note or moving a PDF changes the entry's target and leaves everything that points to the source intact.
 
-## Data model
-
-`sources.json` at the project root (override with `ANKI_SOURCES`):
+Corpora live in one JSON file, `sources.json` at the project root (another path can be given in the `ANKI_SOURCES` environment variable). Nothing about sources is stored in Anki. The file has three parts: the vault (name and path), the corpora keyed by deck name, and the anchors:
 
 ```json
 {
@@ -31,116 +29,94 @@ A corpus can be large (ten notes for a big deck). A single note usually comes fr
 }
 ```
 
-### Source entry
+A source entry has:
 
-- `id` — 6 lowercase base32 characters, generated when the entry is created, never changed. **The id is the identity of a source**: anchors point to it, and renaming a vault note or moving a PDF (editing `target`) keeps the anchors intact.
-- `kind` — `"obsidian"` or `"pdf"`.
-- `target` — note name relative to the vault root, with or without `.md` (obsidian), or a filesystem path, `~` allowed (pdf).
-- `pages` — optional, pdf only. `"12-19"`, `"7"`, `"3-5,9"`. 1-based, inclusive. Absent = whole document.
-- `note` — optional free text shown next to the source.
-- **Backward compatibility:** a deck value that is a single object (the 0.1 format) is read as a one-element list; an entry without `id` gets one on load. Both are rewritten on next save.
+- `id` — six lowercase letters or digits, path-safe, generated when the entry is created and never changed.
+- `kind` — `obsidian` or `pdf`.
+- `target` — for a vault note, its name relative to the vault root, with or without `.md`; for a PDF, a filesystem path, `~` allowed.
+- `pages` — PDF only, optional: a page range such as `12-19`, `7` or `3-5,9`, 1-based and inclusive. Absent means the whole document.
+- `note` — optional free text shown next to the source, called its **annotation** below.
 
-### Anchors
+Older files are still read: a deck whose value is a single object rather than a list (the 0.1 format) is read as a one-element corpus, and an entry without an id is given one when the file is loaded. Both are written back in the current shape on the next save.
 
-`anchors` maps an Anki **note id** (as a string, JSON keys) to a **list of source ids**, in the order the user added them. Any number of sources per note, any number of notes per source, no duplicates within a list. An empty list is removed on save. Nothing is written into Anki: the note does not know it is anchored, only the repo does.
-
-Each anchor is qualified separately. It is **valid** when its source is in the effective corpus of the note's deck (own or inherited), **dangling** when the source id exists but is not in that corpus (the note was moved, or the deck's corpus was rewritten). A note's whole entry is **orphan** when the note no longer exists in Anki. `SourceStore` cannot tell orphan from valid on its own — that needs Anki — so it exposes the raw mapping and lets `review.py` / the routes qualify it.
-
-Lifecycle rules (enforced by `workspace.apply` at validation, see [workspace.md](./workspace.md#validation), and by the review routes when called directly):
-
-- **Note deleted** → its anchors become orphan. Not removed eagerly (the delete path should not fail on a `sources.json` write); cleaned by « nettoyer » below.
-- **Source removed from a corpus** → that source id is removed from every note's list. The UI warns first: « 3 notes sont ancrées à cette source ».
-- **Note moved to another deck** → each anchor is kept if its source is in the destination's effective corpus, removed otherwise.
-- **Split** → the fragments (kept original and new notes) inherit the original's anchors.
-- **Create** (sibling) → the new note gets the anchors chosen in the dialog, default: the original's.
+A deck points to a corpus because, when reviewing a flagged note, the user wants the original material within reach and Claude needs it to check or rewrite the card. The [Source tab](#source-tab-column-3) shows the corpus; the chat lists it to Claude and lets the user attach any of its sources ([chat.md § Context](./chat.md#context)).
 
 ### Inheritance
 
-`SourceStore.corpus(deck) -> list[Source]`: the deck's own list if present, else the nearest ancestor's (`a::b::c` → `a::b` → `a`), else `[]`. `Source.deck` records which deck the entry was written on so the UI can say « héritée de courant::01-AI ».
+A deck with no corpus of its own uses the nearest ancestor's: `a::b::c` falls back to `a::b`, then to `a`, then to nothing. The corpus a deck ends up with — its **own corpus** or an **inherited** one — is its **effective corpus**. Each source remembers the deck it was written on, so the UI can say « héritée de courant::01-AI » and the API can report where an inherited corpus comes from.
 
-### Kinds
+Inheritance stops as soon as a deck has a corpus of its own. Every write that changes a deck's sources therefore operates on that deck, never on the ancestor, and on a deck that inherits it first **materialises** the inherited corpus: the inherited entries are copied onto the deck as its own, ids kept so that anchors survive, and the change is applied to that copy. Removing the last own entry deletes the deck's corpus and inheritance resumes.
 
-| kind | exists? | `uri()` | text |
-|---|---|---|---|
-| obsidian | `<vault>/<target>.md` is a file | `obsidian://open?vault=<name>&file=<target>` (percent-encoded, `%20` for spaces, never `+`) | file content |
-| pdf | path is a file | `file://` URI | `pypdf` text of the selected pages, pages joined with `\n\n--- page N ---\n\n` |
+### Text
 
-## Text extraction
+A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens through a `file://` link. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
 
-`Source.text(vault, max_chars=60_000) -> SourceText`:
+Each source yields one **extracted text**, the same wherever the app shows or sends it — the Source tab, an attached source in the chat, a read by Claude:
 
-```python
-@dataclass
-class SourceText:
-    text: str  # extracted, possibly truncated
-    truncated: bool
-    n_pages: int | None  # pdf only
-    warning: str  # e.g. "PDF entier (312 pages) sans plage de pages : seules les 60 000 premiers caractères sont passés."
-```
+- A vault note yields its Markdown as written, without the YAML front matter block at the top.
+- A PDF yields the text of the pages in its range (every page when there is none), each page preceded by a marker giving its number.
 
-- Obsidian: read the file; strip YAML front matter (`---` block at the top); keep the Markdown as is.
-- PDF: open with `pypdf`, extract the pages in `pages` (or all). Cache the extraction in memory keyed by `(path, mtime, pages)` — PDFs are slow to parse and the same corpus is requested on every note.
-- Truncate to `max_chars` with `truncated=True`. A whole PDF without `pages` gets the warning above so the user learns to set a range.
+The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning (« PDF entier (312 pages) sans plage de pages : seules les 60 000 premiers caractères sont passés. ») so the user learns to set one. Retrieval inside long PDFs is out of scope: the page range is the mechanism.
+
+## Anchors
+
+An **anchor** links an Anki note to a source of its deck's corpus that the note was made from. A note can be anchored to several sources, in the order the user added them, and a source to any number of notes. Anchors are stored in `sources.json` (note id → list of source ids); the note in Anki carries nothing.
+
+A corpus can be large — ten documents for a big deck — while a single note usually comes from one or two of them. Anchors record which, so that the Source tab opens on the right documents and the chat can attach those alone rather than the whole corpus ([chat.md § How source text enters context](./chat.md#how-source-text-enters-context)). Claude also sees, in the corpus it is given, which cards of the workspace each source is anchored to.
+
+Each anchor is qualified against the note's current deck:
+
+- **valid** — the source is in the effective corpus of the note's deck;
+- **dangling** — the source exists but is not in that corpus (the note was moved, or the corpus rewritten);
+- **orphan** — the note itself no longer exists in Anki. Telling orphan from valid needs Anki, so it is computed on request and never stored.
+
+Anchors follow the note through the writes of the workspace ([workspace.md § Validation](./workspace.md#validation)):
+
+- **Note deleted** → its anchors become orphan. They are not removed eagerly (a delete must not fail on a `sources.json` write); « nettoyer » in the Source tab removes them.
+- **Source removed from a corpus** → every anchor to it is removed. The UI warns first: « 3 notes sont ancrées à cette source ».
+- **Note moved to another deck** → each anchor is kept if its source is in the destination's effective corpus, removed otherwise.
+- **Split** → the kept original and the new fragments inherit the original's anchors.
+- **Create** → the new note gets the anchors chosen in the workspace, by default those of the note the workspace was opened on ([workspace.md § Vocabulary](./workspace.md#vocabulary)).
 
 ## Writing to the vault
 
-The app writes into the vault in exactly two ways, both **obsidian** kind only, both triggered by a user click (a form, or « Appliquer » on a chat proposal — never by Claude alone):
+The vault is the user's own notes. The app writes into it in exactly two ways, on vault notes only, and only behind a user click — a form, or « Appliquer » on a chat proposal ([chat.md § Proposal tools](./chat.md#proposal-tools)). Claude never writes on its own.
 
-- **Create a note.** `SourceStore.create_note(deck, name, content) -> Source`: writes `<vault>/<name>.md` with `content` as is (the caller may include front matter), **refuses if the file already exists** (409), creates the parent directories if `name` has a `/`, then appends an obsidian entry to the deck's own corpus (materialising an inherited corpus first, same rule as adding a source from the form) and returns it. No default folder: `name` is whatever the user typed or accepted in the proposal.
-- **Edit a note.** `SourceStore.replace_in_note(source_id, old, new) -> None`: reads the file, requires `old` to occur **exactly once** (0 → 409 « passage introuvable », 2+ → 409 « passage ambigu »), writes the file back with the single replacement. No whole-file rewrite: a source edit is always a bounded, reviewable replacement, and it is what makes the chat's undo of a source edit trivial (swap `old` and `new`).
+- **Create a vault note.** Writes `<vault>/<name>.md` with the given content as is (front matter included if the caller supplies it), creating parent folders when the name contains a `/`. Refused if the file already exists. The new file is appended to the deck's own corpus as an obsidian source, materialising an inherited corpus first ([Inheritance](#inheritance)). There is no default folder: the name is what the user typed or accepted.
+- **Replace a passage.** Replaces one passage of a vault note with another. The passage to replace must occur **exactly once** in the file: refused as « passage introuvable » when it is absent, « passage ambigu » when it is repeated. There is no whole-file rewrite. A source edit is always a bounded, reviewable replacement, and undoing it is the same replacement with the two texts swapped.
 
-The vault is the user's own notes; these two constraints are the whole safety story and are not to be relaxed for convenience.
+These two constraints are the whole safety story and are not to be relaxed for convenience.
 
-## UI — Source tab (column 3)
+## Source tab (column 3)
 
-- Header per source: kind chip (`obsidian` violet, `pdf` red), target, `pages`/`note` in muted text, « héritée de … » when inherited, ⚠ when the file is missing, an « ouvrir ↗ » link to `uri`, and « ancrée à cette note » in accent colour on each source the selected note is anchored to. **Anchored sources are listed first, in anchor order, and expanded; the others are collapsed** to their header.
-- Below: the extracted text in a scrollable monospace block (first 4 000 chars, « afficher plus » expands to the full `text`).
-- Anchor control: on the selected note in column 2, one chip per anchor « ⚓ différentiabilité » (× removes it) and a « ⚓ ancrer… » chip opening a menu of the effective corpus sources not yet anchored. A dangling anchor shows as « ⚓ source hors corpus ».
-- Footer: « + ajouter une source » → a small form: kind (auto-detected from the target: ends with `.pdf` → pdf, else obsidian), target with autocompletion over vault notes (`/api/vault/notes?q=`), pages, note. Saving writes to `sources.json` on the **selected deck** (not the ancestor), so adding a source to a sub-deck stops inheritance for that sub-deck — the form says so when the current corpus is inherited, with a « copier les sources héritées d'abord » checkbox (on by default).
-- Each source row has « retirer ». On an inherited corpus, « retirer » writes the remaining entries onto the selected deck (same rule as adding: the corpus is materialised and inheritance stops). Removing the last own entry deletes the deck entry and inheritance resumes. When the source has anchors, the confirm says how many and that they will be removed.
-- Footer, right: « n notes ancrées disparues · nettoyer » when `GET /api/sources/anchors/orphans` returns a non-empty list for the collection; hidden otherwise. Clicking calls `prune` and refreshes.
+The Source tab shows the effective corpus of the deck selected in column 1 ([review.md](./review.md)). When the corpus is inherited, a banner names the deck it comes from. Sources the selected note is anchored to come first, in anchor order, expanded; the others are collapsed to their header. A deck with no effective corpus shows « Aucune source pour ce deck. »
+
+Each source is a row:
+
+- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
+- **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
+
+**Adding a source.** « + ajouter une source » opens a form: target, with autocompletion over the vault's notes; kind, pre-selected from the target (ends with `.pdf` → pdf, otherwise obsidian); pages; annotation. Saving writes on the selected deck. When the corpus is inherited the form says so — this deck will stop inheriting — and offers « copier les sources héritées d'abord », checked by default, which materialises the inherited corpus before adding; unchecked, the new source becomes the deck's whole corpus.
+
+**Removing a source.** « retirer » writes the remaining entries on the selected deck, materialising an inherited corpus the same way; removing the last own entry restores inheritance. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
+
+**Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ différentiabilité », × removes it) and « ⚓ ancrer… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source hors corpus ».
+
+**Orphans.** The tab's footer shows « n notes ancrées disparues · nettoyer » when anchored notes no longer exist in Anki; clicking removes their anchors. Hidden when there are none.
 
 ## API
 
-| Method & path | Body | Returns |
-|---|---|---|
-| `GET /api/sources` | — | the whole `decks` mapping, lists only |
-| `GET /api/sources/corpus?deck=&note_id=` | — | `{ deck, inherited_from: str \| null, anchored: [source_id], sources: SourceView[] }` — `anchored` lists the note's anchors in order (`[]` without `note_id`) |
-| `PUT /api/sources?deck=` | `SourceEntry[]` (validated; empty list = delete entry; entries without `id` get one; anchors to ids no longer present are removed) | `{ deck, sources, removed_anchors: int }` |
-| `GET /api/vault/notes?q=` | — | `string[]`, up to 50 note names containing `q` case-insensitively, `.md` stripped, sorted |
-| `GET /api/sources/anchors?note_id=` | — | `{ note_id, anchors: [{ source_id, status: "valid" \| "dangling" }] }` |
-| `PUT /api/sources/anchors?note_id=` | `{ source_ids: [str] }` (full list, order kept; `[]` clears) | same as GET; 404 if a source id is unknown |
-| `GET /api/sources/anchors/orphans` | — | `{ note_ids: [...] }` — anchored note ids that Anki no longer knows (`notesInfo` returns empty) |
-| `POST /api/sources/anchors/prune` | — | `{ removed: int }` |
-| `POST /api/sources/notes` | `{ deck, name, content, anchor_note_ids?, id? }` | `{ deck, source: SourceView }`; 409 if the file exists. `anchor_note_ids` appends the new source to those notes' anchors in the same call; `id` lets the chat keep the id it announced to Claude ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
-| `PATCH /api/sources/{source_id}/text` | `{ old, new }` | `{ source: SourceView }` (text re-extracted); 409 on 0 or 2+ matches; 400 on a pdf source |
+All routes are under `/api`. A deck travels in the query string, never in the path (deck names contain `::` and spaces); a source id is path-safe and goes in the path. A vault write that is refused (existing file, passage absent or ambiguous) answers 409, and 400 on a PDF source; an unknown source id is 404.
 
-`SourceView`:
-
-```json
-{ "id": "m3x8pa", "kind": "pdf", "target": "~/…/lbdl.pdf", "pages": "41-52", "note": "", "on_deck": "courant::01-AI::little book of deep learning",
-  "exists": true, "uri": "file:///…", "text": "…", "truncated": false, "n_pages": 12, "warning": "", "anchored_count": 3 }
-```
-
-The deck goes in the query string, not the path: deck names contain `::` and spaces. Source ids are path-safe, so they go in the path.
-
-`text` in `corpus` is the full extracted text (already capped by `max_chars`); the frontend does its own 4 000-char fold. `chat.py` calls `SourceStore.corpus(deck)` + `Source.text()` directly, not the HTTP API.
-
-## Module `sources.py`
-
-Keeps the existing `Vault`, `Source`, `SourceStore` names. Added for anchors and writing:
-
-```python
-Source.id: str                                            # generated by new_source_id() when absent
-SourceStore.anchors(note_id) -> list[str]                  # raw mapping lookup, [] when none
-SourceStore.set_anchors(note_id, source_ids) -> None       # KeyError if an id is unknown anywhere in decks
-SourceStore.add_anchor(note_id, source_id) -> None         # no-op if already present
-SourceStore.anchors_to(source_id) -> list[int]
-SourceStore.anchored_note_ids() -> list[int]
-SourceStore.remove_anchors(note_ids) -> int
-SourceStore.by_id(source_id) -> Source | None
-SourceStore.create_note(deck, name, content) -> Source     # FileExistsError if present
-SourceStore.replace_in_note(source_id, old, new) -> None   # ValueError: 0 or 2+ matches, or pdf
-```
-
-`set_corpus(deck, entries)` assigns ids to new entries and drops anchors whose source id disappears from that deck's list (returns the count through the route). The CLI `anki source …` keeps working on the first entry and gains `anki source anchor NOTE_ID SOURCE_ID…` (sets the full list).
+| Route | Purpose |
+|---|---|
+| `GET /api/sources` | Every deck's own corpus, as stored |
+| `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with each source's extracted text and where it is inherited from; with `note_id`, the note's anchors |
+| `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
+| `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |
+| `GET /api/sources/anchors?note_id=` | A note's anchors, each qualified valid or dangling |
+| `PUT /api/sources/anchors?note_id=` | Replace a note's anchors, order kept |
+| `GET /api/sources/anchors/orphans` | Anchored note ids that Anki no longer knows |
+| `POST /api/sources/anchors/prune` | Remove the orphans' anchors |
+| `POST /api/sources/notes` | Create a vault note and add it to a deck's corpus; may anchor notes to it and reuse an id announced beforehand ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
+| `PATCH /api/sources/{source_id}/text` | Replace one passage of a vault note |

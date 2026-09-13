@@ -47,12 +47,10 @@ The renderer (`render.py`) converts each cloze into a span the UI can toggle bet
 
 ### Context header
 
-Many notes start with a **context header**: a short topic label in a `<div class="context">…</div>` as the first line of the field, so that a cloze read in isolation is not ambiguous. Example:
+Many notes start with a **context header**: a short topic label in a `<div class="context">…</div>` as the first line of the field, so that a card read in isolation is not ambiguous. Example:
 
 ```html
 <div class="context">Stone's Model - FAB and KKT Conditions:</div>There are {{c1::three}} conditions…
 ```
 
-A first line that is the grammatical start of the sentence is not a header — it is the `<div class="context">` wrapper that makes the difference, and the note type's CSS styles it.
-
-The renderer extracts the header before stripping HTML, then re-wraps it as `<span class="context">…</span>` ahead of the body. Plain-text conversion (`strip_html`) does not preserve the header's visual distinction — it drops the `<div>` and the header runs into the body text.
+The renderer extracts the header and styles it separately from the body.

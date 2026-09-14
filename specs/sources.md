@@ -26,8 +26,6 @@ A deck points to a corpus because, when reviewing a flagged note, the user wants
 
 A deck's **effective corpus** is its own sources followed by each ancestor's, nearest first: `a::b::c`'s own, then `a::b`'s, then `a`'s. A deck with no own sources sees only the inherited ones. Each source remembers the deck it was written on, so the UI can distinguish own from inherited.
 
-Each deck's own list is independent: writing to one never changes another.
-
 ### Text
 
 A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens through a `file://` link. A source whose file does not exist is **missing**: still listed, marked as such, with no text.

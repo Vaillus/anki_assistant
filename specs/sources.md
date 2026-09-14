@@ -6,40 +6,21 @@
 
 A deck's **corpus** is an ordered list of **sources**. A source is one document the deck was made from: a **vault note** — a Markdown file in the user's Obsidian **vault** — or a **PDF** on disk, optionally restricted to a page range. "Note" on its own keeps its meaning from [notes.md](./notes.md): an Anki note.
 
-Every source carries a stable **id**. The id is the identity of the source: [anchors](#anchors) point to it, so renaming a vault note or moving a PDF changes the entry's target and leaves everything that points to the source intact.
+Every source has an **id**: six path-safe characters, generated once and never changed. [Anchors](#anchors) point to it, so renaming a vault note or moving a PDF keeps them intact.
 
-Corpora live in one JSON file, `sources.json` at the project root (another path can be given in the `ANKI_SOURCES` environment variable). Nothing about sources is stored in Anki. The file has three parts: the vault (name and path), the corpora keyed by deck name, and the anchors:
-
-```json
-{
-  "vault": { "name": "Vault", "path": "/Users/hugovaillaud/Documents/Vault" },
-  "decks": {
-    "courant::00-Thèse": [
-      { "id": "k7q2vd", "kind": "obsidian", "target": "Allocation sur des angles disjoints" },
-      { "id": "m3x8pa", "kind": "pdf", "target": "~/Documents/these/stone_search.pdf", "pages": "12-19", "note": "chap. 2" }
-    ],
-    "courant::04-maths::dérivés": [
-      { "id": "r9wt4n", "kind": "obsidian", "target": "maths/différentiabilité" }
-    ]
-  },
-  "anchors": {
-    "1739276778640": ["r9wt4n"],
-    "1735382601644": ["r9wt4n", "k7q2vd"]
-  }
-}
-```
+Corpora live in `sources.json` at the project root (override with `ANKI_SOURCES`). Nothing about sources is stored in Anki. The file holds the vault location, the corpora keyed by deck name, and the [anchors](#anchors).
 
 A source entry has:
 
-- `id` — six lowercase letters or digits, path-safe, generated when the entry is created and never changed.
+- `id` — the source's identity (see above).
 - `kind` — `obsidian` or `pdf`.
 - `target` — for a vault note, its name relative to the vault root, with or without `.md`; for a PDF, a filesystem path, `~` allowed.
 - `pages` — PDF only, optional: a page range such as `12-19`, `7` or `3-5,9`, 1-based and inclusive. Absent means the whole document.
 - `note` — optional free text shown next to the source, called its **annotation** below.
 
-Older files are still read: a deck whose value is a single object rather than a list (the 0.1 format) is read as a one-element corpus, and an entry without an id is given one when the file is loaded. Both are written back in the current shape on the next save.
+The file is migrated on load: a deck value that is a single object instead of a list becomes a one-element list, and an entry without an id gets one. Both are saved in the current shape on the next write.
 
-A deck points to a corpus because, when reviewing a flagged note, the user wants the original material within reach and Claude needs it to check or rewrite the card. The [Source tab](#source-tab-column-3) shows the corpus; the chat lists it to Claude and lets the user attach any of its sources ([chat.md § Context](./chat.md#context)).
+A deck points to a corpus because, when reviewing a flagged note, the user wants the original material within reach and Claude needs it to check or rewrite the card. The [Source tab](#source-tab) shows it; the chat makes it available to Claude ([chat.md § Context](./chat.md#context)).
 
 ### Inheritance
 
@@ -87,7 +68,7 @@ The vault is the user's own notes. The app writes into it in exactly two ways, o
 
 These two constraints are the whole safety story and are not to be relaxed for convenience.
 
-## Source tab (column 3)
+## Source tab
 
 The Source tab shows the effective corpus of the deck selected in column 1 ([review.md](./review.md)). When the corpus is inherited, a banner names the deck it comes from. Sources the selected note is anchored to come first, in anchor order, expanded; the others are collapsed to their header. A deck with no effective corpus shows « Aucune source pour ce deck. »
 

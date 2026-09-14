@@ -41,8 +41,6 @@ The extracted text is capped at 60 000 characters, and the source says whether i
 
 An **anchor** links an Anki note to a source of its deck's corpus that the note was made from. A note can be anchored to several sources, in the order the user added them, and a source to any number of notes. Anchors are stored in `sources.json` (note id → list of source ids); the note in Anki carries nothing.
 
-A corpus can be large — ten documents for a big deck — while a single note usually comes from one or two of them. Anchors record which, so that the Source tab opens on the right documents and the chat can attach those alone rather than the whole corpus ([chat.md § How source text enters context](./chat.md#how-source-text-enters-context)). Claude also sees, in the corpus it is given, which cards of the workspace each source is anchored to.
-
 Each anchor is qualified against the note's current deck:
 
 - **valid** — the source is in the effective corpus of the note's deck;

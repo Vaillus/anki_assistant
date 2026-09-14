@@ -26,7 +26,7 @@ A deck points to a corpus because, when reviewing a flagged note, the user wants
 
 A deck's **effective corpus** is its own sources followed by each ancestor's, nearest first: `a::b::c`'s own, then `a::b`'s, then `a`'s. A deck with no own sources sees only the inherited ones. Each source remembers the deck it was written on, so the UI can distinguish own from inherited.
 
-Adding a source to a deck adds it to that deck's own list; inherited sources are unaffected. Removing a source removes it from the deck that declares it. To remove an inherited source, go to the ancestor. Deleting a deck's last own entry empties its own list; the inherited sources remain.
+Each deck's own list is independent: writing to one never changes another.
 
 ### Text
 

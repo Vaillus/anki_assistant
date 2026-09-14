@@ -33,7 +33,7 @@ A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an 
 Each source yields one **extracted text**, the same wherever the app shows or sends it — the Source tab, an attached source in the chat, a read by Claude:
 
 - A vault note yields its Markdown as written, without the YAML front matter block at the top.
-- A PDF yields the text of the pages in its range (every page when there is none), each page preceded by a marker giving its number.
+- A PDF yields the text of the pages in its range (every page when there is none), each page preceded by a marker giving its number. <!-- TODO: rework PDF extraction -->
 
 The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning (« PDF entier (312 pages) sans plage de pages : seules les 60 000 premiers caractères sont passés. ») so the user learns to set one. Retrieval inside long PDFs is out of scope: the page range is the mechanism.
 

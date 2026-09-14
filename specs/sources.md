@@ -24,9 +24,9 @@ A deck points to a corpus because, when reviewing a flagged note, the user wants
 
 ### Inheritance
 
-A deck with no corpus of its own uses the nearest ancestor's: `a::b::c` falls back to `a::b`, then to `a`, then to nothing. The corpus a deck ends up with — its **own corpus** or an **inherited** one — is its **effective corpus**. Each source remembers the deck it was written on, so the UI can say « héritée de courant::01-AI » and the API can report where an inherited corpus comes from.
+A deck's **effective corpus** is its own sources followed by each ancestor's, nearest first: `a::b::c`'s own, then `a::b`'s, then `a`'s. A deck with no own sources sees only the inherited ones. Each source remembers the deck it was written on, so the UI can distinguish own from inherited.
 
-Inheritance stops as soon as a deck has a corpus of its own. Every write that changes a deck's sources therefore operates on that deck, never on the ancestor, and on a deck that inherits it first **materialises** the inherited corpus: the inherited entries are copied onto the deck as its own, ids kept so that anchors survive, and the change is applied to that copy. Removing the last own entry deletes the deck's corpus and inheritance resumes.
+Adding a source to a deck adds it to that deck's own list; inherited sources are unaffected. Removing a source removes it from the deck that declares it. To remove an inherited source, go to the ancestor. Deleting a deck's last own entry empties its own list; the inherited sources remain.
 
 ### Text
 
@@ -63,7 +63,7 @@ Anchors follow the note through the writes of the workspace ([workspace.md § Va
 
 The vault is the user's own notes. The app writes into it in exactly two ways, on vault notes only, and only behind a user click — a form, or « Appliquer » on a chat proposal ([chat.md § Proposal tools](./chat.md#proposal-tools)). Claude never writes on its own.
 
-- **Create a vault note.** Writes `<vault>/<name>.md` with the given content as is (front matter included if the caller supplies it), creating parent folders when the name contains a `/`. Refused if the file already exists. The new file is appended to the deck's own corpus as an obsidian source, materialising an inherited corpus first ([Inheritance](#inheritance)). There is no default folder: the name is what the user typed or accepted.
+- **Create a vault note.** Writes `<vault>/<name>.md` with the given content as is (front matter included if the caller supplies it), creating parent folders when the name contains a `/`. Refused if the file already exists. The new file is appended to the deck's own corpus as an obsidian source. There is no default folder: the name is what the user typed or accepted.
 - **Replace a passage.** Replaces one passage of a vault note with another. The passage to replace must occur **exactly once** in the file: refused as « passage introuvable » when it is absent, « passage ambigu » when it is repeated. There is no whole-file rewrite. A source edit is always a bounded, reviewable replacement, and undoing it is the same replacement with the two texts swapped.
 
 These two constraints are the whole safety story and are not to be relaxed for convenience.
@@ -77,9 +77,9 @@ Each source is a row:
 - **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
 - **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
 
-**Adding a source.** « + ajouter une source » opens a form: target, with autocompletion over the vault's notes; kind, pre-selected from the target (ends with `.pdf` → pdf, otherwise obsidian); pages; annotation. Saving writes on the selected deck. When the corpus is inherited the form says so — this deck will stop inheriting — and offers « copier les sources héritées d'abord », checked by default, which materialises the inherited corpus before adding; unchecked, the new source becomes the deck's whole corpus.
+**Adding a source.** « + ajouter une source » opens a form: target, with autocompletion over the vault's notes; kind, pre-selected from the target (ends with `.pdf` → pdf, otherwise obsidian); pages; annotation. Saving adds the source to the selected deck's own list; inherited sources are unaffected.
 
-**Removing a source.** « retirer » writes the remaining entries on the selected deck, materialising an inherited corpus the same way; removing the last own entry restores inheritance. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
+**Removing a source.** « retirer » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
 
 **Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ différentiabilité », × removes it) and « ⚓ ancrer… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source hors corpus ».
 

@@ -6,31 +6,6 @@ General terms (*note*, *Anki card*, *note type*, *field*, *reason*) are defined 
 
 The workspace serves the review queue ([review.md](./review.md)).
 
-```
-┌─ Workspace ─────────────────────────────────────────────────────────┐
-│  #5262 · [vider Back Extra] ·          [Valider · 1 modifiée] · ×   │
-├────────────────────────────────────┬────────────────────────────────┤
-│  Cards  (~60 %)                    │  Conversation                  │
-│                                    │                                │
-│  ┌ w1 (root) ────────────────────┐ │  source chips                  │
-│  │ card head                     │ │  ┌────────────────────────────┐│
-│  │  ● #5262 Cloze  ⚑c2          │ │  │ ⚓ joindre …   + source   ││
-│  │  ← v1 / 2 →   [invalider]    │ │  └────────────────────────────┘│
-│  │ card body                     │ │                                │
-│  │  fields (rendered, v0/latest) │ │  message log                   │
-│  │  rationale (Claude's version) │ │   « rewrite c2 as… »          │
-│  │  reason callout               │ │   → carte w1                  │
-│  └───────────────────────────────┘ │                                │
-│    ┊                               │                                │
-│  ┌ w2 (fragment of w1) ─────────┐ │                                │
-│  │ card head                     │ │  message input                 │
-│  │  ● brouillon Cloze            │ │  ┌────────────────────────────┐│
-│  │ card body                     │ │  │              [Envoyer]     ││
-│  │  fields                       │ │  └────────────────────────────┘│
-│  └───────────────────────────────┘ │                                │
-└────────────────────────────────────┴────────────────────────────────┘
-```
-
 ## Opening and closing
 
 The workspace opens on a note from the queue (click, or `Entrée` with the note selected). The page behind is dimmed and stops reacting to keys. Only one workspace at a time.
@@ -51,6 +26,31 @@ While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while
 ## Cards
 
 A **card** holds one note and the [versions](#versions) of its fields being prepared for validation. A card is either an **existing note** (it has a `note_id`) or a **draft note** (a split fragment or a created note, not in Anki yet). Every card has a **workspace id** (`w1`, `w2`…), unique within the workspace, which is how Claude and the UI name it.
+
+```
+┌ w1 ─────────────────────────────────────────────────┐
+│ card head                                            │
+│  ● #5262 Cloze  ⚑c2       ← v1 / 2 →  [invalider]  │
+│  tags: phd                [supprimer] [garder] [→ …] │
+├──────────────────────────────────────────────────────┤
+│ card body                                            │
+│                                                      │
+│  Text:  There are {{c1::three}} conditions…          │
+│                                                      │
+│  rationale: « split c2 into its own note »           │
+│                                                      │
+│  ┌ reason ─────────────────────────────────────────┐ │
+│  │ trop vague, à découper                          │ │
+│  └─────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
+  ┊ fragment link
+┌ w2 (fragment of w1) ────────────────────────────────┐
+│ card head                                            │
+│  ● brouillon Cloze                                   │
+│ card body                                            │
+│  Text:  {{c1::KKT}} is the special case when…       │
+└──────────────────────────────────────────────────────┘
+```
 
 ### Layout
 

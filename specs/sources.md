@@ -4,23 +4,21 @@
 
 ## Corpus
 
-A deck's **corpus** is an ordered list of **sources**. A source is one document the deck was made from: a **vault note** — a Markdown file in the user's Obsidian **vault** — a **PDF** on disk, optionally restricted to a page range, or a **web page** (a URL the server fetches when its text is needed). "Note" on its own keeps its meaning from [notes.md](./notes.md): an Anki note.
+A deck's **corpus** is an ordered list of **sources**. A source is one document the deck was made from: a **vault note** — a Markdown file in the user's Obsidian **vault** — a **PDF** on disk, optionally restricted to a page range, or a **web page** at a URL. "Note" on its own keeps its meaning from [notes.md](./notes.md): an Anki note.
 
-Every source has an **id**: six path-safe characters, generated once and never changed. [Anchors](#anchors) point to it, so renaming a vault note or moving a PDF keeps them intact.
+Every source has an **id**: six path-safe characters, generated when the entry is created, never changed. [Anchors](#anchors) point to it, so renaming a vault note or moving a PDF keeps them intact.
 
 Corpora live in `sources.json` at the project root (override with `ANKI_SOURCES`). Nothing about sources is stored in Anki. The file holds the vault location, the corpora keyed by deck name, and the [anchors](#anchors).
 
 A source entry has:
 
 - `id` — the source's identity (see above).
-- `kind` — `obsidian`, `pdf` or `web`. Auto-detected from the target when not given: an `http://` or `https://` URL is `web`, a target ending in `.pdf` is `pdf`, anything else is `obsidian`.
-- `target` — for a vault note, its name relative to the vault root, with or without `.md`; for a PDF, a filesystem path, `~` allowed; for a web source, an absolute `http(s)` URL.
+- `kind` — `obsidian`, `pdf` or `web`. Auto-detected from the target when not given: an `http(s)` URL is `web`, a target ending in `.pdf` is `pdf`, anything else is `obsidian`.
+- `target` — for a vault note, its name relative to the vault root, with or without `.md`; for a PDF, a filesystem path, `~` allowed; for a web page, an absolute `http(s)` URL.
 - `pages` — PDF only (refused on another kind), optional: a page range such as `12-19`, `7` or `3-5,9`, 1-based and inclusive. Absent means the whole document.
 - `note` — optional free text shown next to the source, called its **annotation** below.
 
-The file is migrated on load: a deck value that is a single object instead of a list becomes a one-element list, and an entry without an id gets one. Both are saved in the current shape on the next write.
-
-A deck points to a corpus because, when reviewing a flagged note, the user wants the original material within reach and Claude needs it to check or rewrite the card. The [Source tab](#source-tab) shows it; the chat makes it available to Claude ([chat.md § What Claude sees](./chat.md#what-claude-sees)).
+The [Source tab](#source-tab) shows the corpus; the chat makes it available to Claude ([chat.md § What Claude sees](./chat.md#what-claude-sees)).
 
 ### Inheritance
 
@@ -28,17 +26,17 @@ A deck's **effective corpus** is its own sources followed by each ancestor's, ne
 
 ### Text
 
-A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens through a `file://` link. A source whose file does not exist is **missing**: still listed, marked as such, with no text. A web source is always considered present — a URL is not checked without a request; a page that cannot be fetched reports it through the source's warning instead.
+A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens through a `file://` link; a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
 
-A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when it is needed and cached in memory. A page whose content the user wants to keep as it is today is a `propose_create_source` (a note in the vault), not a web source.
+A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
 Each source yields one **extracted text**, the same wherever the app shows or sends it — the Source tab, an attached source in the chat, a read by Claude:
 
 - A vault note yields its Markdown as written, without the YAML front matter block at the top.
 - A PDF yields the text of the pages in its range (every page when there is none), each page preceded by a marker giving its number. <!-- TODO: rework PDF extraction -->
-- A web page is fetched with `httpx` (redirects followed, `WEB_TIMEOUT` = 15 s, a browser-like `User-Agent`). An HTML body goes through `html_to_text`: `script`, `style`, `noscript`, `svg`, the head and the site chrome (`nav`, `footer`, `aside`) are dropped; when the page wraps its content in `<main>` or `<article>`, only that part is kept; block elements become line breaks, headings keep their level as `#` marks, list items get a `- `, whitespace is folded. The page `<title>` is the first line. A `text/plain` body is kept as is; any other content type gives an empty text and the warning « contenu non textuel ». A failed request gives an empty text and the warning « page inaccessible : … ». The text is cached in memory by URL; a failure is cached for `WEB_RETRY_SECONDS` = 60 s.
+- A web page is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
 
-The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning (« PDF entier (312 pages) sans plage de pages : seules les 60 000 premiers caractères sont passés. ») so the user learns to set one. Retrieval inside long PDFs is out of scope: the page range is the mechanism.
+The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning so the user learns to set one. Retrieval inside long PDFs is out of scope: the page range is the mechanism.
 
 ## Anchors
 
@@ -73,14 +71,12 @@ The Source tab shows the effective corpus of the deck selected in column 1 ([rev
 
 Each source is a row:
 
-- **Header** — kind chip (`web` blue), target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
+- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
 - **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
 
-**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list; inherited sources are unaffected.
+**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
 
 **Removing a source.** « retirer » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
-
-**From the conversation.** Claude's `propose_add_source` ([chat.md § Proposal tools](./chat.md#proposal-tools)) is an inline card with « Appliquer » that calls `POST /api/sources`; the source lands on the selected deck under the same materialisation rule, inherited entries always copied first.
 
 **Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ différentiabilité », × removes it) and « ⚓ ancrer… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source hors corpus ».
 
@@ -88,14 +84,14 @@ Each source is a row:
 
 ## API
 
-All routes are under `/api`. A deck travels in the query string, never in the path (deck names contain `::` and spaces); a source id is path-safe and goes in the path. A vault write that is refused (existing file, passage absent or ambiguous) answers 409, and 400 on a PDF source; an unknown source id is 404.
+All routes are under `/api`. A deck travels in the query string, never in the path (deck names contain `::` and spaces); a source id is path-safe and goes in the path. A vault write that is refused (existing file, passage absent or ambiguous) answers 409, and 400 on an invalid target; an unknown source id is 404.
 
 | Route | Purpose |
 |---|---|
 | `GET /api/sources` | Every deck's own corpus, as stored |
 | `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with each source's extracted text and where it is inherited from; with `note_id`, the note's anchors |
 | `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
-| `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind; 400 on invalid target |
+| `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind |
 | `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |
 | `GET /api/sources/anchors?note_id=` | A note's anchors, each qualified valid or dangling |
 | `PUT /api/sources/anchors?note_id=` | Replace a note's anchors, order kept |

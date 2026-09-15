@@ -12,7 +12,7 @@ When no `ANTHROPIC_API_KEY` is configured, the pane shows a banner and disables 
 
 The server keeps nothing between requests. On every **turn** — one user message and the reply to it — the client sends the whole conversation and the current state of every card, and the server rebuilds the **system prompt** from four blocks:
 
-1. **Standing instructions** — reply in the user's language; use the proposal tools rather than describing changes in prose; the next message is about the [active](./workspace.md#card-head) cards, target them by [workspace id](./workspace.md#cards); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; the web is for checking a card against the outside world and for finding sources worth adding, and content taken from it should arrive with the source proposal that grounds it — `propose_add_source` with the page's URL to add the page itself to the corpus, `propose_create_source` to consign a synthesis in the vault; URLs are not to be pasted into the reply, since passages drawn from the web are cited automatically ([Citations](#web-tools)), except to recommend a page the reply did not quote from. Also states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts. Nothing else: the prompt does not instruct Claude on how to reason about a card.
+1. **Standing instructions** — reply in the user's language; use the proposal tools rather than describing changes in prose; target [active](./workspace.md#card-head) cards by [workspace id](./workspace.md#cards); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
 
 2. **Corpus index** — one line per source of the deck's [corpus](./sources.md): id, kind, target, page range, and a ⚠ marker when the file is missing. Sources [anchored](./sources.md#anchors) to a card of the workspace are marked. No source text — that is what attaching and `read_source` are for.
 
@@ -32,7 +32,7 @@ Source text enters the prompt in two ways, both visible to the user:
 
 ### What Claude remembers between turns
 
-Only message text is re-sent across turns. Tool results — reads, proposals, additions — are not replayed. The client summarises them into the assistant text as bracketed notes (« [lecture: search_notes → 6 notes] », « [proposition: edit → carte w1] », « [version rejetée : w3 v2] ») so Claude knows what happened. If Claude needs a read's content again, it reads again.
+Only message text is re-sent across turns. Tool results — reads, proposals, additions — are not replayed. The client summarises them into the assistant text as bracketed notes (« [lecture: search_notes → 6 notes] », « [proposition: edit → carte w1] », « [version rejetée : w3 v2] ») so Claude knows what happened. Web citations survive the same way: the markers stay in the text and a bracket line lists the pages (« [sources : [1] https://…, [2] https://…] »); the numbering restarts at 1 on each turn. If Claude needs a read's content again, it reads again.
 
 ## Read tools
 
@@ -44,14 +44,14 @@ Claude sees only what the system prompt pushes. Everything else it pulls through
 | `search_notes`  | The matching notes, in the shape controlled by `detail` (see below).                                 |
 | `get_notes`     | The full notes (raw field values, tags, flags, reason), in the same format as the cards in context.  |
 | `add_notes`     | The same text as `get_notes`, and the notes become cards of the workspace.                           |
-| `get_note_type` | Field names, card templates and CSS of a note type. When claude needs information about a note type. |
+| `get_note_type` | Field names, card templates and CSS of a note type. When Claude needs information about a note type. |
 | `read_source`   | The source's full text.                                                                              |
 
 ### The tool loop
 
 A single turn can involve multiple round trips between the server and the LLM. Each round trip is a **model call**: the server sends the conversation, the LLM responds, and if the response contains tool invocations the server executes them and makes another call. This **tool loop** repeats until the LLM responds without tools or the cap of 8 model calls per turn is reached.
 
-A turn that uses a **web tool** does not go round the loop that way: Anthropic runs the search inside the model call and returns its results as extra content blocks of the same assistant message, so the server has nothing to execute and `stop_reason` is not `tool_use`. Two consequences the loop has to handle. A long search run comes back as `stop_reason: "pause_turn"`: the server appends the assistant message unchanged and calls again — no extra user message — and the API resumes where it left off, spending one more of the eight model calls. And when Claude calls a web tool and a local read tool in the same batch, the API returns `tool_use` and defers the search: the local results go back as usual and the search runs on the next call.
+Web tools run on Anthropic's side within the model call, so the server has nothing to execute. The loop handles two consequences: a long search may need a continuation call, and a mixed batch of web and local tools is split across calls.
 
 Each read is displayed in the log as a **reading summary**: a muted line naming the tool and summarising the result. Failures come back to Claude as an error tool result, not as a client-visible error.
 
@@ -69,32 +69,24 @@ Each read is displayed in the log as a **reading summary**: a muted line naming 
 
 ### Web tools
 
-Two Anthropic server tools, declared alongside the others and reported as reads, put the open web behind the same conversation as the deck.
+Two Anthropic server tools put the open web behind the same conversation as the deck. They are declared alongside the local tools and reported as reads.
 
-| Tool | Input | Returns |
-|---|---|---|
-| `web_search` | `{ query }` | Result pages (title, url, extract). Capped at `MAX_WEB_SEARCHES` = 8 per turn. |
-| `web_fetch` | `{ url }` | The full text of a page whose URL is **already in the conversation** — a search result, a message from the user. Capped at `MAX_WEB_FETCHES` = 5 per turn. |
+| Tool         | Returns                                                                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `web_search` | Result pages (title, URL, extract). Capped at 8 searches per turn.                                              |
+| `web_fetch`  | The full text of a page whose URL is already in the conversation — a search result or a message from the user. Capped at 5 fetches per turn. |
 
-**Why both.** Search returns extracts, which are enough to answer « is my card's statement the standard one? » but too thin to become a source. `web_fetch` is how Claude reads a page in full before proposing it: as a **web source** by `propose_add_source` (the corpus then points at the URL, and the server fetches the page itself whenever its text is needed — [sources.md § Text](./sources.md#text)), or, when the content should be kept as it stands today, as an Obsidian note by `propose_create_source`.
+Search returns extracts — enough to check a card's statement but too thin to become a source. `web_fetch` is how Claude reads a page in full before proposing it: as a [web source](./sources.md#text) by `propose_add_source`, or as a vault note by `propose_create_source` when the content should be kept as it stands today.
 
-**What the user sees.** Each call is streamed as a `reading` event like any other, and the summary carries the **URLs**, not just a count: « lit : web\_search → « KKT conditions » → 5 résultats : en.wikipedia.org/…, … ». URLs — in a reading line as in the reply's own text — are rendered as links that open in a new tab. That is the provenance floor: a card must never rest on a page the user was not told about. On top of it sit citations.
+**What the user sees.** Each call is streamed as a reading event, and the summary carries the URLs: « lit : web\_search → « KKT conditions » → 5 résultats : en.wikipedia.org/…, … ». URLs — in reading lines and in the reply — are rendered as links that open in a new tab.
 
-**Direct calls.** Both tools are declared with `allowed_callers: ["direct"]`. Left at its default, the `_20260209` variants run search and fetch inside code execution and filter the results before they reach context — fewer input tokens, but the reply then carries **no citations at all**, since the model never sees a citable document, and a plain question was observed to cost a dozen code-execution round trips. Provenance wins: results enter context whole.
+#### Citations
 
-**Citations.** The API attaches a citation to each passage of the reply that rests on a web result: the text block carrying the passage gets a `citations` list, and in streaming each citation arrives as a `citations_delta` on that block — before or after the block's text deltas, both happen — so the server holds a block's citations until the block closes. For `web_search` this is always on, and a citation carries `url`, `title` and `cited_text` (up to 150 characters of the page). For `web_fetch` it is off by default, so the tool is declared with `citations: {enabled: true}`; a fetch citation is a `char_location` that names the document by `document_index` and `document_title`, not by URL, and the server resolves it against the pages fetched during the turn — by title first, then by index into the turn's fetches in order; a citation that resolves to nothing is dropped, and the reading line remains the provenance for that page.
+The API attaches a **citation** to each passage of the reply that draws on a web result. The server numbers the cited pages per turn by URL, in order of first citation, and streams each as a `citation` event. The client renders a **[n]** marker at the end of the cited passage as a link to the page, with the cited text as tooltip. Under the reply, a **Sources** list gives one line per page: the title and the host, linking to the page. A page cited three times is one entry and three markers.
 
-The server numbers the cited pages **per turn, by URL**, in order of first citation, and streams each citation as a `citation` event `{ n, url, title, cited_text }` when its block closes, i.e. right after the last text delta of the passage it supports. The client inserts a marker **[n]** at the current end of the reply text — which is therefore the end of the cited passage — as a link to the page, with `cited_text` as its tooltip (whitespace collapsed and capped at `CITED_TEXT_CHARS` = 200 characters: a fetch citation quotes whole passages). Under the reply, a **Sources** list gives one line per n: the title (or the URL when the title is empty) and the host, linking to the page. A page cited three times is one entry and three markers. This is what turns a synthesis into something the user can check: which page supports which sentence, one click away. Because citations are rendered, the standing instructions tell Claude not to paste URLs into its prose, except to point at a page it did not quote from.
+The standing instructions tell Claude not to paste URLs into its prose — citations already provide the link — except to recommend a page the reply did not quote from. The instructions also ask Claude to call `propose_add_source` whenever it cites a page that is a good reference for the deck. Independently of Claude, the Sources list shows a **« + corpus »** button next to every cited page that is not already in the corpus; clicking adds it via `POST /api/sources`.
 
-**What the web is allowed to be.** Standing instructions ([What Claude sees](#what-claude-sees)) state it: the web is legitimate for checking a card against the outside world and for *finding sources to add*, and a proposal whose content comes from the web should come with the `propose_add_source` or `propose_create_source` that grounds it. The instructions also ask Claude to call `propose_add_source` in the same turn whenever it cites a page that is a good reference for the deck. Nothing about this is enforced in code — the enforcement is that every write still waits for a click.
-
-**Client-side shortcut.** Independently of Claude, the sources list under each reply shows a **« + corpus »** button next to every cited page that is not already in the corpus. Clicking it calls `POST /api/sources?deck=` with the URL and refreshes the Source tab. This is the fallback when Claude does not propose it itself.
-
-**Untrusted content.** A fetched page is text written by someone else, arriving in a context where Claude holds proposal tools. The design already answers this and no new mechanism is added: proposals land as versions and cards that the user reads before « Valider », and source proposals wait on « Appliquer ». No web content reaches Anki or the vault without a click.
-
-**Client-side shortcut.** Independently of Claude, the sources list under each reply shows a **« + corpus »** button next to every cited page that is not already in the corpus. Clicking it calls `POST /api/sources?deck=` with the URL and refreshes the Source tab. This is the fallback when Claude does not propose it itself.
-
-**Results are not replayed.** The API requires search results to be sent back byte-identical (`encrypted_content`) or not at all; since the client replays assistant *text* only ([API](#api)), they are simply dropped, like every other read, and survive as the bracket notation « [lecture: web\_search → …] ». Citations survive the same way: the markers stay in the replayed text and a bracket line lists the pages — « [sources : [1] https://…, [2] https://…] » — so that on the next turn Claude knows which pages it already relied on; the numbering restarts at 1 on each turn. Re-reading a page costs a real round trip to the open web, not a local call — so `web_fetch` on something worth keeping is a reason to propose it as a source rather than fetch it twice: once it is in the corpus, `read_source` and the attach chips serve it like any other source.
+Web results are not replayed across turns: they are dropped like any other read and survive as bracket notation. Re-reading a page costs a round trip to the open web — so `web_fetch` on something worth keeping is a reason to propose it as a source rather than fetch it twice.
 
 ## Proposal tools
 
@@ -120,19 +112,17 @@ In the log, a proposal that landed on the workspace shows as a muted pointer lin
 
 ### Source proposals
 
-Source proposals change the corpus or the vault on click, not at validation, and closing the workspace does not undo them. They stay in the log as **proposal cards** with « Appliquer ».
+Source proposals change the [corpus](./sources.md) or the [vault](./sources.md#writing-to-the-vault) on click, not at validation, and closing the workspace does not undo them. They stay in the log as **proposal cards** with « Appliquer ».
 
-`propose_add_source` renders the kind chip and an editable target (a URL, a vault note name or a PDF path) with the optional pages and note, so the user can correct the target before applying; applying appends the entry to the deck's corpus and (with `anchor_note_ids`) to those notes' anchors — nothing is fetched or written on disk. The server generates the source id when it streams the call and returns it to Claude, so Claude can anchor notes it proposes next to that source.
+`propose_add_source` renders the kind chip and an editable target (a URL, a vault note name or a PDF path) with the optional pages and annotation, so the user can correct the target before applying. Applying appends the entry to the deck's corpus and (with `anchor_note_ids`) to those notes' anchors.
 
-`propose_create_source` renders the Markdown content and an editable name (vault-relative path). Applying creates the file, adds it to the deck's corpus, and anchors the named notes to it. The server generates the source id when it streams the call and returns it to Claude, so Claude can anchor notes it proposes next to that source. Draft cards anchored to an unapplied source are flagged at « Valider ».
+`propose_create_source` renders the Markdown content and an editable name (vault-relative path). Applying creates the file, adds it to the deck's corpus, and anchors the named notes to it. Draft cards anchored to an unapplied source are flagged at « Valider ».
 
 `propose_edit_source` shows old → new as a diff. Applying performs the [exact-match replacement](./sources.md#writing-to-the-vault); a refusal (passage not found or ambiguous) is shown on the card. An applied edit shows « Annuler »: the same replacement with old and new swapped, refused if the passage changed since.
 
+For `propose_add_source` and `propose_create_source`, the server generates the source id when it streams the call and returns it to Claude, so Claude can anchor notes it proposes next to that source.
+
 Nothing else in the chat writes to Anki; undo lives in the [workspace](./workspace.md#undo).
-
-## LLM configuration
-
-Uses the Anthropic Python SDK (`anthropic`), streaming, with the model id from `ANKI_CHAT_MODEL` (default `claude-opus-4-6`). The web tools are declared as `web_search_20260209` / `web_fetch_20260209` with `allowed_callers: ["direct"]` ([Web tools](#web-tools)); these versions need Opus 4.6 / Sonnet 4.6 or later, so a model set through `ANKI_CHAT_MODEL` must be one of those. `web_fetch` is declared with `citations: {enabled: true}` so that passages drawn from a fetched page are cited like search results ([Web tools](#web-tools)). Searches are billed per search on top of tokens ($10 per 1 000 at the time of writing), which is what `max_uses` is for. `max_tokens` is 8 192 (thinking tokens, when enabled, count against this budget). API key from `ANTHROPIC_API_KEY` (environment variable or `.env` via `python-dotenv`, loaded in `web/main.py`).
 
 ## API
 

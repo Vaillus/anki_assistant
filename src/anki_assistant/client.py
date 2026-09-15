@@ -189,6 +189,28 @@ class AnkiClient:
     def clear_flag(self, card_ids: list[int]) -> None:
         self.set_flag(card_ids, 0)
 
+    def set_card_scheduling(
+        self,
+        card_ids: list[int],
+        *,
+        interval: int,
+        due: int,
+        queue: int,
+        card_type: int,
+        factor: int,
+        reps: int,
+        lapses: int,
+    ) -> None:
+        """Copy a scheduling state onto the given cards (used for split-fragment inheritance)."""
+        keys = ["ivl", "due", "queue", "type", "factor", "reps", "lapses"]
+        values = [interval, due, queue, card_type, factor, reps, lapses]
+        self.invoke_multi(
+            [
+                ("setSpecificValueOfCard", {"card": cid, "keys": keys, "newValues": values})
+                for cid in card_ids
+            ]
+        )
+
     def unflag_note(self, note_id: int) -> None:
         """Clear the flag on every card of a note (the review unit is the note)."""
         self.clear_flag(self.note_card_ids(note_id))

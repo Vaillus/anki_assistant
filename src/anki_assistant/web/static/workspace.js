@@ -469,6 +469,7 @@ function refreshChatLog() {
   const top = log.scrollTop;
   log.innerHTML = chatLogHtml();
   log.scrollTop = atBottom ? log.scrollHeight : top;
+  typesetMath();
 }
 
 function scrollChatLogToBottom() {
@@ -1175,7 +1176,7 @@ function chatPane() {
     ? '<div class="chips">' +
       sourceChipsHtml() +
       "</div>" +
-      '<textarea data-input="chat" data-focus="chat" placeholder="Demande une reformulation, un split, une vérification… (⌘/Ctrl+Entrée pour envoyer)"' +
+      '<textarea data-input="chat" data-focus="chat" placeholder="Demande une reformulation, un split, une vérification… (Entrée pour envoyer, Shift+Entrée pour un saut de ligne)"' +
       (ws.chatBusy ? " disabled" : "") +
       ">" +
       esc(ws.chatDraft) +

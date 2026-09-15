@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import html
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -36,6 +37,7 @@ __all__ = [
     "ApplyPlan",
     "ApplyReport",
     "CardPlan",
+    "CardSched",
     "ModifiedSince",
     "NoteSnap",
     "NothingToUndo",
@@ -104,6 +106,19 @@ class ApplyPlan:
 
 
 @dataclass
+class CardSched:
+    """Scheduling state of one card, enough to stamp onto a newly-created card."""
+
+    interval: int
+    due: int
+    queue: int
+    card_type: int
+    factor: int
+    reps: int
+    lapses: int
+
+
+@dataclass
 class NoteSnap:
     """What it takes to put an existing note back: fields, tags, deck, model and flags."""
 
@@ -115,10 +130,19 @@ class NoteSnap:
     card_ids: list[int]
     #: card id -> flag (0 = none), for every card of the note.
     flags: dict[int, int]
+    #: card id -> scheduling state, for fragment inheritance on split.
+    scheduling: dict[int, CardSched] = field(default_factory=dict)
 
     @property
     def flagged_card_ids(self) -> list[int]:
         return [cid for cid, flag in self.flags.items() if flag]
+
+    @property
+    def best_scheduling(self) -> CardSched | None:
+        """The scheduling of the most-reviewed card (longest interval), for fragment inheritance."""
+        if not self.scheduling:
+            return None
+        return max(self.scheduling.values(), key=lambda s: (s.interval, s.reps))
 
 
 @dataclass
@@ -237,6 +261,18 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
             model=note.model_name,
             card_ids=[c.card_id for c in cards] or list(note.card_ids),
             flags={c.card_id: c.flag for c in cards},
+            scheduling={
+                c.card_id: CardSched(
+                    interval=c.interval,
+                    due=c.due,
+                    queue=c.queue,
+                    card_type=c.type,
+                    factor=c.factor,
+                    reps=c.reps,
+                    lapses=c.lapses,
+                )
+                for c in cards
+            },
         )
     return snap
 
@@ -301,6 +337,34 @@ def anchors_after_move(store: SourceStore, note_id: int, deck: str) -> None:
     store.set_anchors(note_id, [sid for sid in anchors if sid in in_destination])
 
 
+def _inherit_scheduling(
+    client: AnkiClient,
+    card: CardPlan,
+    view: review.NoteView,
+    wid_to_note: Mapping[str, int | None],
+    snap: Snapshot,
+) -> None:
+    """Copy the parent note's best scheduling state onto a fragment's cards."""
+    parent_nid = wid_to_note.get(str(card.parent_wid))
+    if not parent_nid or parent_nid not in snap.notes:
+        return
+    sched = snap.notes[parent_nid].best_scheduling
+    if sched is None or (sched.interval == 0 and sched.reps == 0):
+        return
+    card_ids = list(view.card_ids)
+    if card_ids:
+        client.set_card_scheduling(
+            card_ids,
+            interval=sched.interval,
+            due=sched.due,
+            queue=sched.queue,
+            card_type=sched.card_type,
+            factor=sched.factor,
+            reps=sched.reps,
+            lapses=sched.lapses,
+        )
+
+
 def _reason_to_clear(snap: NoteSnap) -> bool:
     return bool(strip_html(snap.fields.get(REASON_FIELD, "")))
 
@@ -343,13 +407,14 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
     moves = [c for c in edits + keeps + defers if c.move_to]
     deferred = [c for c in edits + defers if c.deferred]
 
+    wid_to_note = {c.wid: c.note_id for c in plan.cards if c.note_id}
+
     step = ""
     try:
         for card in creates:
             step = f"création de {card.wid}"
             fields = dict(card.fields or {})
             if card.deferred and card.comment is not None:
-                # A proposal may have left the field out: ask the note type, not the proposal.
                 has_field = REASON_FIELD in fields or REASON_FIELD in client.model_field_names(
                     str(card.model)
                 )
@@ -370,6 +435,8 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
             report.created[card.wid] = view.note_id
             if card.source_ids:
                 store.set_anchors(view.note_id, card.source_ids)
+            if card.parent_wid:
+                _inherit_scheduling(client, card, view, wid_to_note, snap)
             if card.deferred:
                 step = f"flag de {card.wid}"
                 client.set_flag(list(view.card_ids), 1)

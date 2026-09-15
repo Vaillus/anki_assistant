@@ -51,6 +51,13 @@ class FakeAnkiClient(AnkiClient):
         fields: dict[str, str] | None = None,
         tags: list[str] | None = None,
         flags: tuple[int, ...] = (0,),
+        interval: int = 0,
+        due: int = 0,
+        reps: int = 0,
+        lapses: int = 0,
+        queue: int = 0,
+        card_type: int = 0,
+        factor: int = 0,
     ) -> int:
         """Put a note in the collection with one card per entry of `flags`."""
         note_id = next(self._ids)
@@ -63,6 +70,13 @@ class FakeAnkiClient(AnkiClient):
                 "deckName": deck,
                 "flags": flag,
                 "ord": ord_,
+                "interval": interval,
+                "due": due,
+                "reps": reps,
+                "lapses": lapses,
+                "queue": queue,
+                "type": card_type,
+                "factor": factor,
             }
             card_ids.append(card_id)
         self.notes[note_id] = {
@@ -171,9 +185,11 @@ class FakeAnkiClient(AnkiClient):
         for cid in cards:
             self.cards[cid]["deckName"] = deck
 
+    _COL_TO_API = {"ivl": "interval"}
+
     def _do_setSpecificValueOfCard(self, card: int, keys: list[str], newValues: list[Any]) -> None:
         for key, value in zip(keys, newValues, strict=True):
-            self.cards[card][key] = value
+            self.cards[card][self._COL_TO_API.get(key, key)] = value
 
     def _do_updateNoteModel(self, note: dict[str, Any]) -> None:
         stored = self._note(note["id"])

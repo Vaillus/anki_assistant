@@ -38,14 +38,14 @@ Only message text is re-sent across turns. Tool results — reads, proposals, ad
 
 Claude sees only what the system prompt pushes. Everything else it pulls through read tools, which the server executes against Anki or the source store and returns as text. Read tools never write to Anki or the vault; `add_notes` changes what the workspace shows.
 
-| Tool | Returns |
-|---|---|
-| `list_decks` | The deck tree with flagged-note counts. |
-| `search_notes` | The matching notes, in the shape controlled by `detail` (see below). |
-| `get_notes` | The full notes (raw field values, tags, flags, reason), in the same format as the cards in context. |
-| `add_notes` | The same text as `get_notes`, and the notes become cards of the workspace. |
-| `get_note_type` | Field names, card templates and CSS of a note type. |
-| `read_source` | The source's full text. |
+| Tool            | Returns                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| `list_decks`    | The deck tree with flagged-note counts.                                                              |
+| `search_notes`  | The matching notes, in the shape controlled by `detail` (see below).                                 |
+| `get_notes`     | The full notes (raw field values, tags, flags, reason), in the same format as the cards in context.  |
+| `add_notes`     | The same text as `get_notes`, and the notes become cards of the workspace.                           |
+| `get_note_type` | Field names, card templates and CSS of a note type. When claude needs information about a note type. |
+| `read_source`   | The source's full text.                                                                              |
 
 ### The tool loop
 
@@ -53,7 +53,15 @@ A single turn can involve multiple round trips between the server and the LLM. E
 
 Each read is displayed in the log as a **reading summary**: a muted line naming the tool and summarising the result. Failures come back to Claude as an error tool result, not as a client-visible error.
 
-**`search_notes`** searches the note collection beyond the cards in context. The query uses Anki search syntax; the server scopes it to the current deck and its sub-decks unless the query names a deck explicitly. `detail` controls the response shape: `count` (how many match), `brief` (default — one line per note with truncated plain text), or `full` (raw field values, tags, flags, reason — the same format as context). `fields` restricts `full` results to named fields. A `full` result exceeding 100 000 characters is not returned: the tool responds with the count and asks to narrow the query.
+**`search_notes`** searches the note collection beyond the cards in context. The query uses Anki search syntax; the server scopes it to the current deck and its sub-decks unless the query names a deck explicitly.
+
+`detail` controls the response shape:
+
+- `count` — how many notes match, nothing else.
+- `brief` (default) — one line per note: id, deck when it differs, flag marker, each field's plain text truncated.
+- `full` — raw field values, tags, flags, reason — the same format as the cards in context.
+
+`fields` restricts `full` results to named fields. A `full` result exceeding 100 000 characters is not returned: the tool responds with the count and asks to narrow the query.
 
 **`add_notes`** is how notes found by a search become cards the user can see and Claude can target. The server checks the workspace cap of 50 cards ([workspace.md § How notes enter](./workspace.md#how-notes-enter)) and refuses with an error when it would be exceeded. The log shows « ajoute : n notes ».
 
@@ -61,14 +69,14 @@ Each read is displayed in the log as a **reading summary**: a muted line naming 
 
 A **proposal** is a structured description of a change — which card, which fields, why — that lands on the workspace as a [version](./workspace.md#versions), a [fragment](./workspace.md#split), a new [draft card](./workspace.md#how-notes-enter) or a [move badge](./workspace.md#card-head). Nothing is written to Anki until « Valider » ([workspace.md § Validation](./workspace.md#validation)).
 
-| Tool | Lands as |
-|---|---|
-| `propose_edit` | A new version on the target card. |
-| `propose_split` | A new version on the target (or the card marked deleted when the original is not kept), plus one fragment card per new note. |
-| `propose_create` | A new draft card. Deck, tags and anchors default to the root's. |
-| `propose_move` | The destination deck as a badge on the target card. |
-| `propose_create_source` | An inline proposal card in the log (see [Source proposals](#source-proposals)). |
-| `propose_edit_source` | An inline proposal card in the log (see [Source proposals](#source-proposals)). |
+| Tool                    | Lands as                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `propose_edit`          | A new version on the target card.                                                                                            |
+| `propose_split`         | A new version on the target (or the card marked deleted when the original is not kept), plus one fragment card per new note. |
+| `propose_create`        | A new draft card. Deck, tags and anchors default to the root's.                                                              |
+| `propose_move`          | The destination deck as a badge on the target card.                                                                          |
+| `propose_create_source` | An inline proposal card in the log (see [Source proposals](#source-proposals)).                                              |
+| `propose_edit_source`   | An inline proposal card in the log (see [Source proposals](#source-proposals)).                                              |
 
 Each invocation returns « ok » to Claude immediately — accepting, editing or dropping a version is the user's decision. One turn may contain several proposals; the same defect on several notes is several `propose_edit` calls, one card each.
 

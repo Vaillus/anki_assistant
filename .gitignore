@@ -9,3 +9,4 @@ sources.json
 *.egg-info/
 CLAUDE.md
 scripts/app/img/
+.anki-web.log

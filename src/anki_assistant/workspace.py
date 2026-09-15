@@ -116,6 +116,7 @@ class CardSched:
     factor: int
     reps: int
     lapses: int
+    left: int
 
 
 @dataclass
@@ -270,6 +271,7 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
                     factor=c.factor,
                     reps=c.reps,
                     lapses=c.lapses,
+                    left=c.left,
                 )
                 for c in cards
             },
@@ -362,6 +364,7 @@ def _inherit_scheduling(
             factor=sched.factor,
             reps=sched.reps,
             lapses=sched.lapses,
+            left=sched.left,
         )
 
 

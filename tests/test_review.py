@@ -58,6 +58,7 @@ class FakeAnkiClient(AnkiClient):
         queue: int = 0,
         card_type: int = 0,
         factor: int = 0,
+        left: int = 0,
     ) -> int:
         """Put a note in the collection with one card per entry of `flags`."""
         note_id = next(self._ids)
@@ -77,6 +78,7 @@ class FakeAnkiClient(AnkiClient):
                 "queue": queue,
                 "type": card_type,
                 "factor": factor,
+                "left": left,
             }
             card_ids.append(card_id)
         self.notes[note_id] = {
@@ -186,10 +188,17 @@ class FakeAnkiClient(AnkiClient):
             self.cards[cid]["deckName"] = deck
 
     _COL_TO_API = {"ivl": "interval"}
+    # Columns real AnkiConnect refuses (answering `false`) unless `warning_check` is set.
+    _GUARDED = {"ivl", "lapses", "left", "queue", "reps", "type"}
 
-    def _do_setSpecificValueOfCard(self, card: int, keys: list[str], newValues: list[Any]) -> None:
+    def _do_setSpecificValueOfCard(
+        self, card: int, keys: list[str], newValues: list[Any], warning_check: bool = False
+    ) -> Any:
+        if not warning_check and self._GUARDED.intersection(keys):
+            return False
         for key, value in zip(keys, newValues, strict=True):
             self.cards[card][self._COL_TO_API.get(key, key)] = value
+        return [True]
 
     def _do_updateNoteModel(self, note: dict[str, Any]) -> None:
         stored = self._note(note["id"])

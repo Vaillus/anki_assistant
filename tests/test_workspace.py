@@ -201,6 +201,7 @@ def test_fragment_inherits_scheduling_from_parent(anki: FailingAnki, store: Sour
         queue=2,
         card_type=2,
         factor=2500,
+        left=1001,
     )
     plan = ApplyPlan(
         deck="d",
@@ -221,6 +222,7 @@ def test_fragment_inherits_scheduling_from_parent(anki: FailingAnki, store: Sour
     assert card["queue"] == 2
     assert card["type"] == 2
     assert card["factor"] == 2500
+    assert card["left"] == 1001
 
 
 def test_non_fragment_draft_does_not_inherit_scheduling(anki: FailingAnki, store: SourceStore):

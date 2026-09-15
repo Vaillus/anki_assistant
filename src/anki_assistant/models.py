@@ -77,6 +77,7 @@ class Card:
     queue: int
     type: int
     factor: int
+    left: int
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Card:
@@ -97,6 +98,7 @@ class Card:
             queue=int(raw.get("queue", 0)),
             type=int(raw.get("type", 0)),
             factor=int(raw.get("factor", 0)),
+            left=int(raw.get("left", 0)),
         )
 
     @property

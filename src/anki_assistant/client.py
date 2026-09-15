@@ -200,16 +200,27 @@ class AnkiClient:
         factor: int,
         reps: int,
         lapses: int,
+        left: int,
     ) -> None:
-        """Copy a scheduling state onto the given cards (used for split-fragment inheritance)."""
-        keys = ["ivl", "due", "queue", "type", "factor", "reps", "lapses"]
-        values = [interval, due, queue, card_type, factor, reps, lapses]
-        self.invoke_multi(
+        """Copy a scheduling state onto the given cards (used for split-fragment inheritance).
+
+        `warning_check` is required: without it AnkiConnect silently answers `false` for the
+        scheduling columns (ivl, type, queue, reps, lapses, left) instead of writing them.
+        """
+        keys = ["ivl", "due", "queue", "type", "factor", "reps", "lapses", "left"]
+        values = [interval, due, queue, card_type, factor, reps, lapses, left]
+        results = self.invoke_multi(
             [
-                ("setSpecificValueOfCard", {"card": cid, "keys": keys, "newValues": values})
+                (
+                    "setSpecificValueOfCard",
+                    {"card": cid, "keys": keys, "newValues": values, "warning_check": True},
+                )
                 for cid in card_ids
             ]
         )
+        for cid, result in zip(card_ids, results, strict=True):
+            if result is False or (isinstance(result, list) and result and result[0] is not True):
+                raise AnkiConnectError(f"setSpecificValueOfCard refused card {cid}: {result!r}")
 
     def unflag_note(self, note_id: int) -> None:
         """Clear the flag on every card of a note (the review unit is the note)."""

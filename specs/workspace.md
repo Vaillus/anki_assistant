@@ -123,15 +123,19 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. 
 
 ### What is written
 
-The **plan** — the set of writes to perform — is built from the cards. Fields on an edit are the complete raw values of every field; the server does not merge. For an existing note's card, precedence is: deleted → kept → edited (shown version ≠ v0), each optionally moved. Cards on v0 with no state are not in the plan and keep their flag.
+The **plan** — the set of writes to perform — is built from the cards.
+
+A draft note becomes a create. An existing note's card is classified into one action: when a card carries more than one mark, **deleted** wins over kept, which wins over edited (shown version ≠ v0). On top of any of the three, the card can also carry a **move** to another deck. Cards still on v0 with no mark are not in the plan and keep their flag.
 
 | Card | Anki writes | Flag |
 |---|---|---|
 | Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json` | — |
-| Existing, edited | `updateNote` with the shown version's fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
+| Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
 | Existing, kept | none | cleared |
 | Existing, moved (combined with edit or keep) | `changeDeck` on all Anki cards; anchors re-checked against the destination corpus ([sources.md § Anchors](./sources.md#anchors)) | cleared |
 | Existing, deleted | `deleteNotes` | — |
+
+An edit sends every field of the shown version, not just the ones that changed; the server writes them as-is.
 
 **« vider Back Extra »** (header toggle, on by default): every edited note that had a reason gets `Back Extra` set to empty. Kept notes are not touched.
 

@@ -6,6 +6,31 @@ General terms (*note*, *Anki card*, *note type*, *field*, *reason*) are defined 
 
 The workspace serves the review queue ([review.md](./review.md)).
 
+```
+┌─ Workspace ─────────────────────────────────────────────────────────┐
+│  #5262 · [vider Back Extra] ·          [Valider · 1 modifiée] · ×   │
+├────────────────────────────────────┬────────────────────────────────┤
+│  Cards  (~60 %)                    │  Conversation                  │
+│                                    │                                │
+│  ┌ w1 (root) ────────────────────┐ │  source chips                  │
+│  │ card head                     │ │  ┌────────────────────────────┐│
+│  │  ● #5262 Cloze  ⚑c2          │ │  │ ⚓ joindre …   + source   ││
+│  │  ← v1 / 2 →   [invalider]    │ │  └────────────────────────────┘│
+│  │ card body                     │ │                                │
+│  │  fields (rendered, v0/latest) │ │  message log                   │
+│  │  rationale (Claude's version) │ │   « rewrite c2 as… »          │
+│  │  reason callout               │ │   → carte w1                  │
+│  └───────────────────────────────┘ │                                │
+│    ┊                               │                                │
+│  ┌ w2 (fragment of w1) ─────────┐ │                                │
+│  │ card head                     │ │  message input                 │
+│  │  ● brouillon Cloze            │ │  ┌────────────────────────────┐│
+│  │ card body                     │ │  │              [Envoyer]     ││
+│  │  fields                       │ │  └────────────────────────────┘│
+│  └───────────────────────────────┘ │                                │
+└────────────────────────────────────┴────────────────────────────────┘
+```
+
 ## Opening and closing
 
 The workspace opens on a note from the queue (click, or `Entrée` with the note selected). The page behind is dimmed and stops reacting to keys. Only one workspace at a time.
@@ -33,13 +58,13 @@ The workspace is two panes: cards on the left (about 60 % of the width, scrollin
 
 Cards are listed root first, then in order of arrival. A [fragment](#split) is shown right after its parent, indented, with a visible link to it. Order never changes once a card is in.
 
-### Head
+### Card head
 
 One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the state badges (flag per flagged Anki card as in the queue, « supprimée », « gardée », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider », « supprimer » / « restaurer », « garder » / « ne pas garder », « déplacer… » (a deck picker).
 
 A card is **active** when the next message is about it. Every card starts active. Clicking the head (outside a control) toggles between active and inactive; an inactive card is drawn at 55 % opacity.
 
-### Body
+### Card body
 
 Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). The original version from Anki (**v0**) is shown in question state: flagged clozes hidden, « Révéler » to show them, as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full.
 

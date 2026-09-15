@@ -1,30 +1,30 @@
 # anki-assistant
 
-Revoir efficacement les cartes Anki flaguées : une interface web locale qui montre, deck par deck,
-les notes à retravailler, les sources du deck (notes Obsidian, PDF, pages web) à côté, et un chat Claude qui
-propose des modifications applicables en un clic. Tout est écrit directement dans Anki via
-l'add-on [AnkiConnect](https://foosoft.net/projects/anki-connect/).
+Efficiently review flagged Anki cards: a local web interface that shows, deck by deck,
+the notes to rework, the deck's sources (Obsidian notes, PDFs, web pages) side by side, and a Claude chat that
+proposes one-click edits. Everything is written directly to Anki via
+the [AnkiConnect](https://foosoft.net/projects/anki-connect/) add-on.
 
-Le comportement est décrit dans [`specs/`](specs/00-overview.md) (source de vérité).
+Behaviour is described in [`specs/`](specs/00-overview.md) (source of truth).
 
-Prérequis : Anki ouvert avec AnkiConnect installé (port 8765 par défaut).
+Prerequisite: Anki running with AnkiConnect installed (port 8765 by default).
 
 ## Installation
 
 ```bash
 uv sync
-cp .env.example .env   # puis renseigner ANTHROPIC_API_KEY pour le chat
+cp .env.example .env   # then fill in ANTHROPIC_API_KEY for the chat
 ```
 
-## Interface web
+## Web interface
 
 ```bash
 uv run anki-web        # http://localhost:5070
 ```
 
-Trois colonnes : les decks avec leur nombre de notes flaguées, la file du deck sélectionné, et un
-panneau Source / Chat. La note sélectionnée expose les décisions : Garder, Modifier, Splitter,
-Créer, Déplacer, Supprimer, Passer. Détails dans [`specs/review.md`](specs/review.md).
+Three columns: decks with their flagged-note count, the selected deck's queue, and a
+Source / Chat panel. The selected note exposes the decisions: Keep, Edit, Split,
+Create, Move, Delete, Skip. Details in [`specs/review.md`](specs/review.md).
 
 ## Desktop launcher
 
@@ -43,20 +43,20 @@ scripts/app/launch.sh stop          # stop the server
 
 
 ```bash
-uv run anki decks                         # liste des decks
-uv run anki cards "Mon Deck" -n 10        # cartes d'un deck
-uv run anki cards "Mon Deck" -q is:due    # + filtre Anki
-uv run anki flagged "Mon Deck"            # cartes flaguées du deck
-uv run anki flagged "Mon Deck" --flag 1   # seulement les rouges
-uv run anki search 'tag:vocab is:new'     # requête Anki brute
-uv run anki card 1234567890123            # détail d'une carte
-uv run anki note 1234567890123            # détail d'une note
-uv run anki edit 1234567890123 Back="Nouvelle réponse"
-uv run anki flag 0 1234567890123          # retire le flag
-uv run anki tag 1234567890123 -t revoir
+uv run anki decks                         # list decks
+uv run anki cards "My Deck" -n 10         # cards from a deck
+uv run anki cards "My Deck" -q is:due     # + Anki filter
+uv run anki flagged "My Deck"             # flagged cards in the deck
+uv run anki flagged "My Deck" --flag 1    # red flags only
+uv run anki search 'tag:vocab is:new'     # raw Anki query
+uv run anki card 1234567890123            # card details
+uv run anki note 1234567890123            # note details
+uv run anki edit 1234567890123 Back="New answer"
+uv run anki flag 0 1234567890123          # clear the flag
+uv run anki tag 1234567890123 -t review
 ```
 
-`--json` sur n'importe quelle commande donne une sortie machine.
+`--json` on any command gives machine-readable output.
 
 ## Python
 
@@ -64,37 +64,37 @@ uv run anki tag 1234567890123 -t revoir
 from anki_assistant import AnkiClient
 
 anki = AnkiClient()
-for card in anki.flagged_cards("Mon Deck"):
+for card in anki.flagged_cards("My Deck"):
     print(card.flag_name, card.plain_fields())
 
-anki.update_note_fields(card.note_id, {"Back": "corrigé"})
+anki.update_note_fields(card.note_id, {"Back": "corrected"})
 anki.clear_flag([card.card_id])
-anki.invoke("anyAnkiConnectAction", param=1)  # passe-plat générique
+anki.invoke("anyAnkiConnectAction", param=1)  # generic passthrough
 ```
 
-## Sources des decks
+## Deck sources
 
-Chaque deck peut être associé à des sources : un PDF, une note du vault Obsidian, ou une page
-web (une URL, relue par le serveur quand son texte est demandé — rien n'est copié).
-Le mapping vit dans `sources.json` (surchargeable avec la variable `ANKI_SOURCES`).
+Each deck can be linked to sources: a PDF, an Obsidian vault note, or a web page
+(a URL, re-fetched by the server when its text is requested — nothing is copied).
+The mapping lives in `sources.json` (overridable with the `ANKI_SOURCES` env var).
 
 ```bash
 uv run anki source set "courant::00-Thèse" "Allocation sur des angles disjoints"
 uv run anki source set "courant::01-AI::little book of deep learning" ~/Docs/lbdl.pdf
 uv run anki source set "courant::04-maths::dérivés" https://en.wikipedia.org/wiki/Derivative
-uv run anki source get "courant::01-AI::little book of deep learning::4"  # hérité du parent
+uv run anki source get "courant::01-AI::little book of deep learning::4"  # inherited from parent
 uv run anki source list
-uv run anki source missing        # decks sans source + cibles introuvables
+uv run anki source missing        # decks without a source + unreachable targets
 uv run anki source open "courant::00-Thèse"
 ```
 
-Le type est déduit de la cible : une URL `http(s)` donne une page web, un chemin en `.pdf` un
-PDF, tout le reste est traité comme une note du vault. `--kind` force le choix.
+The type is inferred from the target: an `http(s)` URL yields a web page, a `.pdf` path
+a PDF, everything else is treated as a vault note. `--kind` forces the choice.
 
-Un sous-deck sans entrée propre hérite de la source du deck parent le plus proche : mapper
-`courant::01-AI::little book of deep learning` couvre donc ses sous-decks `::1` à `::6`.
+A sub-deck with no entry of its own inherits the source from its closest parent deck:
+mapping `courant::01-AI::little book of deep learning` therefore covers its sub-decks `::1` through `::6`.
 
-Les commandes `cards` et `flagged` affichent la source du deck en tête de sortie.
+The `cards` and `flagged` commands display the deck's source at the top of the output.
 
 ```python
 from anki_assistant import SourceStore

@@ -251,6 +251,14 @@ async function lookupNotes(ids) {
   return (await API.lookup(missing)) || [];
 }
 
+/* Proposals that write into sources.json or the vault on click, not at validation. They stay
+   in the log as cards with « Appliquer » (specs/chat.md#proposal-tools). */
+const SOURCE_PROPOSALS = ["add_source", "create_source", "edit_source"];
+
+function isSourceProposal(kind) {
+  return SOURCE_PROPOSALS.indexOf(kind) >= 0;
+}
+
 /* One proposal event → a version, fragment cards, a draft card or a badge. Returns the
    pointer text shown in the log. Source proposals are not handled here (they stay inline). */
 async function landProposal(input, kind) {
@@ -349,14 +357,17 @@ function historyForServer() {
   const msgs = S.ws.chat;
   const lastAssistant = msgs.map((m) => m.who).lastIndexOf("assistant");
   msgs.forEach((m, i) => {
-    const bits = [m.text || ""];
+    const bits = [textWithMarkers(m)];
+    if ((m.sources || []).length) {
+      bits.push("[sources : " + m.sources.map((s) => "[" + s.n + "] " + s.url).join(", ") + "]");
+    }
     (m.reads || []).forEach((r) => {
       bits.push("[lecture: " + (r.tool || "?") + (r.summary ? " → " + r.summary : "") + "]");
     });
     (m.added || []).forEach((a) => bits.push("[ajout: " + a.count + " notes]"));
     (m.proposals || []).forEach((p) => {
       if (p.landed) bits.push("[proposition: " + p.kind + " " + p.landed + "]");
-      else if (p.kind === "create_source" || p.kind === "edit_source") {
+      else if (isSourceProposal(p.kind)) {
         bits.push("[proposition: " + p.kind + (p.applied ? " (appliquée)" : "") + "]");
       }
     });
@@ -370,6 +381,19 @@ function historyForServer() {
   return out;
 }
 
+/* The reply text with its [n] citation markers inlined, as replayed to the LLM. */
+function textWithMarkers(m) {
+  const text = m.text || "";
+  let out = "";
+  let at = 0;
+  (m.cites || []).forEach((c) => {
+    const pos = Math.min(Math.max(c.pos, at), text.length);
+    out += text.slice(at, pos) + "[" + c.n + "]";
+    at = pos;
+  });
+  return out + text.slice(at);
+}
+
 let wsLogRefreshQueued = false;
 function scheduleLogRefresh() {
   if (wsLogRefreshQueued) return;
@@ -380,12 +404,23 @@ function scheduleLogRefresh() {
   });
 }
 
-/* Narrow refresh used while a reply streams in, so the textarea keeps focus. */
+/* Pixels from the bottom within which the log still counts as « at the bottom ». */
+const LOG_STICK_PX = 40;
+
+/* Narrow refresh used while a reply streams in, so the textarea keeps focus. The log follows
+   the reply only while the reader is at the bottom; scrolled up, they stay where they are. */
 function refreshChatLog() {
   const log = document.getElementById("chat-log");
   if (!log) return;
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight <= LOG_STICK_PX;
+  const top = log.scrollTop;
   log.innerHTML = chatLogHtml();
-  log.scrollTop = log.scrollHeight;
+  log.scrollTop = atBottom ? log.scrollHeight : top;
+}
+
+function scrollChatLogToBottom() {
+  const log = document.getElementById("chat-log");
+  if (log) log.scrollTop = log.scrollHeight;
 }
 
 async function sendChat() {
@@ -398,11 +433,22 @@ async function sendChat() {
   messages.push({ role: "user", content: text });
 
   ws.chat.push({ who: "user", text });
-  const reply = { who: "assistant", text: "", reads: [], added: [], proposals: [], streaming: true, error: "" };
+  const reply = {
+    who: "assistant",
+    text: "",
+    cites: [],
+    sources: [],
+    reads: [],
+    added: [],
+    proposals: [],
+    streaming: true,
+    error: "",
+  };
   ws.chat.push(reply);
   ws.chatDraft = "";
   ws.chatBusy = true;
   draw();
+  scrollChatLogToBottom();
 
   // Landing a proposal may fetch a note; keep the order of arrival with a promise chain.
   let landing = Promise.resolve();
@@ -421,6 +467,13 @@ async function sendChat() {
       const d = data || {};
       if (name === "text") {
         reply.text += d.delta || "";
+        scheduleLogRefresh();
+      } else if (name === "citation") {
+        // Arrives right after the text of the cited passage: the marker goes where the text ends.
+        reply.cites.push({ pos: reply.text.length, n: d.n, cited: d.cited_text || "" });
+        if (!reply.sources.some((s) => s.n === d.n)) {
+          reply.sources.push({ n: d.n, url: d.url || "", title: d.title || "" });
+        }
         scheduleLogRefresh();
       } else if (name === "reading") {
         reply.reads.push({ tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
@@ -444,12 +497,13 @@ async function sendChat() {
           input: d.input || {},
           sourceId: d.source_id || null,
           name: (d.input || {}).name || "",
+          target: (d.input || {}).target || "",
           applied: false,
           landed: "",
           error: "",
         };
         reply.proposals.push(p);
-        if (p.kind !== "create_source" && p.kind !== "edit_source") {
+        if (!isSourceProposal(p.kind)) {
           later(async () => {
             if (S.ws !== ws) return;
             try {
@@ -500,7 +554,20 @@ async function applySourceProposal(mi, pi) {
   S.busy = true;
   draw();
   try {
-    if (p.kind === "create_source") {
+    if (p.kind === "add_source") {
+      const target = String(p.target != null ? p.target : input.target || "").trim();
+      if (!target) throw new Error("indique une cible");
+      const entry = {
+        target,
+        kind: SOURCE_KINDS.indexOf(input.kind) >= 0 ? input.kind : detectKind(target),
+        anchor_note_ids: input.anchor_note_ids || [],
+        id: p.sourceId || "",
+      };
+      if (entry.kind === "pdf" && input.pages) entry.pages = String(input.pages);
+      if (input.note) entry.note = String(input.note);
+      await API.addSource(S.ws.deck, entry);
+      refreshAnchorsOf(input.anchor_note_ids || []);
+    } else if (p.kind === "create_source") {
       const name = String(p.name != null ? p.name : input.name || "").trim();
       if (!name) throw new Error("indique un nom de note");
       await API.createSourceNote({
@@ -510,13 +577,7 @@ async function applySourceProposal(mi, pi) {
         anchor_note_ids: input.anchor_note_ids || [],
         id: p.sourceId || null,
       });
-      (input.anchor_note_ids || []).forEach((id) => {
-        const c = wsCardByNote(id);
-        if (c) {
-          c.anchors = null;
-          loadCardAnchors(c);
-        }
-      });
+      refreshAnchorsOf(input.anchor_note_ids || []);
     } else if (p.kind === "edit_source") {
       await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
     } else {
@@ -530,6 +591,35 @@ async function applySourceProposal(mi, pi) {
     S.busy = false;
     draw();
   }
+}
+
+/* The « + corpus » button on a cited source under a reply (specs/sources.md). */
+async function addCitedSource(el) {
+  if (!S.ws || S.busy) return;
+  const url = el.getAttribute("data-url");
+  if (!url) return;
+  S.busy = true;
+  draw();
+  try {
+    await API.addSource(S.ws.deck, { target: url, kind: "web" });
+    S.busy = false;
+    await loadCorpus();
+  } catch (e) {
+    S.error = e.message;
+    S.busy = false;
+    draw();
+  }
+}
+
+/* A source proposal that anchored notes changed their anchors server-side: re-fetch them. */
+function refreshAnchorsOf(noteIds) {
+  noteIds.forEach((id) => {
+    const c = wsCardByNote(id);
+    if (c) {
+      c.anchors = null;
+      loadCardAnchors(c);
+    }
+  });
 }
 
 async function revertSourceProposal(mi, pi) {
@@ -601,7 +691,9 @@ async function validateWorkspace() {
     if (!ok) return;
   }
   const unapplied = ws.chat.some((m) =>
-    (m.proposals || []).some((p) => p.kind === "create_source" && !p.applied),
+    (m.proposals || []).some(
+      (p) => (p.kind === "add_source" || p.kind === "create_source") && !p.applied,
+    ),
   );
   if (unapplied) {
     const ok = window.confirm(
@@ -675,6 +767,7 @@ function wsClick(act, el, e) {
   if (act === "ws-revert-src") {
     return revertSourceProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
   }
+  if (act === "ws-add-cited") return addCitedSource(el);
   if (act === "attach-src") return attachSource(el.getAttribute("data-src"));
   if (act === "detach-src") return detachSource(el.getAttribute("data-src"));
   if (act === "ws-dismiss-report") {
@@ -720,10 +813,10 @@ function wsInput(key, el) {
       card.moveTo = el.value || null;
       draw();
     }
-  } else if (key === "psrc-name") {
+  } else if (key === "psrc-name" || key === "psrc-target") {
     const msg = ws.chat[Number(el.getAttribute("data-mi"))];
     const p = msg && msg.proposals && msg.proposals[Number(el.getAttribute("data-pi"))];
-    if (p) p.name = el.value;
+    if (p) p[key === "psrc-name" ? "name" : "target"] = el.value;
   }
 }
 
@@ -1044,11 +1137,81 @@ function chatLogHtml() {
   return S.ws.chat.map(msgHtml).join("");
 }
 
+const URL_RE = /https?:\/\/[^\s<>"'\]]+/g;
+
+/* Escaped text with its URLs as links opening in a new tab (specs/chat.md#web-tools). */
+function linkify(text) {
+  let out = "";
+  let last = 0;
+  String(text || "").replace(URL_RE, (match, offset) => {
+    const url = match.replace(/[.,;:!?)]+$/, "");
+    out += esc(text.slice(last, offset));
+    out += '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url) + "</a>";
+    last = offset + url.length;
+    return match;
+  });
+  return (out + esc(text.slice(last))).replace(/\n/g, "<br>");
+}
+
+/* The reply text with a [n] marker after each cited passage, linking to the page. */
+function bodyHtml(m) {
+  const text = m.text || "";
+  const byN = {};
+  (m.sources || []).forEach((s) => {
+    byN[s.n] = s;
+  });
+  let out = "";
+  let at = 0;
+  (m.cites || []).forEach((c) => {
+    const pos = Math.min(Math.max(c.pos, at), text.length);
+    const s = byN[c.n] || {};
+    out +=
+      linkify(text.slice(at, pos)) +
+      '<a class="cite" href="' + esc(s.url || "#") + '" target="_blank" rel="noopener" title="' + esc(c.cited || "") + '">[' + c.n + "]</a>";
+    at = pos;
+  });
+  return out + linkify(text.slice(at));
+}
+
+function sourcesHtml(m) {
+  const sources = m.sources || [];
+  if (!sources.length) return "";
+  const corpus = ((S.corpus || {}).sources) || [];
+  const corpusUrls = new Set(corpus.filter((s) => s.kind === "web").map((s) => s.target));
+  const items = sources.map((s) => {
+    let host = "";
+    try {
+      host = new URL(s.url).host.replace(/^www\./, "");
+    } catch (e) {
+      host = "";
+    }
+    const inCorpus = corpusUrls.has(s.url);
+    const addBtn =
+      s.url && !inCorpus
+        ? ' <button class="ghost small add-to-corpus" data-act="ws-add-cited" data-url="' +
+          esc(s.url) +
+          '" data-title="' +
+          esc(s.title || "") +
+          '">+ corpus</button>'
+        : inCorpus
+          ? ' <span class="muted small">dans le corpus</span>'
+          : "";
+    return (
+      '<li><span class="n">[' + s.n + "]</span> " +
+      '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">' + esc(s.title || s.url) + "</a>" +
+      (s.title && host ? ' <span class="host">' + esc(host) + "</span>" : "") +
+      addBtn +
+      "</li>"
+    );
+  });
+  return '<ol class="sources">' + items.join("") + "</ol>";
+}
+
 function msgHtml(m, mi) {
   const who = m.who === "user" ? "toi" : "claude";
-  const body = esc(m.text || "").replace(/\n/g, "<br>") + (m.streaming ? '<span class="cursor">▍</span>' : "");
+  const body = bodyHtml(m) + (m.streaming ? '<span class="cursor">▍</span>' : "") + sourcesHtml(m);
   const reads = (m.reads || [])
-    .map((r) => '<div class="reading">lit : ' + esc(r.tool || "?") + (r.summary ? " → " + esc(r.summary) : "") + "</div>")
+    .map((r) => '<div class="reading">lit : ' + esc(r.tool || "?") + (r.summary ? " → " + linkify(r.summary) : "") + "</div>")
     .join("");
   const added = (m.added || [])
     .map(
@@ -1074,7 +1237,7 @@ function msgHtml(m, mi) {
 /* Card proposals are one pointer line; source proposals keep their inline card. */
 function proposalHtml(p, mi, pi) {
   const input = p.input || {};
-  if (p.kind !== "create_source" && p.kind !== "edit_source") {
+  if (!isSourceProposal(p.kind)) {
     return (
       '<div class="ws-pointer">' +
       (p.error ? "proposition " + esc(p.kind) + " refusée : " + esc(p.error) : p.landed ? esc(p.kind) + " " + p.landed : esc(p.kind) + " …") +
@@ -1082,7 +1245,28 @@ function proposalHtml(p, mi, pi) {
     );
   }
   let diff = "";
-  if (p.kind === "create_source") {
+  if (p.kind === "add_source") {
+    const target = p.target != null ? p.target : input.target || "";
+    const kind = SOURCE_KINDS.indexOf(input.kind) >= 0 ? input.kind : detectKind(target);
+    const anchors = input.anchor_note_ids || [];
+    const meta = [];
+    if (kind === "pdf" && input.pages) meta.push("pages " + esc(input.pages));
+    if (input.note) meta.push(esc(input.note));
+    diff =
+      '<div class="muted small"><span class="kind ' + esc(kind) + '">' + esc(kind) + "</span> " +
+      (kind === "web" ? "page web" : kind === "pdf" ? "PDF" : "note du vault") +
+      " à ajouter au corpus de " + esc(S.ws.deck) +
+      (meta.length ? " · " + meta.join(" · ") : "") + "</div>" +
+      '<input class="mono src-name" data-input="psrc-target" data-mi="' + mi + '" data-pi="' + pi + '" value="' +
+      esc(target) +
+      '" placeholder="https://… · note du vault · ~/doc.pdf"' +
+      (p.applied ? " disabled" : "") +
+      ">" +
+      (kind === "web" && target
+        ? '<div class="small"><a href="' + esc(target) + '" target="_blank" rel="noopener">ouvrir ↗</a></div>'
+        : "") +
+      (anchors.length ? '<div class="muted small">ancre : ' + anchors.map(short).join(" ") + "</div>" : "");
+  } else if (p.kind === "create_source") {
     const anchors = input.anchor_note_ids || [];
     diff =
       '<div class="muted small">note Obsidian à créer dans le vault, ajoutée au corpus de ' + esc(S.ws.deck) + "</div>" +
@@ -1107,7 +1291,9 @@ function proposalHtml(p, mi, pi) {
     : '<button class="primary" data-act="ws-apply-src"' + at + disabled + ">Appliquer</button>";
   return (
     '<div class="proposal' + (p.applied ? " applied" : "") + '">' +
-    '<div class="proposal-head"><span class="pkind">' + (p.kind === "create_source" ? "nouvelle source" : "source") + "</span>" +
+    '<div class="proposal-head"><span class="pkind">' +
+    (p.kind === "add_source" ? "ajout de source" : p.kind === "create_source" ? "nouvelle source" : "source") +
+    "</span>" +
     '<span class="grow"></span>' + head + "</div>" +
     (input.rationale ? '<div class="rationale">' + nl2br(input.rationale) + "</div>" : "") +
     '<div class="diff">' + diff + "</div>" +

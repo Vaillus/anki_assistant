@@ -2,7 +2,8 @@
 
 No FastAPI or Anki imports here — `web/routes_chat.py` turns `ChatEvent`s into SSE lines and
 builds the read tools. From `sources.py` only `new_source_id` is used (a pure function), so that
-the create-source proposal can announce the id the source will carry once the user applies it.
+the add-source and create-source proposals can announce the id the source will carry once the
+user applies it.
 
 Model choice
 ------------
@@ -27,6 +28,12 @@ Two kinds of tools (specs/chat.md):
   `read_source`): executed here through the injected callables, the text they return is the tool
   result. A `reading` event tells the client what was read; `add_notes` also sends an `added`
   event so that the notes become cards.
+- **web tools** (`web_search`, `web_fetch`): run by Anthropic inside the model call, so there is
+  nothing to execute here. Their results come back as extra content blocks of the assistant
+  message; `_web_events` turns each one into a `reading` event carrying the URLs, and a long run
+  comes back as `stop_reason: "pause_turn"`, which `stream_chat` resumes. The passages of the
+  reply that rest on a page arrive with citations (`citations_delta` in the stream); `_Citer`
+  numbers the pages per turn and emits a `citation` event the client renders as a [n] marker.
 """
 
 from __future__ import annotations
@@ -53,6 +60,18 @@ MAX_TOOL_LOOPS = 8
 BRIEF_FIELD_CHARS = 120
 #: Cards a workspace holds at most (specs/workspace.md#how-notes-enter).
 MAX_CARDS = 50
+#: Web tool versions. These filter results server-side before they enter context, which needs
+#: Opus 4.6 / Sonnet 4.6 or later — the floor `DEFAULT_MODEL` already sits on.
+WEB_SEARCH_TYPE = "web_search_20260209"
+WEB_FETCH_TYPE = "web_fetch_20260209"
+#: Web tool calls per turn. Billed per search on top of tokens, hence a cap rather than none.
+MAX_WEB_SEARCHES = 8
+MAX_WEB_FETCHES = 5
+#: URLs spelled out in a `web_search` reading line; the rest are counted.
+WEB_URLS_SHOWN = 5
+#: Characters of a citation's `cited_text` kept for the marker's tooltip. Search citations are
+#: at most 150 by the API; fetch citations quote whole passages, hundreds of characters long.
+CITED_TEXT_CHARS = 200
 
 
 def default_model() -> str:
@@ -182,7 +201,8 @@ ReadTool = Callable[[Mapping[str, Any]], str]
 
 @dataclass
 class ChatEvent:
-    """One SSE event. `type` is one of "text", "reading", "added", "proposal", "done", "error"."""
+    """One SSE event. `type` is one of "text", "citation", "reading", "added", "proposal",
+    "done", "error"."""
 
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -199,7 +219,8 @@ travaille dans un espace de travail : les cartes qu'il regarde (la note qu'il a 
 brouillons préparés pour elle, les notes ajoutées depuis) sont listées plus bas avec leur \
 identifiant (w1, w2…). Ce prompt te donne aussi le deck en cours, l'index de son corpus et les \
 sources jointes. Le reste — les autres notes du deck ou de la collection, le texte d'une source \
-non jointe, l'arborescence des decks, un type de note — se lit avec les outils de lecture.
+non jointe, l'arborescence des decks, un type de note — se lit avec les outils de lecture, et \
+ce qui n'est nulle part dans la collection se cherche sur le web.
 
 Règles :
 - Réponds dans la langue de l'utilisateur, français par défaut.
@@ -207,11 +228,24 @@ Règles :
 identifiant d'espace (`target: "w3"`) ; une note qui n'est pas encore dans l'espace se désigne \
 par son identifiant Anki en chiffres, elle y sera ajoutée.
 - Quand tu proposes un changement concret, utilise les outils de proposition (propose_edit, \
-propose_split, propose_create, propose_move, propose_create_source, propose_edit_source) au \
-lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; le même défaut sur \
-plusieurs notes = un propose_edit par note. Chaque proposition devient une version ou une carte \
-que l'utilisateur relit, retouche ou écarte, puis valide en bloc : tu n'écris jamais dans Anki. \
-Pour montrer des notes à l'utilisateur sans les modifier, add_notes les ajoute à l'espace.
+propose_split, propose_create, propose_move, propose_add_source, propose_create_source, \
+propose_edit_source) au lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; \
+le même défaut sur plusieurs notes = un propose_edit par note. Chaque proposition devient une \
+version ou une carte que l'utilisateur relit, retouche ou écarte, puis valide en bloc : tu \
+n'écris jamais dans Anki. Pour montrer des notes à l'utilisateur sans les modifier, add_notes \
+les ajoute à l'espace.
+- Le web (web_search, puis web_fetch pour lire une page en entier) sert à deux choses : \
+confronter une carte à l'extérieur quand le corpus ne suffit pas, et **trouver des sources à \
+ajouter** — un article, un livre, une page de référence. Le corpus n'est pas fermé. **Dès que \
+tu cites une page web dans ta réponse et que cette page est une bonne référence pour le deck \
+(un article Wikipédia, un cours, une documentation), appelle propose_add_source avec son URL \
+dans le même tour** pour que l'utilisateur puisse l'ajouter au corpus en un clic ; le serveur \
+relit la page quand il en a besoin, rien n'est copié. Pour une synthèse que tu rédiges \
+toi-même, utilise propose_create_source (note Obsidian dans le vault). Le contenu de carte que \
+tu tires du web arrive avec la proposition de source qui le fonde, pas tout seul. Ne recopie \
+pas d'URL dans ta réponse : les passages tirés du web sont cités automatiquement (renvoi \
+numéroté vers la page, liste des sources sous la réponse) ; une URL en clair ne sert qu'à \
+recommander une page que tu n'as pas citée.
 - Les champs sont des valeurs de champ Anki **brutes** : HTML, marqueurs de cloze \
 `{{c1::réponse}}` ou `{{c1::réponse::indice}}` conservés. Produis les tiens dans la même syntaxe \
 et garde-la valide : numéros contigus à partir de c1, accolades équilibrées, au moins un cloze \
@@ -528,9 +562,13 @@ TOOL_KINDS: dict[str, str] = {
     "propose_split": "split",
     "propose_create": "create",
     "propose_move": "move",
+    "propose_add_source": "add_source",
     "propose_create_source": "create_source",
     "propose_edit_source": "edit_source",
 }
+
+#: Proposals that bring a new source into the corpus: answered with the id it will carry.
+NEW_SOURCE_KINDS: frozenset[str] = frozenset({"add_source", "create_source"})
 
 #: Proposal tools whose `target` names a card (or a note to add as a card).
 TARGETED: frozenset[str] = frozenset({"propose_edit", "propose_split", "propose_move"})
@@ -545,6 +583,15 @@ READ_TOOLS: tuple[str, ...] = (
     "get_note_type",
     "read_source",
 )
+
+#: Tools Anthropic executes. Nothing here dispatches them; they are reported, not run.
+WEB_TOOLS: tuple[str, ...] = ("web_search", "web_fetch")
+
+#: Result block type -> the web tool that produced it.
+_WEB_RESULTS: dict[str, str] = {
+    "web_search_tool_result": "web_search",
+    "web_fetch_tool_result": "web_fetch",
+}
 
 _FIELDS_DESC = (
     "Valeurs de champ Anki brutes, par nom de champ. HTML autorisé, marqueurs de cloze conservés."
@@ -594,12 +641,38 @@ def _obj(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, 
 
 
 def tools() -> list[dict[str, Any]]:
-    """Every tool definition sent to the model: the proposal tools, then the read tools."""
-    return proposal_tools() + read_tool_defs()
+    """Every tool definition: the proposal tools, then the read tools, then the web tools."""
+    return proposal_tools() + read_tool_defs() + web_tool_defs()
+
+
+def web_tool_defs() -> list[dict[str, Any]]:
+    """The two Anthropic server tools. No `input_schema`: the API owns their shape.
+
+    `allowed_callers` is pinned to direct calls. At its default these versions run the tools
+    inside code execution and filter results before they reach context, and the reply then
+    carries no citations at all (observed: a dozen code-execution round trips and not one
+    `citations_delta`). Search results are always cited; fetched pages only when asked, hence
+    `citations` on `web_fetch` (specs/chat.md#web-tools).
+    """
+    return [
+        {
+            "type": WEB_SEARCH_TYPE,
+            "name": "web_search",
+            "max_uses": MAX_WEB_SEARCHES,
+            "allowed_callers": ["direct"],
+        },
+        {
+            "type": WEB_FETCH_TYPE,
+            "name": "web_fetch",
+            "max_uses": MAX_WEB_FETCHES,
+            "allowed_callers": ["direct"],
+            "citations": {"enabled": True},
+        },
+    ]
 
 
 def proposal_tools() -> list[dict[str, Any]]:
-    """The six proposal tools. Each call becomes one `proposal` event for the client."""
+    """The seven proposal tools. Each call becomes one `proposal` event for the client."""
     return [
         {
             "name": "propose_edit",
@@ -713,12 +786,59 @@ def proposal_tools() -> list[dict[str, Any]]:
             ),
         },
         {
+            "name": "propose_add_source",
+            "description": (
+                "Proposer d'ajouter au corpus du deck courant une source qui existe déjà : une "
+                "page web (son URL — le serveur la relit quand il en a besoin, rien n'est "
+                "copié), une note du vault ou un PDF sur disque. Typiquement après un web_fetch "
+                "sur une page qui mérite d'être gardée. Le résultat de l'outil donne "
+                "l'identifiant que la source aura une fois ajoutée : réutilise-le dans "
+                "`source_ids` de propose_create."
+            ),
+            "input_schema": _obj(
+                {
+                    "target": {
+                        "type": "string",
+                        "description": (
+                            "URL http(s) de la page, nom d'une note du vault (relatif à sa "
+                            "racine, sans `.md`) ou chemin d'un PDF. L'utilisateur peut le "
+                            "corriger avant d'appliquer."
+                        ),
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": ["web", "obsidian", "pdf"],
+                        "description": (
+                            "Type de la source. Omettre pour le déduire de la cible (URL → web, "
+                            "`.pdf` → pdf, sinon obsidian)."
+                        ),
+                    },
+                    "pages": {
+                        "type": "string",
+                        "description": "PDF seulement : plage de pages, ex. « 12-19 », « 3-5,9 ».",
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Commentaire court affiché à côté de la source.",
+                    },
+                    "anchor_note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Notes Anki à ancrer à cette source une fois ajoutée.",
+                    },
+                    "rationale": _RATIONALE,
+                },
+                required=["target", "rationale"],
+            ),
+        },
+        {
             "name": "propose_create_source",
             "description": (
                 "Proposer de créer une note Obsidian dans le vault et de l'ajouter au corpus du "
-                "deck courant — pour consigner ce qu'une conversation a établi. Le résultat de "
-                "l'outil donne l'identifiant que la source aura une fois créée : réutilise-le "
-                "dans `source_ids` de propose_create."
+                "deck courant — pour consigner ce qu'une conversation a établi (pour une page "
+                "web qui existe déjà, préférer propose_add_source). Le résultat de l'outil "
+                "donne l'identifiant que la source aura une fois créée : réutilise-le dans "
+                "`source_ids` de propose_create."
             ),
             "input_schema": _obj(
                 {
@@ -748,7 +868,7 @@ def proposal_tools() -> list[dict[str, Any]]:
             "description": (
                 "Proposer de remplacer un passage d'une source Obsidian par un autre. `old` doit "
                 "apparaître exactement une fois dans la source (copie-le tel quel) ; le "
-                "remplacement est refusé sinon."
+                "remplacement est refusé sinon. Une source pdf ou web ne se modifie pas."
             ),
             "input_schema": _obj(
                 {
@@ -897,6 +1017,139 @@ def _summary(text: str) -> str:
     return first.lstrip("#").strip()
 
 
+def _attr(obj: Any, name: str) -> Any:
+    """Read `name` off an SDK block or off the plain dict the test fake replays."""
+    return obj.get(name) if isinstance(obj, Mapping) else getattr(obj, name, None)
+
+
+def _field(obj: Any, name: str) -> str:
+    value = _attr(obj, name)
+    return "" if value is None else str(value)
+
+
+def _web_outcome(block: Any) -> tuple[list[Any], str]:
+    """`(results, error_code)` of a web result block.
+
+    A web tool that fails still comes back HTTP 200 with the error inside the block, so this is
+    the only place that distinguishes the two — and the shapes differ per tool: `web_search`
+    succeeds with a *list* of results (empty when nothing matched), `web_fetch` with a single
+    result object. So an error is recognised by its `error_code`, never by not being a list.
+    """
+    content = _attr(block, "content")
+    code = _field(content, "error_code")
+    if code or _field(content, "type").endswith("_error"):
+        return [], code or "erreur inconnue"
+    if isinstance(content, list):
+        return content, ""
+    return ([] if content is None else [content]), ""
+
+
+def _web_summary(tool: str, call_input: Mapping[str, Any], results: Sequence[Any], err: str) -> str:
+    """The reading line for one web call. It spells out the URLs: that is the whole provenance
+    guarantee (specs/chat.md#web-tools) — the user must never learn of a page after the fact."""
+    if tool == "web_fetch":
+        url = str(call_input.get("url") or "") or (_field(results[0], "url") if results else "")
+        return f"erreur : {err}" if err else (url or "page")
+    query = str(call_input.get("query") or "")
+    head = f"« {query} »" if query else "recherche"
+    if err:
+        return f"{head} → erreur : {err}"
+    if not results:
+        return f"{head} → aucun résultat"
+    urls = [url for url in (_field(r, "url") for r in results) if url]
+    rest = len(urls) - WEB_URLS_SHOWN
+    tail = f" (+{rest})" if rest > 0 else ""
+    return f"{head} → {len(results)} résultat(s) : {', '.join(urls[:WEB_URLS_SHOWN])}{tail}"
+
+
+def _web_events(content: Sequence[Any], calls: dict[str, dict[str, Any]]) -> list[ChatEvent]:
+    """`reading` events for the web tools Anthropic ran inside one model call.
+
+    `calls` accumulates `server_tool_use` inputs by id **across the turn**: when Claude calls a
+    web tool and a local one in the same batch the API defers the search, so the call block and
+    its result land in different messages. An event is emitted on the *result* block only —
+    that one appears exactly once, where a deferred call block is re-sent with the next message.
+    """
+    events: list[ChatEvent] = []
+    for block in content:
+        kind = _field(block, "type")
+        if kind == "server_tool_use":
+            calls[_field(block, "id")] = dict(_attr(block, "input") or {})
+            continue
+        tool = _WEB_RESULTS.get(kind)
+        if tool is None:
+            continue
+        call_input = calls.get(_field(block, "tool_use_id"), {})
+        results, err = _web_outcome(block)
+        events.append(
+            ChatEvent(
+                "reading",
+                {
+                    "id": _field(block, "tool_use_id"),
+                    "tool": tool,
+                    "input": call_input,
+                    "summary": _web_summary(tool, call_input, results, err),
+                },
+            )
+        )
+    return events
+
+
+class _Citer:
+    """Numbers the pages one turn cites and resolves fetch citations to a URL.
+
+    Pages are numbered per turn, by URL, in order of first citation (specs/chat.md#web-tools).
+    A `web_search_result_location` names its page directly; a `char_location` (a fetched page)
+    only names the document by title and index, so the pages fetched during the turn are kept in
+    order — from the stream's `content_block_start` events and from each final message, since a
+    deferred fetch lands in a later message than its call.
+    """
+
+    def __init__(self) -> None:
+        self.numbers: dict[str, int] = {}
+        #: `(title, url)` of the fetched pages, in order of fetching.
+        self.fetched: list[tuple[str, str]] = []
+
+    def saw_block(self, block: Any) -> None:
+        if _field(block, "type") != "web_fetch_tool_result":
+            return
+        results, _err = _web_outcome(block)
+        for result in results:
+            url = _field(result, "url")
+            document = _attr(result, "content")
+            title = "" if isinstance(document, str | None) else _field(document, "title")
+            if url and (title, url) not in self.fetched:
+                self.fetched.append((title, url))
+
+    def event(self, citation: Any) -> ChatEvent | None:
+        kind = _field(citation, "type")
+        if kind == "web_search_result_location":
+            url, title = _field(citation, "url"), _field(citation, "title")
+        elif kind == "char_location":
+            url, title = self._resolve_fetch(citation)
+        else:
+            return None
+        if not url:
+            return None
+        n = self.numbers.setdefault(url, len(self.numbers) + 1)
+        cited = " ".join(_field(citation, "cited_text").split())
+        if len(cited) > CITED_TEXT_CHARS:
+            cited = cited[: CITED_TEXT_CHARS - 1].rstrip() + "…"
+        return ChatEvent("citation", {"n": n, "url": url, "title": title, "cited_text": cited})
+
+    def _resolve_fetch(self, citation: Any) -> tuple[str, str]:
+        title = _field(citation, "document_title")
+        if title:
+            for fetched_title, url in self.fetched:
+                if fetched_title == title:
+                    return url, title
+        index = _attr(citation, "document_index")
+        if isinstance(index, int) and 0 <= index < len(self.fetched):
+            fetched_title, url = self.fetched[index]
+            return url, fetched_title or title
+        return "", title
+
+
 def _usage_dict(message: Any) -> dict[str, Any]:
     usage = getattr(message, "usage", None)
     if usage is None:
@@ -983,9 +1236,10 @@ async def stream_chat(
     `messages` are plain `{role, content: str}` turns. Proposal calls are surfaced as `proposal`
     events and answered with a `"ok"` tool result so Claude can keep talking; they land on the
     workspace and are written at validation. A targeted proposal is checked against the roster
-    first: an unknown target or a full workspace is an error tool result and no event. A
-    create-source proposal is answered with the id the source will carry, so that Claude can
-    anchor the notes it proposes next to it; the same id travels in the event (`source_id`).
+    first: an unknown target or a full workspace is an error tool result and no event. An
+    add-source or create-source proposal is answered with the id the source will carry, so that
+    Claude can anchor the notes it proposes next to it; the same id travels in the event
+    (`source_id`).
     Read calls are executed through `read_tools`, surfaced as `reading` events, and answered
     with the text the tool returned (or an error tool result, so Claude can react instead of
     the turn failing). `add_notes` runs `get_notes` and, when the cap allows, also streams an
@@ -1005,6 +1259,9 @@ async def stream_chat(
     ]
     tool_defs = tools()
     final: Any = None
+    #: `server_tool_use` inputs by id, kept for the whole turn (see `_web_events`).
+    web_calls: dict[str, dict[str, Any]] = {}
+    citer = _Citer()
 
     try:
         for _ in range(MAX_TOOL_LOOPS):
@@ -1015,21 +1272,50 @@ async def stream_chat(
                 tools=tool_defs,
                 messages=convo,
             ) as stream:
+                # A block's citations may stream before or after its text deltas (both seen),
+                # so they wait for the block to close: the [n] marker goes at the passage's end.
+                pending: list[ChatEvent] = []
                 async for event in stream:
-                    if getattr(event, "type", None) != "content_block_delta":
+                    event_type = getattr(event, "type", None)
+                    if event_type == "content_block_start":
+                        citer.saw_block(getattr(event, "content_block", None))
+                        continue
+                    if event_type == "content_block_stop":
+                        for cited in pending:
+                            yield cited
+                        pending = []
+                        continue
+                    if event_type != "content_block_delta":
                         continue
                     delta: Any = getattr(event, "delta", None)
-                    if getattr(delta, "type", None) == "text_delta":
+                    delta_type = getattr(delta, "type", None)
+                    if delta_type == "text_delta":
                         yield ChatEvent("text", {"delta": delta.text})
+                    elif delta_type == "citations_delta":
+                        cited = citer.event(getattr(delta, "citation", None))
+                        if cited is not None:
+                            pending.append(cited)
+                for cited in pending:
+                    yield cited
                 final = await stream.get_final_message()
 
-            if getattr(final, "stop_reason", None) != "tool_use":
+            content = getattr(final, "content", None) or []
+            for block in content:
+                citer.saw_block(block)
+            for event in _web_events(content, web_calls):
+                yield event
+
+            stop_reason = getattr(final, "stop_reason", None)
+            if stop_reason == "pause_turn":
+                # A long web-tool run. Hand the assistant message back untouched and call again:
+                # the trailing server_tool_use block is what tells the API to resume, so there is
+                # no user message to add. It spends one of the MAX_TOOL_LOOPS calls.
+                convo.append({"role": "assistant", "content": final.content})
+                continue
+            if stop_reason != "tool_use":
                 yield ChatEvent(
                     "done",
-                    {
-                        "stop_reason": getattr(final, "stop_reason", None),
-                        "usage": _usage_dict(final),
-                    },
+                    {"stop_reason": stop_reason, "usage": _usage_dict(final)},
                 )
                 return
 
@@ -1046,7 +1332,7 @@ async def stream_chat(
                             continue
                     data: dict[str, Any] = {"id": block.id, "kind": kind, "input": tool_input}
                     answer = "ok"
-                    if kind == "create_source":
+                    if kind in NEW_SOURCE_KINDS:
                         data["source_id"] = new_source_id()
                         answer = (
                             f"ok — une fois appliquée, la source aura l'identifiant "

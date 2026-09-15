@@ -289,9 +289,9 @@ def test_deck_source_kinds_are_deduplicated_in_corpus_order(anki: FakeAnkiClient
     store = FakeStore(
         {
             "a": [
-                Source(deck="a", kind="obsidian", target="N"),
-                Source(deck="a", kind="pdf", target="f.pdf"),
-                Source(deck="a", kind="obsidian", target="M"),
+                Source(deck="a", kind="obsidian", target="N", id="s1"),
+                Source(deck="a", kind="pdf", target="f.pdf", id="s2"),
+                Source(deck="a", kind="obsidian", target="M", id="s3"),
             ]
         }
     )

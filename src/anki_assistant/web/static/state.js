@@ -213,6 +213,15 @@ function sourceById(id) {
   return (((S.corpus || {}).sources) || []).find((s) => s.id === id) || null;
 }
 
+/* Source kinds and their auto-detection from a target (specs/sources.md#source-entry). */
+const SOURCE_KINDS = ["obsidian", "pdf", "web"];
+
+function detectKind(target) {
+  const t = String(target || "").trim();
+  if (/^https?:\/\/\S+$/i.test(t)) return "web";
+  return /\.pdf$/i.test(t) ? "pdf" : "obsidian";
+}
+
 function visibleDecks() {
   const all = S.decks || [];
   return S.showAllDecks ? all : all.filter((d) => (d.flagged_total || 0) > 0);

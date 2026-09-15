@@ -57,6 +57,8 @@
   --obsidianink: var(--om-magenta);
   --pdfbg: color-mix(in srgb, var(--om-red) 14%, var(--bg));
   --pdfink: var(--om-red);
+  --webbg: color-mix(in srgb, var(--om-blue) 16%, var(--bg));
+  --webink: var(--om-blue);
   --noteselbg: color-mix(in srgb, var(--om-accent) 10%, var(--bg));
   --notehover: var(--om-dark-background);
   --assistantbg: var(--om-dark-background);
@@ -166,6 +168,7 @@ a { color: var(--accent); }
 }
 .kind.obsidian { background: var(--obsidianbg); color: var(--obsidianink); }
 .kind.pdf { background: var(--pdfbg); color: var(--pdfink); }
+.kind.web { background: var(--webbg); color: var(--webink); }
 
 .chip {
   display: inline-flex;
@@ -342,6 +345,16 @@ a { color: var(--accent); }
 .applied-mark { color: var(--ok); font-size: 13px; font-weight: 600; }
 .proposal .revert { font-size: 12px; padding: 2px 8px; margin-left: 6px; }
 .reading { font-size: 12px; color: var(--muted); font-style: italic; margin: 2px 0; }
+/* ---------- chat: citations (specs/chat.md#web-tools) ---------- */
+
+.cite { font-size: 11px; text-decoration: none; vertical-align: super; margin-left: 1px; }
+.cite:hover { text-decoration: underline; }
+.sources { margin: 6px 0 0; padding: 4px 0 0; border-top: 1px dashed var(--line); list-style: none; font-size: 12px; }
+.sources li { margin: 2px 0; }
+.sources .n { font-family: var(--mono); color: var(--muted); }
+.sources .host { color: var(--muted); }
+.sources .add-to-corpus { margin-left: 4px; padding: 0 5px; font-size: 11px; color: var(--webink); border-color: var(--webink); }
+.sources .add-to-corpus:hover { background: var(--webbg); }
 /* ---------- chat: source chips and source proposals (specs/chat.md) ---------- */
 
 .chip.src { background: var(--obsidianbg); color: var(--obsidianink); }

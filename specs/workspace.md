@@ -21,7 +21,7 @@ After closing, the queue and deck counts are re-fetched. After a validation the 
 
 Nothing is persisted: a page reload drops an open workspace. Past workspaces are not kept.
 
-While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while a field or the message box is focused only returns the focus; a second `Esc` closes. `⌘/Ctrl+Entrée` sends the message. No other workspace shortcut in v1.
+While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while a field or the message box is focused only returns the focus; a second `Esc` closes. `Entrée` sends the message (`Shift+Entrée` inserts a line break). No other workspace shortcut in v1.
 
 ## Cards
 
@@ -108,7 +108,7 @@ A dropped version is gone from the workspace. The conversation notes the rejecti
 
 ### Split
 
-`propose_split` on a card yields: a new version on that card holding the first fragment's fields (the note keeps its scheduling history) and one **fragment** card per other fragment, linked to the **parent** card. When the proposal says the original is not kept, the card is marked deleted instead of gaining a version, and every piece is a fragment card. Fragments inherit the parent's note type (unless the proposal names another), tags and [anchors](./sources.md#anchors).
+`propose_split` on a card yields: a new version on that card holding the first fragment's fields (the note keeps its scheduling history) and one **fragment** card per other fragment, linked to the **parent** card. When the proposal says the original is not kept, the card is marked deleted instead of gaining a version, and every piece is a fragment card. Fragments inherit the parent's note type (unless the proposal names another), tags, [anchors](./sources.md#anchors) and **scheduling state** (interval, due date, ease, review count, lapses — copied from the parent's most-reviewed card at validation).
 
 Fragments are ordinary draft cards afterward: Claude can target one for a retouch, the user can edit or drop it.
 
@@ -141,7 +141,7 @@ A draft note is created. An existing note's card becomes one action — deleted 
 
 | Card | Anki writes | Flag |
 |---|---|---|
-| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`. Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
+| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`. A fragment's cards inherit the parent's scheduling state (interval, due, ease, reps, lapses). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
 | Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |

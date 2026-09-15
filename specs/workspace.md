@@ -125,7 +125,7 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. 
 
 The **plan** — the set of writes to perform — is built from the cards.
 
-A draft note becomes a create. An existing note's card is classified into one action: when a card carries more than one mark, **deleted** wins over kept, which wins over edited (shown version ≠ v0). On top of any of the three, the card can also carry a **move** to another deck. Cards still on v0 with no mark are not in the plan and keep their flag.
+A draft note is added to Anki. An existing note's card is classified into one action: a card can be deleted, kept and edited at the same time, so **deleted** wins over kept, which wins over edited (shown version ≠ v0). On top of any of the three, the card can also carry a **move** to another deck. Cards still on v0 that are not deleted, kept or moved are not in the plan and keep their flag.
 
 | Card | Anki writes | Flag |
 |---|---|---|

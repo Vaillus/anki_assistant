@@ -60,9 +60,13 @@ Cards are listed root first, then in order of arrival. A [fragment](#split) is s
 
 ### Card head
 
-One line: the activation toggle, the identity (« #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags), the state badges (flag per flagged Anki card as in the queue, « supprimée », « gardée », « → deck »), then the version controls when the card has more than one version: « ← v2 / 3 → ». Actions at the right: « invalider », « supprimer » / « restaurer », « garder » / « ne pas garder », « déplacer… » (a deck picker).
+One line, left to right:
 
-A card is **active** when the next message is about it. Every card starts active. Clicking the head (outside a control) toggles between active and inactive; an inactive card is drawn at 55 % opacity.
+- **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity.
+- **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags.
+- **State badges** — flag per flagged Anki card as in the queue, « supprimée », « gardée », « → deck ».
+- **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
+- **Actions** — « invalider », « supprimer » / « restaurer », « garder » / « ne pas garder », « déplacer… » (a deck picker).
 
 ### Card body
 

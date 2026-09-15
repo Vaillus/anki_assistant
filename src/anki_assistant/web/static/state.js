@@ -253,3 +253,10 @@ function debounce(fn, ms) {
     t = setTimeout(() => fn.apply(null, args), ms);
   };
 }
+
+function typesetMath() {
+  if (window.MathJax && MathJax.typesetPromise) {
+    MathJax.typesetClear && MathJax.typesetClear();
+    MathJax.typesetPromise().catch(() => {});
+  }
+}

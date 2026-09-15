@@ -186,6 +186,83 @@ def test_move_drops_anchors_absent_from_the_destination_corpus(
     assert store.anchors(nid) == [], "s1 is not in e's corpus"
 
 
+# --------------------------------------------------------------------- scheduling
+
+
+def test_fragment_inherits_scheduling_from_parent(anki: FailingAnki, store: SourceStore):
+    parent = anki.add(
+        "d",
+        fields={"Text": "old {{c1::x}} {{c2::y}}", "Back Extra": "r"},
+        flags=(1, 1),
+        interval=30,
+        due=100,
+        reps=12,
+        lapses=2,
+        queue=2,
+        card_type=2,
+        factor=2500,
+        left=1001,
+    )
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            edit("w1", parent, "new {{c1::x}}"),
+            create("w2", "{{c1::y}}", parent_wid="w1", deck="d"),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok, report.errors
+    new_id = report.created["w2"]
+    new_card_id = anki.notes[new_id]["cards"][0]
+    card = anki.cards[new_card_id]
+    assert card["interval"] == 30
+    assert card["due"] == 100
+    assert card["reps"] == 12
+    assert card["lapses"] == 2
+    assert card["queue"] == 2
+    assert card["type"] == 2
+    assert card["factor"] == 2500
+    assert card["left"] == 1001
+
+
+def test_non_fragment_draft_does_not_inherit_scheduling(anki: FailingAnki, store: SourceStore):
+    parent = anki.add(
+        "d",
+        fields={"Text": "old", "Back Extra": "r"},
+        flags=(1,),
+        interval=30,
+        reps=12,
+    )
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            edit("w1", parent, "new"),
+            create("w2", "standalone", deck="d"),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok
+    new_id = report.created["w2"]
+    new_card_id = anki.notes[new_id]["cards"][0]
+    assert anki.cards[new_card_id]["interval"] == 0, "non-fragment stays new"
+
+
+def test_fragment_of_new_note_skips_scheduling(anki: FailingAnki, store: SourceStore):
+    parent = anki.add("d", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            edit("w1", parent, "new"),
+            create("w2", "frag", parent_wid="w1", deck="d"),
+        ],
+    )
+    report, _ = workspace.apply(anki, store, plan)
+    assert report.ok
+    new_id = report.created["w2"]
+    new_card_id = anki.notes[new_id]["cards"][0]
+    assert anki.cards[new_card_id]["interval"] == 0, "parent was new, nothing to inherit"
+
+
 # ------------------------------------------------------------------------- rollback
 
 

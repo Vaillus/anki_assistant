@@ -307,9 +307,10 @@ function sourceRow(s, i) {
     (meta.length ? ' <span class="muted small">· ' + meta.join(" · ") + "</span>" : "") +
     '<span class="grow"></span>' +
     (s.uri ? '<a href="' + esc(s.uri) + '" class="small">ouvrir ↗</a> ' : "") +
-    '<button class="ghost small" data-act="remove-src" data-i="' +
-    i +
-    '">retirer</button>' +
+    (inherited ? "" :
+      '<button class="ghost small" data-act="remove-src" data-i="' +
+      i +
+      '">retirer</button>') +
     "</div>" +
     (inherited ? '<div class="muted small">héritée de ' + esc(s.on_deck) + "</div>" : "") +
     (s.exists === false ? '<div class="warn">⚠ fichier introuvable</div>' : "") +
@@ -329,7 +330,6 @@ function sourceRow(s, i) {
 
 function sourceForm() {
   const f = S.srcForm || {};
-  const inherited = !!(S.corpus && S.corpus.inherited_from);
   return (
     '<div class="src-form">' +
     "<b>Nouvelle source</b>" +
@@ -356,16 +356,6 @@ function sourceForm() {
     '<input data-input="src-note" value="' +
     esc(f.note || "") +
     '">' +
-    (inherited
-      ? '<div class="muted small" style="margin-top:8px">Enregistrer écrit sur <b>' +
-        esc(S.deck) +
-        "</b> : ce deck n'héritera plus de <b>" +
-        esc(S.corpus.inherited_from) +
-        "</b>.</div>" +
-        '<label class="check" style="margin-top:6px"><input type="checkbox" data-input="src-copy"' +
-        (f.copyInherited === false ? "" : " checked") +
-        "> copier les sources héritées d'abord</label>"
-      : "") +
     '<div class="row" style="margin-top:10px;justify-content:flex-end">' +
     '<button data-act="src-cancel">Annuler</button>' +
     '<button class="primary" data-act="src-save"' +

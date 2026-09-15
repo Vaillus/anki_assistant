@@ -52,7 +52,7 @@ def test_legacy_single_object_read_and_rewritten_as_list(tmp_path: Path) -> None
     assert raw["anchors"] == {}
 
 
-def test_inheritance_from_nearest_ancestor(tmp_path: Path) -> None:
+def test_inheritance_accumulates_own_then_ancestors(tmp_path: Path) -> None:
     store = SourceStore(path=tmp_path / "sources.json")
     store.set_corpus(
         "a",
@@ -62,15 +62,21 @@ def test_inheritance_from_nearest_ancestor(tmp_path: Path) -> None:
         ],
     )
 
+    # a::b::c has no own sources — it inherits a's
     corpus = store.corpus("a::b::c")
     assert [s.target for s in corpus] == ["x", "y.pdf"]
     assert all(s.deck == "a" for s in corpus)
 
-    # a closer ancestor wins
+    # adding sources to a::b: a::b::c now sees a::b's own THEN a's
     store.set_corpus("a::b", [Source(deck="a::b", kind="obsidian", target="z")])
     corpus = store.corpus("a::b::c")
-    assert [s.target for s in corpus] == ["z"]
+    assert [s.target for s in corpus] == ["z", "x", "y.pdf"]
     assert corpus[0].deck == "a::b"
+    assert corpus[1].deck == "a"
+
+    # a::b itself also sees its own + a's
+    corpus_ab = store.corpus("a::b")
+    assert [s.target for s in corpus_ab] == ["z", "x", "y.pdf"]
 
     # no corpus anywhere in the chain
     assert store.corpus("other::deck") == []
@@ -396,17 +402,22 @@ def test_create_note_writes_the_file_and_appends_to_the_own_corpus(tmp_path: Pat
         store.create_note("a", "   ", "blank name")
 
 
-def test_create_note_materialises_an_inherited_corpus_keeping_ids(tmp_path: Path) -> None:
+def test_create_note_on_child_deck_adds_to_own_list_only(tmp_path: Path) -> None:
     store = _store_with_vault(tmp_path)
     store.set_corpus("a", [Source(deck="a", kind="obsidian", target="x", id="inh000")])
     store.set_anchors(1, ["inh000"])
 
     source = store.create_note("a::b", "new", "…")
     own = store.corpora["a::b"]
-    assert [s.id for s in own] == ["inh000", source.id]
-    assert all(s.deck == "a::b" for s in own)
+    # Only the new source is on a::b's own list — no materialisation
+    assert [s.id for s in own] == [source.id]
+    assert own[0].deck == "a::b"
+    # The effective corpus of a::b is: own (new) + inherited (x)
+    corpus = store.corpus("a::b")
+    assert [s.id for s in corpus] == [source.id, "inh000"]
+    # a's corpus is untouched
     assert store.corpus("a") == [Source(deck="a", kind="obsidian", target="x", id="inh000")]
-    assert store.anchors(1) == ["inh000"]  # the id survived, so did the anchor
+    assert store.anchors(1) == ["inh000"]
 
 
 def test_replace_in_note_requires_exactly_one_match(tmp_path: Path) -> None:

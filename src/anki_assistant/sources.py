@@ -20,11 +20,11 @@ the ANKI_SOURCES env var):
       }
     }
 
-A deck's value is an ordered list of sources: its **corpus**. A deck without a corpus of its own
-inherits its nearest parent deck's corpus, so mapping `courant::01-AI::little book of deep
-learning` also covers its `::1` .. `::6` sub-decks. For backward compatibility with the 0.1
-format, a deck value that is a single object (not a list) is read as a one-element list and
-rewritten as a list on next save; an entry without `id` gets one on load.
+A deck's value is an ordered list of sources: its **corpus**. A deck's effective corpus is its
+own sources followed by each ancestor's (nearest first), so `courant::01-AI::little book of deep
+learning` sees its own sources then those of `courant::01-AI`, then `courant`. For backward
+compatibility with the 0.1 format, a deck value that is a single object (not a list) is read as
+a one-element list and rewritten as a list on next save; an entry without `id` gets one on load.
 
 `anchors` maps an Anki note id (JSON key, so a string) to the ids of the sources the note was
 made from. Nothing is written into Anki: only this file knows a note is anchored.
@@ -39,7 +39,7 @@ import secrets
 import urllib.parse
 from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -302,15 +302,17 @@ class SourceStore:
     # -------------------------------------------------------------- accessors
 
     def corpus(self, deck: str) -> list[Source]:
-        """The deck's own corpus if present, else the nearest parent's, else []."""
-        if deck in self.corpora:
-            return list(self.corpora[deck])
+        """The deck's own sources, then each ancestor's (nearest first)."""
+        result: list[Source] = []
+        seen_ids: set[str] = set()
         parts = deck.split("::")
-        for cut in range(len(parts) - 1, 0, -1):
-            parent = "::".join(parts[:cut])
-            if parent in self.corpora:
-                return list(self.corpora[parent])
-        return []
+        for cut in range(len(parts), 0, -1):
+            ancestor = "::".join(parts[:cut])
+            for src in self.corpora.get(ancestor, []):
+                if src.id not in seen_ids:
+                    result.append(src)
+                    seen_ids.add(src.id)
+        return result
 
     def get(self, deck: str, inherit: bool = True) -> Source | None:
         """First source of the deck's corpus (inheritance included unless `inherit=False`).
@@ -459,8 +461,7 @@ class SourceStore:
         """Write `<vault>/<name>.md` and add it to the deck's own corpus.
 
         Refuses if the file exists (FileExistsError). `name` is vault-relative, `/` allowed
-        (parent directories are created), `.md` optional. An inherited corpus is materialised
-        on `deck` first, as when a source is added from the form. `source_id` lets a caller who
+        (parent directories are created), `.md` optional. `source_id` lets a caller who
         announced the id beforehand (the chat's create-source proposal) keep it.
         """
         clean = name.strip().strip("/")
@@ -474,10 +475,7 @@ class SourceStore:
         path.write_text(content, encoding="utf-8")
 
         source = Source(deck=deck, kind="obsidian", target=target, id=source_id or new_source_id())
-        own = self.corpora.get(deck)
-        if own is None:
-            # Materialise the inherited corpus on this deck; ids are kept so anchors survive.
-            own = [replace(inherited, deck=deck) for inherited in self.corpus(deck)]
+        own = list(self.corpora.get(deck, []))
         self.set_corpus(deck, [*own, source])
         return source
 

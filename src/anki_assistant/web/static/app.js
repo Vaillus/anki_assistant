@@ -152,13 +152,17 @@ async function keepNote(noteId) {
 
 function entryOf(s) {
   const e = { kind: s.kind, target: s.target };
+  if (s.id) e.id = s.id;
   if (s.pages) e.pages = s.pages;
   if (s.note) e.note = s.note;
   return e;
 }
 
-function currentEntries() {
-  return (((S.corpus || {}).sources) || []).map(entryOf);
+/** Own sources only (on_deck === selected deck). Inherited sources are not sent in PUT. */
+function ownEntries() {
+  return (((S.corpus || {}).sources) || [])
+    .filter((s) => s.on_deck === S.deck)
+    .map(entryOf);
 }
 
 async function saveSources(entries) {
@@ -169,9 +173,11 @@ async function saveSources(entries) {
 }
 
 async function removeSource(i) {
-  const entries = currentEntries();
-  if (i < 0 || i >= entries.length) return;
-  entries.splice(i, 1);
+  const sources = ((S.corpus || {}).sources) || [];
+  const src = sources[i];
+  if (!src) return;
+  if (src.on_deck !== S.deck) return; // inherited — cannot remove from here
+  const entries = ownEntries().filter((e) => e.id !== src.id);
   try {
     await saveSources(entries);
   } catch (e) {
@@ -189,8 +195,7 @@ async function saveNewSource() {
     draw();
     return;
   }
-  const inherited = !!(S.corpus && S.corpus.inherited_from);
-  const base = !inherited || f.copyInherited !== false ? currentEntries() : [];
+  const base = ownEntries();
   const entry = { kind: f.kind === "pdf" ? "pdf" : "obsidian", target };
   if (String(f.pages || "").trim()) entry.pages = String(f.pages).trim();
   if (String(f.note || "").trim()) entry.note = String(f.note).trim();
@@ -313,8 +318,6 @@ document.addEventListener("input", (e) => {
     S.srcForm.pages = el.value;
   } else if (key === "src-note") {
     S.srcForm.note = el.value;
-  } else if (key === "src-copy") {
-    S.srcForm.copyInherited = el.checked;
   }
 });
 

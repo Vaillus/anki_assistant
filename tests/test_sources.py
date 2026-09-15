@@ -574,12 +574,12 @@ def test_create_note_on_child_deck_adds_to_own_list_only(tmp_path: Path) -> None
 
     source = store.create_note("a::b", "new", "…")
     own = store.corpora["a::b"]
-    # Only the new source is on a::b's own list — no materialisation
-    assert [s.id for s in own] == [source.id]
-    assert own[0].deck == "a::b"
-    # The effective corpus of a::b is: own (new) + inherited (x)
+    # Inherited corpus is materialised, then the new source is appended
+    assert [s.id for s in own] == ["inh000", source.id]
+    assert own[1].deck == "a::b"
+    # The effective corpus of a::b deduplicates against the ancestor
     corpus = store.corpus("a::b")
-    assert [s.id for s in corpus] == [source.id, "inh000"]
+    assert [s.id for s in corpus] == ["inh000", source.id]
     # a's corpus is untouched
     assert store.corpus("a") == [Source(deck="a", kind="obsidian", target="x", id="inh000")]
     assert store.anchors(1) == ["inh000"]

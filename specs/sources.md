@@ -20,7 +20,7 @@ A source entry has:
 
 The file is migrated on load: a deck value that is a single object instead of a list becomes a one-element list, and an entry without an id gets one. Both are saved in the current shape on the next write.
 
-A deck points to a corpus because, when reviewing a flagged note, the user wants the original material within reach and Claude needs it to check or rewrite the card. The [Source tab](#source-tab) shows it; the chat makes it available to Claude ([chat.md § Context](./chat.md#context)).
+A deck points to a corpus because, when reviewing a flagged note, the user wants the original material within reach and Claude needs it to check or rewrite the card. The [Source tab](#source-tab) shows it; the chat makes it available to Claude ([chat.md § What Claude sees](./chat.md#what-claude-sees)).
 
 ### Inheritance
 
@@ -53,7 +53,7 @@ Anchors follow the note through the writes of the workspace ([workspace.md § Va
 - **Source removed from a corpus** → every anchor to it is removed. The UI warns first: « 3 notes sont ancrées à cette source ».
 - **Note moved to another deck** → each anchor is kept if its source is in the destination's effective corpus, removed otherwise.
 - **Split** → the kept original and the new fragments inherit the original's anchors.
-- **Create** → the new note gets the anchors chosen in the workspace, by default those of the note the workspace was opened on ([workspace.md § Vocabulary](./workspace.md#vocabulary)).
+- **Create** → the new note gets the anchors chosen in the workspace, by default those of the note the workspace was opened on ([workspace.md § Opening and closing](./workspace.md#opening-and-closing)).
 
 ## Writing to the vault
 

@@ -104,7 +104,7 @@ With the workspace closed and no input focused:
 | `Entrée` | Ouvrir (open workspace on selected note) |
 | `Espace` | Toggle question state (reveal / hide flagged clozes) |
 
-Keys are ignored while an input, textarea, or select is focused. Workspace keyboard shortcuts are specified in [workspace.md § Keyboard](./workspace.md#keyboard).
+Keys are ignored while an input, textarea, or select is focused. Workspace keyboard shortcuts are specified in [workspace.md § Opening and closing](./workspace.md#opening-and-closing).
 
 There are no dialogs: every edit happens on a workspace card. Native `confirm()` is used for the two confirmations (discarding a workspace with changes, validating a plan that deletes).
 

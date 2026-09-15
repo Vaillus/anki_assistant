@@ -2,7 +2,7 @@
 
 > The overlay that opens on a note: cards on the left, a conversation with Claude on the right, one « Valider » that writes everything at once.
 
-General terms (*note*, *Anki card*, *note type*, *field*, *reason*) are defined in [00-overview.md § Vocabulary](./00-overview.md#vocabulary). What Claude sees and the tools it has: [chat.md](./chat.md).
+General terms (*note*, *Anki card*, *note type*, *field*, *reason*) are defined in [notes.md](./notes.md). What Claude sees and the tools it has: [chat.md](./chat.md).
 
 The workspace serves the review queue ([review.md](./review.md)).
 

@@ -213,14 +213,31 @@ async function saveNewSource() {
   }
 }
 
-const lookupVaultTargets = debounce(async (query) => {
+const lookupVaultNotes = debounce(async (query) => {
   if (!query || query.length < 2) return;
   try {
-    const [notes, pdfs] = await Promise.all([API.vaultNotes(query), API.vaultPdfs(query)]);
-    const dl = document.getElementById("vault-targets");
+    const names = await API.vaultNotes(query);
+    const dl = document.getElementById("vault-notes");
     if (!dl) return;
-    const opts = (notes || []).concat(pdfs || []).slice(0, 50);
-    dl.innerHTML = opts.map((v) => '<option value="' + esc(v) + '"></option>').join("");
+    dl.innerHTML = (names || [])
+      .slice(0, 50)
+      .map((n) => '<option value="' + esc(n) + '"></option>')
+      .join("");
+  } catch (e) {
+    /* autocomplete is best-effort */
+  }
+}, 250);
+
+const lookupVaultPdfs = debounce(async (query) => {
+  if (!query || query.length < 2) return;
+  try {
+    const paths = await API.vaultPdfs(query);
+    const dl = document.getElementById("vault-pdfs");
+    if (!dl) return;
+    dl.innerHTML = (paths || [])
+      .slice(0, 50)
+      .map((p) => '<option value="' + esc(p) + '"></option>')
+      .join("");
   } catch (e) {
     /* autocomplete is best-effort */
   }
@@ -316,7 +333,8 @@ document.addEventListener("input", (e) => {
       S.refocus = "src-target";
       draw();
     }
-    if (kind !== "web") lookupVaultTargets(el.value.trim());
+    if (kind === "obsidian") lookupVaultNotes(el.value.trim());
+    else if (kind === "pdf") lookupVaultPdfs(el.value.trim());
   } else if (key === "src-kind") {
     S.srcForm.kind = el.value;
     draw();

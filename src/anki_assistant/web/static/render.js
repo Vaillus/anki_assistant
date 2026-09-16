@@ -151,7 +151,9 @@ function queueColumn() {
     const vis = visibleNotes();
     body = vis.length
       ? vis.map(noteCard).join("")
-      : '<div class="empty">Rien à revoir ici 🎉</div>';
+      : '<div class="empty">Rien à revoir ici 🎉' +
+        '<br><button class="primary" data-act="open-ws" style="margin-top:12px">Ouvrir l\'espace de travail</button>' +
+        "</div>";
   }
   return (
     '<div class="col" data-scroll="queue">' + head + errorBanner() + body + "</div>"

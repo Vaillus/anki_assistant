@@ -284,6 +284,8 @@ document.addEventListener("click", (e) => {
   } else if (act === "keep") {
     e.stopPropagation();
     keepNote(noteId);
+  } else if (act === "open-ws") {
+    openWorkspace(null);
   } else if (act === "undo") {
     undoLastValidation();
   } else if (act === "dismiss-error") {

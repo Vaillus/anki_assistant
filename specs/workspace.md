@@ -8,9 +8,13 @@ The workspace serves the review queue ([review.md](./review.md)).
 
 ## Opening and closing
 
-The workspace opens on a note from the queue (click, or `Entrée` with the note selected). The page behind is dimmed and stops reacting to keys. Only one workspace at a time.
+The workspace opens on a note from the queue (click, or `Entrée` with the note selected), or **without a note** from the empty-queue state (« Ouvrir l'espace de travail »). The page behind is dimmed and stops reacting to keys. Only one workspace at a time.
 
-Opening builds the **root** card — the note the workspace was opened on — and starts an empty conversation. The root's deck is the **current deck** for the prompt and for `search_notes`. The conversation belongs to the workspace and dies with it.
+Opening on a note builds the **root** card — the note the workspace was opened on — and starts an empty conversation. The root's deck is the **current deck** for the prompt and for `search_notes`.
+
+Opening without a note starts an empty workspace on the selected deck: no root card, no cards at all, just a conversation. The selected deck is the current deck. The user asks Claude to create cards from the corpus sources.
+
+The conversation belongs to the workspace and dies with it.
 
 Closing:
 
@@ -114,10 +118,10 @@ Fragments are ordinary draft cards afterward: Claude can target one for a retouc
 
 ### How notes enter
 
-1. **The root**, on opening.
+1. **The root**, on opening — absent when the workspace was opened without a note.
 2. **`add_notes`** ([chat.md § Read tools](./chat.md#read-tools)): Claude asks for notes to be shown, typically after a search. The workspace appends one card per note, v0 = the note.
 3. **A proposal on a note not in the workspace** (`propose_edit`, `propose_split`, `propose_move` targeting a note id absent from the cards): the note is fetched, its card added, then the proposal applied to it.
-4. **`propose_create`**: a new draft card with no parent; tags and anchors default to the root's unless the proposal gives `source_ids`.
+4. **`propose_create`**: a new draft card with no parent; tags and anchors default to the root's unless the proposal gives `source_ids`. When there is no root, `model` must be given and tags start empty.
 
 Notes already in the workspace are never added twice. The workspace holds at most **50 cards**; additions that would exceed the cap are refused with an error asking Claude to narrow down.
 

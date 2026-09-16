@@ -74,6 +74,21 @@ function wsRoot() {
   return S.ws ? wsCard(S.ws.rootWid) : null;
 }
 
+/* Walk up the parent chain and return the wid of the nearest ancestor that has a noteId,
+   or null when there is none. Used by split so that grandchildren inherit scheduling from
+   the original existing note rather than from the intermediate draft. */
+function wsAncestorWithNote(card) {
+  let c = card;
+  const seen = {};
+  while (c) {
+    if (seen[c.wid]) return null; // cycle guard
+    seen[c.wid] = true;
+    if (c.noteId) return c.wid;
+    c = c.parentWid ? wsCard(c.parentWid) : null;
+  }
+  return null;
+}
+
 function shownVersion(c) {
   return c.versions[c.vi];
 }
@@ -702,11 +717,18 @@ async function revertSourceProposal(mi, pi) {
    card is not in it. The comment travels only when the user changed it. */
 function planCard(c) {
   const comment = c.flag.on && commentChanged(c) ? c.flag.comment : null;
+  // A deleted draft is not written — it was never in Anki, so there is nothing to create or
+  // delete. Check deleted *before* the draft branch so a split-then-delete does not produce
+  // a ghost create.
+  if (c.deleted && !c.noteId) return null;
   if (!c.noteId) {
+    // For scheduling inheritance, resolve to the nearest ancestor with a noteId.
+    // parentWid is the visual parent (may be a draft); the server needs an existing note.
+    const schedParent = wsAncestorWithNote(c);
     return {
       wid: c.wid,
       action: "create",
-      parent_wid: c.parentWid,
+      parent_wid: schedParent,
       deck: c.deck,
       model: c.model,
       fields: shownFields(c),
@@ -844,6 +866,11 @@ function wsClick(act, el, e) {
     ws.report = null;
     return draw();
   }
+  if (act === "ws-split" && card && !card.deleted) {
+    S.ws.chatDraft = "scinde " + card.wid + " : ";
+    S.refocus = "chat";
+    return draw();
+  }
   if (!card) return undefined;
   if (act === "ws-toggle") {
     // The head toggles activation, unless the click landed on one of its controls.
@@ -969,7 +996,9 @@ function wsReportHtml() {
   );
 }
 
-/* Root first, then arrival order; each fragment right after its parent. */
+/* Root first, then arrival order; each fragment right after its parent,
+   recursively so that a fragment of a fragment nests under it (option A).
+   Each entry carries `lastChild` so the vertical connector knows when to stop. */
 function wsOrderedCards() {
   const cards = S.ws.cards;
   const out = [];
@@ -977,21 +1006,49 @@ function wsOrderedCards() {
   cards.forEach((c) => {
     if (c.parentWid && wsCard(c.parentWid)) (byParent[c.parentWid] = byParent[c.parentWid] || []).push(c);
   });
+  function emit(wid, depth) {
+    const children = byParent[wid] || [];
+    children.forEach((f, i) => {
+      out.push({ card: f, fragment: true, depth: depth, lastChild: i === children.length - 1 });
+      emit(f.wid, depth + 1);
+    });
+  }
   cards.forEach((c) => {
     if (c.parentWid && wsCard(c.parentWid)) return;
-    out.push({ card: c, fragment: false });
-    (byParent[c.wid] || []).forEach((f) => out.push({ card: f, fragment: true }));
+    out.push({ card: c, fragment: false, depth: 0, lastChild: false });
+    emit(c.wid, 1);
   });
   return out;
 }
 
 function wsCardsHtml() {
-  return wsOrderedCards()
-    .map((x) => wsCardHtml(x.card, x.fragment))
+  const ordered = wsOrderedCards();
+  // For each fragment, build the set of tree-line segments to draw. A segment at depth d is
+  // drawn only when a later sibling at that depth exists below (the line must pass through
+  // this card to reach it) or when this is the card's own depth (the tap).
+  return ordered
+    .map((x, idx) => {
+      const lines = [];
+      if (x.fragment) {
+        for (let d = 1; d <= x.depth; d++) {
+          let continues = false;
+          for (let j = idx + 1; j < ordered.length; j++) {
+            if (ordered[j].depth < d) break;
+            if (ordered[j].depth === d) { continues = true; break; }
+          }
+          const tap = d === x.depth;
+          // Only emit a segment when this is the tap level or the line continues through.
+          if (tap || continues) {
+            lines.push({ depth: d, continues: continues, tap: tap });
+          }
+        }
+      }
+      return wsCardHtml(x.card, x.fragment, x.depth, lines);
+    })
     .join("");
 }
 
-function wsCardHtml(c, isFragment) {
+function wsCardHtml(c, isFragment, depth, lines) {
   const v = shownVersion(c);
   const n = c.versions.length;
   const cls =
@@ -1000,6 +1057,7 @@ function wsCardHtml(c, isFragment) {
     (c.deleted ? " deleted" : "") +
     (isFragment ? " fragment" : "") +
     (c.noteId ? "" : " draft");
+  const indentPx = isFragment ? depth * 32 : 0;
   const plan = planCard(c);
   const badges =
     (c.deleted ? "" : flagToggleHtml(c)) +
@@ -1015,6 +1073,9 @@ function wsCardHtml(c, isFragment) {
         "</span>"
       : "";
   const canInvalidate = !(c.noteId && c.vi === 0);
+  const splitBtn = !c.deleted
+    ? '<button class="ghost small" data-act="ws-split" data-wid="' + c.wid + '" title="demander à Claude de scinder cette carte">✂</button>'
+    : "";
   const actions =
     (canInvalidate
       ? '<button class="ghost small" data-act="ws-invalidate" data-wid="' + c.wid + '" title="retirer cette version">invalider</button>'
@@ -1024,9 +1085,11 @@ function wsCardHtml(c, isFragment) {
         (c.deleted ? "restaurer" : "supprimer") +
         "</button>"
       : "") +
-    (c.noteId && !c.deleted ? movePickerHtml(c) : "");
+    (c.noteId && !c.deleted ? movePickerHtml(c) : "") +
+    splitBtn;
   const effectiveModel = shownModel(c);
   const modelChanged = c.noteId && effectiveModel !== c.model;
+  const parentLabel = isFragment && c.parentWid ? " · fragment de " + c.parentWid : "";
   const identity =
     '<span class="tag">' +
     (c.noteId ? esc(short(c.noteId)) : "brouillon") +
@@ -1035,6 +1098,7 @@ function wsCardHtml(c, isFragment) {
     (modelChanged ? ' <b title="type changé (était ' + esc(c.model) + ')">⇄</b>' : "") +
     (c.deck && c.deck !== S.ws.deck ? " · " + esc(c.deck) : "") +
     (c.tags.length ? " · " + esc(c.tags.join(" ")) : "") +
+    esc(parentLabel) +
     "</span>";
   const meta =
     v.by === "claude" || v.by === "user" || v.edited
@@ -1044,8 +1108,24 @@ function wsCardHtml(c, isFragment) {
         (v.rationale ? " — " + esc(v.rationale) : "") +
         "</div>"
       : "";
+  // Tree connector lines rendered inside the card div (position: relative). Each segment
+  // is an absolutely-positioned span at a given depth column: it draws the vertical line
+  // from the top gap through the card, with a horizontal tap at the card's own depth.
+  var connectorHtml = "";
+  if (lines && lines.length) {
+    lines.forEach(function (ln) {
+      // Position relative to the card's left edge (which is indented by `indentPx`),
+      // so offset back by the full indent and then forward to the column center.
+      var leftPx = (ln.depth - 1) * 32 + 12 - indentPx;
+      var tapCls = ln.tap ? " tap" : "";
+      var contCls = ln.continues ? " cont" : "";
+      connectorHtml += '<span class="ws-tree-seg' + tapCls + contCls + '" style="left:' + leftPx + 'px"></span>';
+    });
+  }
+
   return (
-    '<div class="' + cls + '" data-wid="' + c.wid + '">' +
+    '<div class="' + cls + '" data-wid="' + c.wid + '"' + (indentPx ? ' style="margin-left:' + indentPx + 'px"' : "") + ">" +
+    connectorHtml +
     '<div class="ws-card-head" data-act="ws-toggle" data-wid="' + c.wid + '" title="' +
     (c.active ? "active — cliquer pour exclure du prochain message" : "inactive — cliquer pour inclure") +
     '">' +

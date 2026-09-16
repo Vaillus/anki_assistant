@@ -759,19 +759,19 @@ def vault_notes(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
 
 
 def vault_pdfs(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
-    """PDF paths under the vault whose filename contains `q`, case-insensitive.
+    """PDF paths under the vault's Zotero folder whose filename contains `q`, case-insensitive.
 
     Paths under the user's home are returned with a `~/` prefix (what the user would type as a
     PDF source target); others as absolute paths. Recursive, sorted, hidden directories skipped.
     """
-    root = vault.path
-    if not root.exists():
+    pdf_root = vault.path / "Zotero"
+    if not pdf_root.exists():
         return []
     home = Path.home()
     q_lower = q.lower()
     results: list[str] = []
-    for path in root.rglob("*.pdf"):
-        rel = path.relative_to(root)
+    for path in pdf_root.rglob("*.pdf"):
+        rel = path.relative_to(pdf_root)
         if any(part.startswith(".") for part in rel.parts):
             continue
         if q_lower in rel.name.lower():

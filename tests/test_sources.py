@@ -318,22 +318,19 @@ def test_vault_notes_missing_vault_returns_empty(tmp_path: Path) -> None:
 # --------------------------------------------------------------------- vault_pdfs
 
 
-def test_vault_pdfs_filters_by_filename_and_skips_hidden(tmp_path: Path) -> None:
+def test_vault_pdfs_searches_only_zotero_folder(tmp_path: Path) -> None:
     zotero = tmp_path / "Zotero"
     zotero.mkdir()
     (zotero / "Attention_2017.pdf").write_bytes(b"")
     (zotero / "BERT_2019.pdf").write_bytes(b"")
     (tmp_path / "root_paper.pdf").write_bytes(b"")
-    hidden = tmp_path / ".trash"
-    hidden.mkdir()
-    (hidden / "Old.pdf").write_bytes(b"")
 
     vault = Vault(name="V", path=tmp_path)
 
     all_pdfs = vault_pdfs(vault, "")
-    assert len(all_pdfs) == 3
+    assert len(all_pdfs) == 2
     assert all(p.endswith(".pdf") for p in all_pdfs)
-    assert not any("Old" in p for p in all_pdfs)
+    assert not any("root_paper" in p for p in all_pdfs)
 
     matches = vault_pdfs(vault, "attention")
     assert len(matches) == 1

@@ -322,17 +322,17 @@ document.addEventListener("input", (e) => {
   if (!S.srcForm) return;
   if (key === "src-target") {
     S.srcForm.target = el.value;
-    // kind auto-detected from the target (specs/sources.md#source-entry)
-    const kind = detectKind(el.value);
-    const changed = kind !== S.srcForm.kind;
-    S.srcForm.kind = kind;
-    const sel = document.querySelector('[data-input="src-kind"]');
-    if (sel) sel.value = kind;
-    if (changed) {
-      // the pages field only exists for a pdf: redraw, keeping the caret in the target
+    // Only auto-switch kind on a positive match (URL or .pdf); partial text like "attention"
+    // must not force the kind back to obsidian when the user already picked pdf.
+    const detected = detectKind(el.value);
+    if (detected !== "obsidian" && detected !== S.srcForm.kind) {
+      S.srcForm.kind = detected;
+      const sel = document.querySelector('[data-input="src-kind"]');
+      if (sel) sel.value = detected;
       S.refocus = "src-target";
       draw();
     }
+    const kind = S.srcForm.kind;
     if (kind === "obsidian") lookupVaultNotes(el.value.trim());
     else if (kind === "pdf") lookupVaultPdfs(el.value.trim());
   } else if (key === "src-kind") {

@@ -402,11 +402,12 @@ class Source:
         return vault.path / rel
 
     def uri(self, vault: Vault) -> str:
-        """A URI macOS can open: file:// for a PDF, obsidian:// for a note, the URL for a page."""
+        """A URI the frontend can open: /api/sources/<id>/file for a PDF (served by the app,
+        since browsers block file:// from http://), obsidian:// for a note, the URL for a page."""
         if self.kind == "web":
             return self.target
         if self.kind == "pdf":
-            return Path(self.target).expanduser().resolve().as_uri()
+            return f"/api/sources/{urllib.parse.quote(self.id, safe='')}/file"
         file_arg = self.target[:-3] if self.target.endswith(".md") else self.target
         # Percent-encoding, not form encoding: Obsidian reads a space as %20, never as "+".
         vault_q = urllib.parse.quote(vault.name, safe="")
@@ -756,3 +757,28 @@ def vault_notes(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
             names.append(name)
     names.sort(key=str.lower)
     return names[:limit]
+
+
+def vault_pdfs(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
+    """PDF paths under the vault's Zotero folder whose filename contains `q`, case-insensitive.
+
+    Paths under the user's home are returned with a `~/` prefix (what the user would type as a
+    PDF source target); others as absolute paths. Recursive, sorted, hidden directories skipped.
+    """
+    pdf_root = vault.path / "Zotero"
+    if not pdf_root.exists():
+        return []
+    home = Path.home()
+    q_lower = q.lower()
+    results: list[str] = []
+    for path in pdf_root.rglob("*.pdf"):
+        rel = path.relative_to(pdf_root)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        if q_lower in rel.name.lower():
+            try:
+                results.append("~/" + str(path.relative_to(home)))
+            except ValueError:
+                results.append(str(path))
+    results.sort(key=str.lower)
+    return results[:limit]

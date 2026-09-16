@@ -26,7 +26,7 @@ A deck's **effective corpus** is its own sources followed by each ancestor's, ne
 
 ### Text
 
-A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens through a `file://` link; a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
+A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens in Zotero through a server-side `open -a Zotero` call (`POST /api/sources/{id}/open`); a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
 
 A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
@@ -74,7 +74,7 @@ Each source is a row:
 - **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
 - **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
 
-**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
+**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
 
 **Removing a source.** « retirer » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
 
@@ -93,9 +93,11 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
 | `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind |
 | `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |
+| `GET /api/vault/pdfs?q=` | PDF paths under the vault whose filename contains `q`, for the form's autocompletion |
 | `GET /api/sources/anchors?note_id=` | A note's anchors, each qualified valid or dangling |
 | `PUT /api/sources/anchors?note_id=` | Replace a note's anchors, order kept |
 | `GET /api/sources/anchors/orphans` | Anchored note ids that Anki no longer knows |
 | `POST /api/sources/anchors/prune` | Remove the orphans' anchors |
 | `POST /api/sources/notes` | Create a vault note and add it to a deck's corpus; may anchor notes to it and reuse an id announced beforehand ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
 | `PATCH /api/sources/{source_id}/text` | Replace one passage of a vault note |
+| `POST /api/sources/{source_id}/open` | Open a PDF source in Zotero (server-side `open -a Zotero`) |

@@ -306,13 +306,17 @@ function sourceRow(s, i) {
     "</b>" +
     (meta.length ? ' <span class="muted small">· ' + meta.join(" · ") + "</span>" : "") +
     '<span class="grow"></span>' +
-    (s.uri
-      ? '<a href="' +
-        esc(s.uri) +
-        '" class="small"' +
-        (s.kind === "web" ? ' target="_blank" rel="noopener"' : "") +
-        ">ouvrir ↗</a> "
-      : "") +
+    (s.kind === "pdf" && s.exists
+      ? '<button class="ghost small" data-act="open-pdf" data-id="' +
+        esc(s.id) +
+        '">ouvrir ↗</button> '
+      : s.uri
+        ? '<a href="' +
+          esc(s.uri) +
+          '" class="small"' +
+          (s.kind === "web" ? ' target="_blank" rel="noopener"' : "") +
+          ">ouvrir ↗</a> "
+        : "") +
     (inherited ? "" :
       '<button class="ghost small" data-act="remove-src" data-i="' +
       i +
@@ -349,10 +353,13 @@ function sourceForm() {
     "<b>Nouvelle source</b>" +
     (S.srcForm.error ? '<div class="banner">' + esc(S.srcForm.error) + "</div>" : "") +
     "<label>cible (note du vault, chemin de PDF ou URL)</label>" +
-    '<input data-input="src-target" data-focus="src-target" list="vault-notes" value="' +
+    '<input data-input="src-target" data-focus="src-target" list="' +
+    (kind === "pdf" ? "vault-pdfs" : "vault-notes") +
+    '" value="' +
     esc(f.target || "") +
     '" placeholder="Allocation sur des angles disjoints · ~/doc.pdf · https://…">' +
     '<datalist id="vault-notes"></datalist>' +
+    '<datalist id="vault-pdfs"></datalist>' +
     "<label>type</label>" +
     '<select data-input="src-kind">' +
     options +

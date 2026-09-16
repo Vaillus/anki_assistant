@@ -9,6 +9,8 @@ path-safe and go in the path (`/sources/{source_id}/text`).
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -24,6 +26,7 @@ from anki_assistant.sources import (
     is_url,
     is_valid_pages,
     vault_notes,
+    vault_pdfs,
 )
 from anki_assistant.web.routes_review import _anki_errors
 
@@ -264,6 +267,11 @@ def get_vault_notes(request: Request, q: str = "") -> list[str]:
     return vault_notes(_store(request).vault, q, limit=50)
 
 
+@router.get("/vault/pdfs")
+def get_vault_pdfs(request: Request, q: str = "") -> list[str]:
+    return vault_pdfs(_store(request).vault, q, limit=50)
+
+
 # --------------------------------------------------------------------- anchors
 
 
@@ -326,3 +334,19 @@ def replace_source_text(source_id: str, body: ReplaceIn, request: Request) -> So
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return SourceResponse(deck=source.deck, source=_to_view(store, source))
+
+
+@router.post("/sources/{source_id}/open")
+def open_source_file(source_id: str, request: Request) -> dict[str, str]:
+    """Open a PDF source in Zotero (macOS `open -a Zotero`). Local-only app, no security concern."""
+    store = _store(request)
+    source = store.by_id(source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"source inconnue : {source_id}")
+    if source.kind != "pdf":
+        raise HTTPException(status_code=400, detail="seul un PDF peut être ouvert")
+    path = Path(source.target).expanduser().resolve()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="fichier introuvable")
+    subprocess.Popen(["open", "-a", "Zotero", str(path)])
+    return {"status": "ok"}

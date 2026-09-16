@@ -306,13 +306,17 @@ function sourceRow(s, i) {
     "</b>" +
     (meta.length ? ' <span class="muted small">· ' + meta.join(" · ") + "</span>" : "") +
     '<span class="grow"></span>' +
-    (s.uri
-      ? '<a href="' +
-        esc(s.uri) +
-        '" class="small"' +
-        (s.kind === "web" || s.kind === "pdf" ? ' target="_blank" rel="noopener"' : "") +
-        ">ouvrir ↗</a> "
-      : "") +
+    (s.kind === "pdf" && s.exists
+      ? '<button class="ghost small" data-act="open-pdf" data-id="' +
+        esc(s.id) +
+        '">ouvrir ↗</button> '
+      : s.uri
+        ? '<a href="' +
+          esc(s.uri) +
+          '" class="small"' +
+          (s.kind === "web" ? ' target="_blank" rel="noopener"' : "") +
+          ">ouvrir ↗</a> "
+        : "") +
     (inherited ? "" :
       '<button class="ghost small" data-act="remove-src" data-i="' +
       i +

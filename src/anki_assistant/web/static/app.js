@@ -304,6 +304,8 @@ document.addEventListener("click", (e) => {
     draw();
   } else if (act === "src-save") {
     saveNewSource();
+  } else if (act === "open-pdf") {
+    API.openSourceFile(el.getAttribute("data-id")).catch(() => {});
   }
 });
 

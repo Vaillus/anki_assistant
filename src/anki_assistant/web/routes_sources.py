@@ -9,11 +9,11 @@ path-safe and go in the path (`/sources/{source_id}/text`).
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from anki_assistant import review
@@ -336,16 +336,17 @@ def replace_source_text(source_id: str, body: ReplaceIn, request: Request) -> So
     return SourceResponse(deck=source.deck, source=_to_view(store, source))
 
 
-@router.get("/sources/{source_id}/file")
-def serve_source_file(source_id: str, request: Request) -> FileResponse:
-    """Serve a PDF source's file so the browser can open it (file:// is blocked from http)."""
+@router.post("/sources/{source_id}/open")
+def open_source_file(source_id: str, request: Request) -> dict[str, str]:
+    """Open a PDF source in Zotero (macOS `open -a Zotero`). Local-only app, no security concern."""
     store = _store(request)
     source = store.by_id(source_id)
     if source is None:
         raise HTTPException(status_code=404, detail=f"source inconnue : {source_id}")
     if source.kind != "pdf":
-        raise HTTPException(status_code=400, detail="seul un PDF peut être servi")
+        raise HTTPException(status_code=400, detail="seul un PDF peut être ouvert")
     path = Path(source.target).expanduser().resolve()
     if not path.exists():
         raise HTTPException(status_code=404, detail="fichier introuvable")
-    return FileResponse(path, media_type="application/pdf", filename=path.name)
+    subprocess.Popen(["open", "-a", "Zotero", str(path)])
+    return {"status": "ok"}

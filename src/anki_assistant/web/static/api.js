@@ -62,6 +62,7 @@ const API = {
   vaultPdfs: (query) => jfetch("/api/vault/pdfs?q=" + q(query)),
   anchors: (noteId) => jfetch("/api/sources/anchors?note_id=" + noteId),
   createSourceNote: (body) => jfetch("/api/sources/notes", jsonBody("POST", body)),
+  openSourceFile: (id) => jfetch("/api/sources/" + q(id) + "/open", { method: "POST" }),
   patchSourceText: (id, body) => jfetch("/api/sources/" + q(id) + "/text", jsonBody("PATCH", body)),
 
   // chat

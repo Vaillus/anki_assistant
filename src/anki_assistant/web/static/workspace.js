@@ -344,17 +344,18 @@ async function landProposal(input, kind) {
   }
   if (kind === "split") {
     const card = await resolveTarget(inp.target);
-    if (inp.original === null || inp.original === undefined) {
-      card.deleted = true;
-    } else {
-      pushVersion(
-        card,
-        Object.assign({}, shownFields(card), (inp.original && inp.original.fields) || {}),
-        "claude",
-        inp.rationale,
-      );
+    // The mother always dies: all pieces become fragment cards.
+    card.deleted = true;
+    // When Claude intended to keep the original (first fragment on the existing note),
+    // turn it into an extra fragment card instead.
+    const pieces = (inp.new_notes || []).slice();
+    if (inp.original !== null && inp.original !== undefined) {
+      pieces.unshift({
+        fields: Object.assign({}, shownFields(card), (inp.original && inp.original.fields) || {}),
+        model: null,
+      });
     }
-    const made = (inp.new_notes || []).map((nn) =>
+    const made = pieces.map((nn) =>
       addDraftCard({
         parentWid: card.wid,
         model: nn.model || card.model,
@@ -365,7 +366,7 @@ async function landProposal(input, kind) {
         rationale: inp.rationale,
       }),
     );
-    return "→ " + (made.length + (inp.original ? 1 : 0)) + " cartes";
+    return "→ " + made.length + " cartes";
   }
   if (kind === "create") {
     const root = wsRoot();
@@ -1108,18 +1109,18 @@ function wsCardHtml(c, isFragment, depth, lines) {
         (v.rationale ? " — " + esc(v.rationale) : "") +
         "</div>"
       : "";
-  // Tree connector lines rendered inside the card div (position: relative). Each segment
-  // is an absolutely-positioned span at a given depth column: it draws the vertical line
-  // from the top gap through the card, with a horizontal tap at the card's own depth.
+  // Tree connector lines: two separate elements per level inside the card (position: relative).
+  // A vertical line (ws-tree-vert) and, at the card's own depth, a horizontal tap (ws-tree-tap).
+  // Keeping them separate so that `top: 50%` on the tap resolves against the card, not the line.
   var connectorHtml = "";
   if (lines && lines.length) {
     lines.forEach(function (ln) {
-      // Position relative to the card's left edge (which is indented by `indentPx`),
-      // so offset back by the full indent and then forward to the column center.
       var leftPx = (ln.depth - 1) * 32 + 12 - indentPx;
-      var tapCls = ln.tap ? " tap" : "";
-      var contCls = ln.continues ? " cont" : "";
-      connectorHtml += '<span class="ws-tree-seg' + tapCls + contCls + '" style="left:' + leftPx + 'px"></span>';
+      var vCls = "ws-tree-vert" + (ln.continues ? " cont" : "") + (ln.tap ? " end" : "");
+      connectorHtml += '<span class="' + vCls + '" style="left:' + leftPx + 'px"></span>';
+      if (ln.tap) {
+        connectorHtml += '<span class="ws-tree-tap" style="left:' + leftPx + 'px"></span>';
+      }
     });
   }
 

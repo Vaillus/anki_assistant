@@ -417,33 +417,28 @@ select.chip.theme:hover { border-color: var(--line-strong); color: var(--ink); }
 .ws-card.draft { border-style: dashed; }
 .ws-card.deleted .field-val { text-decoration: line-through; opacity: .6; }
 .ws-card.fragment { position: relative; overflow: visible; }
-/* Tree connector segments: absolutely positioned spans inside .ws-card.fragment.
-   Each segment is a vertical line at a given depth column. */
-.ws-tree-seg {
+/* Vertical connector line at a given depth column inside a fragment card. */
+.ws-tree-vert {
   position: absolute;
-  top: -13px;  /* extend into the gap above the card (margin-top of .ws-card = 12px + 1px border) */
+  top: -13px;  /* bridge the gap above (margin-top 12px + border 1px) */
   width: 0;
-  height: calc(100% + 13px); /* full card height + gap */
+  height: calc(100% + 13px); /* full card + gap: connects to the next card's segment */
   border-left: 2px solid var(--accentline);
   pointer-events: none;
-  z-index: 0;
 }
-/* When this is the tap level (the card's own depth): horizontal connector to the card border. */
-.ws-tree-seg.tap {
-  width: 14px;
-  border-bottom: none;
+/* At the card's own depth, when no sibling follows: stop at the card's midpoint. */
+.ws-tree-vert.end:not(.cont) {
+  height: calc(13px + 50% + 1px); /* gap + half card + 1px overlap with the tap */
 }
-.ws-tree-seg.tap::after {
-  content: "";
+/* Horizontal tap at the card's midpoint — a separate element so 50% resolves against
+   the card, not the vertical segment. */
+.ws-tree-tap {
   position: absolute;
-  top: calc(13px + 50%); /* middle of the card (after the gap) */
-  left: 0;
+  top: calc(50% - 1px);
   width: 14px;
+  height: 0;
   border-top: 2px solid var(--accentline);
-}
-/* When the line does NOT continue below, stop the vertical at the tap point. */
-.ws-tree-seg.tap:not(.cont) {
-  height: calc(13px + 50% + 1px);
+  pointer-events: none;
 }
 .ws-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; cursor: pointer; margin-bottom: 6px; min-height: 26px; }
 .ws-card-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }

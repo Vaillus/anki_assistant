@@ -756,3 +756,28 @@ def vault_notes(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
             names.append(name)
     names.sort(key=str.lower)
     return names[:limit]
+
+
+def vault_pdfs(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
+    """PDF paths under the vault whose filename contains `q`, case-insensitive.
+
+    Paths under the user's home are returned with a `~/` prefix (what the user would type as a
+    PDF source target); others as absolute paths. Recursive, sorted, hidden directories skipped.
+    """
+    root = vault.path
+    if not root.exists():
+        return []
+    home = Path.home()
+    q_lower = q.lower()
+    results: list[str] = []
+    for path in root.rglob("*.pdf"):
+        rel = path.relative_to(root)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        if q_lower in rel.name.lower():
+            try:
+                results.append("~/" + str(path.relative_to(home)))
+            except ValueError:
+                results.append(str(path))
+    results.sort(key=str.lower)
+    return results[:limit]

@@ -24,6 +24,7 @@ from anki_assistant.sources import (
     is_url,
     is_valid_pages,
     vault_notes,
+    vault_pdfs,
 )
 from anki_assistant.web.routes_review import _anki_errors
 
@@ -262,6 +263,11 @@ def add_source(deck: str, body: AddSourceIn, request: Request) -> SourceResponse
 @router.get("/vault/notes")
 def get_vault_notes(request: Request, q: str = "") -> list[str]:
     return vault_notes(_store(request).vault, q, limit=50)
+
+
+@router.get("/vault/pdfs")
+def get_vault_pdfs(request: Request, q: str = "") -> list[str]:
+    return vault_pdfs(_store(request).vault, q, limit=50)
 
 
 # --------------------------------------------------------------------- anchors

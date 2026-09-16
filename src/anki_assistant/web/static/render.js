@@ -349,10 +349,10 @@ function sourceForm() {
     "<b>Nouvelle source</b>" +
     (S.srcForm.error ? '<div class="banner">' + esc(S.srcForm.error) + "</div>" : "") +
     "<label>cible (note du vault, chemin de PDF ou URL)</label>" +
-    '<input data-input="src-target" data-focus="src-target" list="vault-notes" value="' +
+    '<input data-input="src-target" data-focus="src-target" list="vault-targets" value="' +
     esc(f.target || "") +
     '" placeholder="Allocation sur des angles disjoints · ~/doc.pdf · https://…">' +
-    '<datalist id="vault-notes"></datalist>' +
+    '<datalist id="vault-targets"></datalist>' +
     "<label>type</label>" +
     '<select data-input="src-kind">' +
     options +

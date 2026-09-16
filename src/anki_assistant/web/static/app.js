@@ -213,16 +213,14 @@ async function saveNewSource() {
   }
 }
 
-const lookupVaultNotes = debounce(async (query) => {
+const lookupVaultTargets = debounce(async (query) => {
   if (!query || query.length < 2) return;
   try {
-    const names = await API.vaultNotes(query);
-    const dl = document.getElementById("vault-notes");
+    const [notes, pdfs] = await Promise.all([API.vaultNotes(query), API.vaultPdfs(query)]);
+    const dl = document.getElementById("vault-targets");
     if (!dl) return;
-    dl.innerHTML = (names || [])
-      .slice(0, 50)
-      .map((n) => '<option value="' + esc(n) + '"></option>')
-      .join("");
+    const opts = (notes || []).concat(pdfs || []).slice(0, 50);
+    dl.innerHTML = opts.map((v) => '<option value="' + esc(v) + '"></option>').join("");
   } catch (e) {
     /* autocomplete is best-effort */
   }
@@ -318,7 +316,7 @@ document.addEventListener("input", (e) => {
       S.refocus = "src-target";
       draw();
     }
-    if (kind === "obsidian") lookupVaultNotes(el.value.trim());
+    if (kind !== "web") lookupVaultTargets(el.value.trim());
   } else if (key === "src-kind") {
     S.srcForm.kind = el.value;
     draw();

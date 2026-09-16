@@ -74,7 +74,7 @@ Each source is a row:
 - **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
 - **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
 
-**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
+**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
 
 **Removing a source.** « retirer » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
 
@@ -93,6 +93,7 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
 | `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind |
 | `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |
+| `GET /api/vault/pdfs?q=` | PDF paths under the vault whose filename contains `q`, for the form's autocompletion |
 | `GET /api/sources/anchors?note_id=` | A note's anchors, each qualified valid or dangling |
 | `PUT /api/sources/anchors?note_id=` | Replace a note's anchors, order kept |
 | `GET /api/sources/anchors/orphans` | Anchored note ids that Anki no longer knows |

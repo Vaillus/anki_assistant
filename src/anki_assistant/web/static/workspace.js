@@ -189,12 +189,14 @@ function addDraftCard(spec) {
 }
 
 function openWorkspace(noteId) {
-  const n = noteById(noteId);
-  if (!n || S.ws) return;
-  S.selNote = noteId;
+  if (S.ws) return;
+  const n = noteId ? noteById(noteId) : null;
+  if (noteId && !n) return;
+  if (!noteId && !S.deck) return;
+  if (noteId) S.selNote = noteId;
   S.ws = {
-    rootWid: "w1",
-    deck: n.deck || S.deck,
+    rootWid: n ? "w1" : null,
+    deck: (n && n.deck) || S.deck,
     nextWid: 1,
     cards: [],
     clearReason: true,
@@ -206,7 +208,7 @@ function openWorkspace(noteId) {
     report: null,
     rejected: [], // « w3 v2 » per dropped version, told to Claude in the history
   };
-  addNoteCard(n);
+  if (n) addNoteCard(n);
   S.refocus = "chat";
   draw();
 }
@@ -1322,8 +1324,11 @@ function sourceChipsHtml() {
 function chatLogHtml() {
   if (!S.ws) return "";
   if (!S.ws.chat.length) {
+    const hint = wsRoot()
+      ? "Pose ta question sur cette note."
+      : "Demande à Claude de créer des cartes depuis les sources du corpus.";
     return (
-      '<div class="empty">Pose ta question sur cette note.<br>' +
+      '<div class="empty">' + hint + "<br>" +
       "Les propositions de Claude apparaissent comme versions et cartes à gauche ; rien n'est écrit avant « Valider ».</div>"
     );
   }

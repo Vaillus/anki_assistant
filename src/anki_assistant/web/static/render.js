@@ -25,6 +25,7 @@ function draw() {
   }
   const log = root.querySelector("#chat-log");
   if (log) log.scrollTop = log.scrollHeight;
+  typesetMath();
 }
 
 function captureScroll(root) {

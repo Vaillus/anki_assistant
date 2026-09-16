@@ -416,16 +416,29 @@ select.chip.theme:hover { border-color: var(--line-strong); color: var(--ink); }
 .ws-card.off { opacity: .55; }
 .ws-card.draft { border-style: dashed; }
 .ws-card.deleted .field-val { text-decoration: line-through; opacity: .6; }
-.ws-card.fragment { margin-left: 32px; position: relative; }
-.ws-card.fragment::before {
-  content: "";
+.ws-card.fragment { position: relative; overflow: visible; }
+/* Vertical connector line at a given depth column inside a fragment card. */
+.ws-tree-vert {
   position: absolute;
-  left: -20px;
-  top: -13px;
-  height: calc(50% + 13px);
-  width: 14px;
+  top: -13px;  /* bridge the gap above (margin-top 12px + border 1px) */
+  width: 0;
+  height: calc(100% + 13px); /* full card + gap: connects to the next card's segment */
   border-left: 2px solid var(--accentline);
-  border-bottom: 2px solid var(--accentline);
+  pointer-events: none;
+}
+/* At the card's own depth, when no sibling follows: stop at the card's midpoint. */
+.ws-tree-vert.end:not(.cont) {
+  height: calc(13px + 50% + 1px); /* gap + half card + 1px overlap with the tap */
+}
+/* Horizontal tap at the card's midpoint — a separate element so 50% resolves against
+   the card, not the vertical segment. */
+.ws-tree-tap {
+  position: absolute;
+  top: calc(50% - 1px);
+  width: 14px;
+  height: 0;
+  border-top: 2px solid var(--accentline);
+  pointer-events: none;
 }
 .ws-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; cursor: pointer; margin-bottom: 6px; min-height: 26px; }
 .ws-card-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }

@@ -65,7 +65,7 @@ The transform guarantees:
 - **All other tags stripped.**
 - **Cloze deletions marked up.** Each cloze deletion is displayed with its number as a label and, when present, its hint. The number is needed because most notes carry several clozes and the flag is per card.
 - **Context header extracted.** A [context header](./notes.md#context-header) at the start of the field is extracted and styled separately from the body.
-- **MathJax untouched.** `\(…\)`, `\[…\]`, `[$]…[/$]` delimiters are left as text.
+- **MathJax rendered.** `\(…\)`, `\[…\]`, `[$]…[/$]`, `[$$]…[/$$]` delimiters pass through the escape step and are rendered by MathJax 3, loaded in the page. After each DOM update the app calls `MathJax.typesetPromise()`.
 
 ## API
 
@@ -106,6 +106,6 @@ With the workspace closed and no input focused:
 
 Keys are ignored while an input, textarea, or select is focused. Workspace keyboard shortcuts are specified in [workspace.md § Opening and closing](./workspace.md#opening-and-closing).
 
-There are no dialogs: every edit happens on a workspace card. Native `confirm()` is used for the two confirmations (discarding a workspace with changes, validating a plan that deletes).
+There are no dialogs: every edit happens on a workspace card. Native `confirm()` is used for the workspace's confirmations ([workspace.md](./workspace.md)).
 
 The visual identity — terminal palette, two-layer colour architecture, theme picker, logo — is specified in [theme.md](./theme.md).

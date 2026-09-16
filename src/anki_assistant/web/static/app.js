@@ -370,7 +370,7 @@ document.addEventListener("keydown", (e) => {
     }
     if (
       e.key === "Enter" &&
-      (e.metaKey || e.ctrlKey) &&
+      !e.shiftKey &&
       inField &&
       active.getAttribute("data-input") === "chat"
     ) {

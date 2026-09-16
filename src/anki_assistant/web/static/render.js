@@ -310,7 +310,7 @@ function sourceRow(s, i) {
       ? '<a href="' +
         esc(s.uri) +
         '" class="small"' +
-        (s.kind === "web" ? ' target="_blank" rel="noopener"' : "") +
+        (s.kind === "web" || s.kind === "pdf" ? ' target="_blank" rel="noopener"' : "") +
         ">ouvrir ↗</a> "
       : "") +
     (inherited ? "" :

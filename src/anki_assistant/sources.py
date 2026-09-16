@@ -402,11 +402,12 @@ class Source:
         return vault.path / rel
 
     def uri(self, vault: Vault) -> str:
-        """A URI macOS can open: file:// for a PDF, obsidian:// for a note, the URL for a page."""
+        """A URI the frontend can open: /api/sources/<id>/file for a PDF (served by the app,
+        since browsers block file:// from http://), obsidian:// for a note, the URL for a page."""
         if self.kind == "web":
             return self.target
         if self.kind == "pdf":
-            return Path(self.target).expanduser().resolve().as_uri()
+            return f"/api/sources/{urllib.parse.quote(self.id, safe='')}/file"
         file_arg = self.target[:-3] if self.target.endswith(".md") else self.target
         # Percent-encoding, not form encoding: Obsidian reads a space as %20, never as "+".
         vault_q = urllib.parse.quote(vault.name, safe="")

@@ -106,6 +106,6 @@ With the workspace closed and no input focused:
 
 Keys are ignored while an input, textarea, or select is focused. Workspace keyboard shortcuts are specified in [workspace.md § Opening and closing](./workspace.md#opening-and-closing).
 
-There are no dialogs: every edit happens on a workspace card. Native `confirm()` is used for the two confirmations (discarding a workspace with changes, validating a plan that deletes).
+There are no dialogs: every edit happens on a workspace card. Native `confirm()` is used for the workspace's confirmations ([workspace.md](./workspace.md)).
 
 The visual identity — terminal palette, two-layer colour architecture, theme picker, logo — is specified in [theme.md](./theme.md).

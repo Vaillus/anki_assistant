@@ -31,7 +31,7 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 ┌ w1 ─────────────────────────────────────────────────┐
 │ card head                                            │
 │  ● #5262 Cloze  ⚑ à revoir    ← v1 / 2 →  [invalider]│
-│  tags: phd                          [supprimer] [→ …]│
+│  tags: phd                      [supprimer] [→ …] [✂]│
 ├──────────────────────────────────────────────────────┤
 │ card body                                            │
 │                                                      │
@@ -56,18 +56,18 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 
 The workspace is two panes: cards on the left (about 60 % of the width, scrolling on its own), the conversation on the right. The header holds the root's short id, the « vider Back Extra » toggle ([Validation](#validation)), the « Valider » button and the ×.
 
-Cards are listed root first, then in order of arrival. A [fragment](#split) is shown right after its parent, indented, with a visible link to it. Order never changes once a card is in.
+Cards are listed root first, then in order of arrival. A [fragment](#split) is shown right after its parent, indented one level deeper, with a tree line joining it to its parent; a fragment's own fragments nest under it the same way, at any depth. Order never changes once a card is in.
 
 ### Card head
 
 One line, left to right:
 
 - **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity.
-- **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, and the tags.
+- **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, the tags, and « fragment de w1 » on a fragment.
 - **⚑ flag toggle** — outlined when off; filled, reading « ⚑ à revoir », when on.
 - **State badges** — « supprimée », « gardée », « → deck ».
 - **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
-- **Actions** — « invalider », « supprimer » / « restaurer », « déplacer… » (a deck picker).
+- **Actions** — « invalider »; on an existing note, « supprimer » / « restaurer » and « déplacer… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « scinde w1 : » is put in the message box, focused.
 
 The flag toggle is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head — the card is drawn as the note will be, resolved — but stay in the user comment's label (« raison du flag · c2 ») and keep driving the question state of v0.
 
@@ -88,7 +88,7 @@ Applied at [validation](#validation); reversible until then.
 - **Flag** — whether the note is flagged *after* validation, the ⚑ toggle in the head. **Off** (the default) means resolved. **On** (« à revoir ») means the note keeps or receives a flag and its `Back Extra` is set to the comment. The root opens off — opening a workspace is resolving the note. Combines with an edit and a move. In the plan and the API, flag on = **deferred** (`defer`).
 - **Kept** — an untouched card (v0, tags unchanged), flagged in Anki, flag off: resolved without being edited — the workspace's « Garder » ([review.md § Decisions](./review.md#decisions)).
 - **Moved** — carries a destination deck. Combines with an edit.
-- **Deleted** — the note is removed from Anki; the card is struck through, not editable, and has no flag.
+- **Deleted** — an existing note is removed from Anki; a draft is simply never written. The card is struck through, not editable, and has no flag. A draft is deleted only by being [split](#split).
 
 ### Editing
 
@@ -108,9 +108,9 @@ A dropped version is gone from the workspace. The conversation notes the rejecti
 
 ### Split
 
-`propose_split` on a card yields: a new version on that card holding the first fragment's fields (the note keeps its scheduling history) and one **fragment** card per other fragment, linked to the **parent** card. When the proposal says the original is not kept, the card is marked deleted instead of gaining a version, and every piece is a fragment card. Fragments inherit the parent's note type (unless the proposal names another), tags, [anchors](./sources.md#anchors) and **scheduling state** (interval, due date, ease, review count, lapses — copied from the parent's most-reviewed card at validation).
+`propose_split` on a card marks it deleted and yields one **fragment** card per note in the proposal — the one it would leave on the original included, when there is one — each linked to that card as its **parent**. Fragments inherit the parent's note type (unless the proposal names another), tags, deck and [anchors](./sources.md#anchors). Their **scheduling state** (interval, due date, ease, review count, lapses) is copied at validation from the most-reviewed card of the nearest ancestor that is an existing note.
 
-Fragments are ordinary draft cards afterward: Claude can target one for a retouch, the user can edit or drop it.
+Fragments are ordinary draft cards afterward: Claude can target one for a retouch or split it again, the user can edit or drop it.
 
 ### How notes enter
 
@@ -131,7 +131,7 @@ The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. 
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted); a card counts under every action it carries. Disabled when the plan is empty and during the write. When the plan deletes at least one note, a confirmation lists them.
+« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted); a card counts under every action it carries. Disabled when the plan is empty and during the write. When the plan deletes at least one note, a confirmation lists them. When a source Claude proposed was not applied ([Conversation](#conversation)), a confirmation warns that the notes anchored on it will lose that anchor.
 
 ### What is written
 
@@ -141,7 +141,7 @@ A draft note is created. An existing note's card becomes one action — deleted 
 
 | Card | Anki writes | Flag |
 |---|---|---|
-| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`. A fragment's cards inherit the parent's scheduling state (interval, due, ease, reps, lapses). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
+| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`; a fragment's cards receive the inherited scheduling state ([Split](#split)). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
 | Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |

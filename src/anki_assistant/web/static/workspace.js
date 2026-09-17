@@ -236,16 +236,22 @@ function toggleFlag(card) {
 }
 
 /* A draft always has one as far as the client knows — a proposal may have left the field
-   out — and the server checks the note type at validation (specs/workspace.md#body). */
+   out — and the server checks the note type at validation (specs/workspace.md#body). An
+   existing note is judged on its shown version: after a change of note type its fields are
+   the target type's, which may not have the field. */
 function hasReasonField(card) {
-  return !card.noteId || Object.prototype.hasOwnProperty.call(card.versions[0].fields, REASON_FIELD);
+  return !card.noteId || Object.prototype.hasOwnProperty.call(shownFields(card), REASON_FIELD);
 }
 
 /* ---------------- versions ---------------- */
 
+/* `model` is the note type the version is written for; omitted, the version keeps the shown
+   version's type. A type differing from the card's original sticks to the version, so that a
+   later retouch never sends Basic fields under the Cloze type (specs/workspace.md#editing). */
 function pushVersion(card, fields, by, rationale, model) {
+  var effective = model || shownModel(card);
   var v = { fields: Object.assign({}, fields), by: by, rationale: rationale || "" };
-  if (model) v.model = model;
+  if (effective !== card.model) v.model = effective;
   card.versions.push(v);
   card.vi = card.versions.length - 1;
   card.deleted = false; // a rewrite supersedes a deletion (specs/chat.md#proposal-tools)
@@ -286,7 +292,7 @@ function editField(card, name, value) {
   let v = shownVersion(card);
   if (v.by === "anki") {
     v = { fields: Object.assign({}, v.fields), by: "user", rationale: "" };
-    if (shownVersion(card).model) v.model = shownVersion(card).model;
+    if (shownModel(card) !== card.model) v.model = shownModel(card);
     card.versions.push(v);
     card.vi = card.versions.length - 1;
   }
@@ -340,7 +346,7 @@ async function landProposal(input, kind) {
     const fields = modelChanged
       ? Object.assign({}, inp.fields || {})
       : Object.assign({}, shownFields(card), inp.fields || {});
-    pushVersion(card, fields, "claude", inp.rationale, modelChanged ? newModel : null);
+    pushVersion(card, fields, "claude", inp.rationale, newModel);
     if (Array.isArray(inp.tags)) card.tags = inp.tags.slice();
     return "→ carte " + card.wid;
   }
@@ -733,7 +739,7 @@ function planCard(c) {
       action: "create",
       parent_wid: schedParent,
       deck: c.deck,
-      model: c.model,
+      model: shownModel(c),
       fields: shownFields(c),
       tags: c.tags,
       source_ids: c.anchors || [],

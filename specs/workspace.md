@@ -100,7 +100,7 @@ Click on a field to edit: the field becomes a textarea holding the raw value, fo
 
 Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « éditée ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version keeps its rationale and gains the « éditée » mark.
 
-A `propose_edit` with a different model replaces the entire field set with the target type's fields ([chat.md § Proposal tools](./chat.md#proposal-tools)); the card head shows the effective type with a ⇄ indicator.
+A `propose_edit` with a different model replaces the entire field set with the target type's fields ([chat.md § Proposal tools](./chat.md#proposal-tools)); the card head shows the effective type with a ⇄ indicator. The **effective type** is a property of the version, and every later version inherits it: a retouch by Claude without `model`, or naming the same type, and a hand edit keep the type of the version they start from. Only a proposal naming another type changes it again, and only v0 is ever of the original type. The plan sends the shown version's type, for a draft as for an existing note.
 
 ### Versions
 
@@ -148,7 +148,7 @@ A draft note is created. An existing note's card becomes one action — deleted 
 | Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`; a fragment's cards receive the inherited scheduling state ([Split](#split)). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
 | Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
 | Existing, kept | none | cleared |
-| Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |
+| Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped and reported when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |
 | Existing, moved (combined with edit, keep or defer) | `changeDeck` on all Anki cards; anchors re-checked against the destination corpus ([sources.md § Anchors](./sources.md#anchors)) | cleared (unless deferred) |
 | Existing, deleted | `deleteNotes` | — |
 
@@ -156,9 +156,11 @@ An edit sends every field of the shown version, not just the ones that changed; 
 
 **« vider Back Extra »** (header toggle, on by default): every edited note that had a user comment gets `Back Extra` set to empty. Kept notes are not touched. Deferred notes are exempt: their `Back Extra` is the comment, whatever the toggle says.
 
+Whether a note *has* `Back Extra` — for the comment as for the clearing — is decided by the note type the edit writes, not the one the note had: an edit that turns a Cloze note into a Basic note neither clears nor sets a field Basic does not have, and a comment that cannot be written is reported.
+
 ### Order and rollback
 
-Writes proceed in a safe order: validate, snapshot, creates, edits, moves, unflag/flag, deletes. Before touching Anki the plan is validated — shape, field names against the note type (case-corrected or refused) — and nothing is written on failure. Deletion comes last so that a failure anywhere before it has lost no content.
+Writes proceed in a safe order: validate, snapshot, creates, edits, moves, unflag/flag, deletes. Before touching Anki the plan is validated — shape, field names against the note type the card writes, that is `model` when given (case-corrected or refused) — and nothing is written on failure. Deletion comes last so that a failure anywhere before it has lost no content.
 
 On the first failure the write stops and a rollback is attempted: created notes deleted, edited notes restored from the snapshot, moved notes moved back. The workspace stays open; draft cards that were created and not rolled back gain their `note_id` so a retry does not duplicate them.
 

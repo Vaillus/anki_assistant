@@ -420,7 +420,9 @@ def test_tool_schemas_match_the_spec_tables() -> None:
     assert "propose_bulk_edit" not in by_name
     assert "source_ids" in by_name["propose_create"]["properties"]
     split_new = by_name["propose_split"]["properties"]["new_notes"]
-    assert split_new["items"]["required"] == ["fields"]
+    assert split_new["items"]["required"] == ["model", "fields"]
+    split_orig = by_name["propose_split"]["properties"]["original"]["anyOf"][0]
+    assert split_orig["required"] == ["model", "fields"]
     assert by_name["propose_create_source"]["required"] == ["name", "content", "rationale"]
     assert "anchor_note_ids" in by_name["propose_create_source"]["properties"]
     add = by_name["propose_add_source"]

@@ -257,6 +257,27 @@ function pushVersion(card, fields, by, rationale, model) {
   card.deleted = false; // a rewrite supersedes a deletion (specs/chat.md#proposal-tools)
 }
 
+/* When a proposal omits `model`, infer it from the fields: if the field names don't match
+   `fallback` but do match exactly one known type, use that type.  Otherwise keep `fallback`.
+   Covers the case where Claude splits a Cloze into Basic cards without passing `model`. */
+function inferModel(fields, fallback) {
+  if (!fields || !S.models) return fallback;
+  var keys = Object.keys(fields);
+  if (!keys.length) return fallback;
+  var fbFields = fieldNames(fallback);
+  if (fbFields.length && keys.every((k) => fbFields.indexOf(k) >= 0)) return fallback;
+  // Fields don't match the fallback type — look for a type whose fields are a superset.
+  var match = null;
+  for (var name in S.models) {
+    var mf = S.models[name];
+    if (mf.length && keys.every((k) => mf.indexOf(k) >= 0)) {
+      if (match) return fallback; // ambiguous: two types match, keep the fallback
+      match = name;
+    }
+  }
+  return match || fallback;
+}
+
 /* The effective model for a card: the shown version's model override, or the card's original. */
 function shownModel(c) {
   var v = shownVersion(c);
@@ -358,20 +379,21 @@ async function landProposal(input, kind) {
     // turn it into an extra fragment card instead.
     const pieces = (inp.new_notes || []).slice();
     if (inp.original !== null && inp.original !== undefined) {
-      const origModel = (inp.original && inp.original.model) || null;
-      const origModelChanged = origModel && origModel !== shownModel(card);
+      const origFields = (inp.original && inp.original.fields) || {};
+      const origModel = (inp.original && inp.original.model) || inferModel(origFields, shownModel(card));
+      const origModelChanged = origModel !== shownModel(card);
       // When the original changes type, fields are complete (different schema); otherwise merge.
       pieces.unshift({
         fields: origModelChanged
-          ? Object.assign({}, (inp.original && inp.original.fields) || {})
-          : Object.assign({}, shownFields(card), (inp.original && inp.original.fields) || {}),
-        model: origModel,
+          ? Object.assign({}, origFields)
+          : Object.assign({}, shownFields(card), origFields),
+        model: origModelChanged ? origModel : null,
       });
     }
     const made = pieces.map((nn) =>
       addDraftCard({
         parentWid: card.wid,
-        model: nn.model || shownModel(card), // the effective type, after a change of type too
+        model: nn.model || inferModel(nn.fields, shownModel(card)),
         fields: nn.fields || {},
         tags: card.tags,
         deck: card.deck,

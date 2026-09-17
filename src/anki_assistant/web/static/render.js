@@ -328,19 +328,19 @@ function sourceRow(s, i) {
     (inherited ? '<div class="muted small">héritée de ' + esc(s.on_deck) + "</div>" : "") +
     (s.exists === false ? '<div class="warn">⚠ fichier introuvable</div>' : "") +
     (s.warning ? '<div class="warn">⚠ ' + esc(s.warning) + "</div>" : "") +
-    (text
-      ? '<pre class="excerpt">' + esc(shown) + "</pre>"
-      : '<div class="muted small">' +
-        (s.kind === "web" ? "(page sans texte)" : "(aucun texte extrait)") +
-        "</div>") +
-    (text.length > FOLD
-      ? '<button class="ghost small" data-act="expand-src" data-i="' +
-        i +
-        '">' +
-        (expanded ? "replier" : "afficher plus (" + text.length + " car.)") +
-        "</button>"
+    (s.kind === "web"
+      ? (text
+          ? '<pre class="excerpt">' + esc(shown) + "</pre>"
+          : '<div class="muted small">(page sans texte)</div>') +
+        (text.length > FOLD
+          ? '<button class="ghost small" data-act="expand-src" data-i="' +
+            i +
+            '">' +
+            (expanded ? "replier" : "afficher plus (" + text.length + " car.)") +
+            "</button>"
+          : "") +
+        (s.truncated ? '<div class="muted small">texte tronqué côté serveur</div>' : "")
       : "") +
-    (s.truncated ? '<div class="muted small">texte tronqué côté serveur</div>' : "") +
     "</div>"
   );
 }

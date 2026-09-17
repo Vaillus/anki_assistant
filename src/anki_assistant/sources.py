@@ -37,9 +37,11 @@ when needed (`_fetch_web_cached`) and reduced to plain text by `html_to_text`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
+import sqlite3
 import time
 import urllib.parse
 from collections.abc import Iterable, Sequence
@@ -57,6 +59,9 @@ Kind = Literal["pdf", "obsidian", "web"]
 KINDS: tuple[Kind, ...] = ("pdf", "obsidian", "web")
 
 DEFAULT_MAX_CHARS = 60_000
+ZOTERO_DB = Path("~/Zotero/zotero.sqlite").expanduser()
+
+log = logging.getLogger(__name__)
 
 #: Seconds allowed for fetching a web source.
 WEB_TIMEOUT = 15.0
@@ -782,3 +787,40 @@ def vault_pdfs(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
                 results.append(str(path))
     results.sort(key=str.lower)
     return results[:limit]
+
+
+def zotero_open_uri(pdf_path: Path, vault: Vault) -> str | None:
+    """Return a ``zotero://open-pdf/…`` URI for *pdf_path*, or *None* if the lookup fails.
+
+    Queries the Zotero SQLite database for a linked attachment whose relative path (under the
+    vault's ``Zotero/`` folder) matches the file.  The match is case-insensitive because macOS
+    default filesystems (APFS) are case-insensitive and Zotero may store a different case than
+    the actual filename.
+    """
+    if not ZOTERO_DB.exists():
+        return None
+    zotero_root = vault.path / "Zotero"
+    resolved = pdf_path.expanduser().resolve()
+    try:
+        relative = resolved.relative_to(zotero_root.resolve())
+    except ValueError:
+        return None
+    db_path = f"attachments:{relative}"
+    try:
+        con = sqlite3.connect(f"file:{ZOTERO_DB}?mode=ro&immutable=1", uri=True)
+        try:
+            row = con.execute(
+                "SELECT i.key FROM itemAttachments ia"
+                " JOIN items i ON i.itemID = ia.itemID"
+                " WHERE ia.contentType = 'application/pdf'"
+                "   AND ia.path = ? COLLATE NOCASE",
+                (db_path,),
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        log.warning("failed to query Zotero database", exc_info=True)
+        return None
+    if row is None:
+        return None
+    return f"zotero://open-pdf/library/items/{row[0]}"

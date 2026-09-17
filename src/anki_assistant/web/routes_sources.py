@@ -27,6 +27,7 @@ from anki_assistant.sources import (
     is_valid_pages,
     vault_notes,
     vault_pdfs,
+    zotero_open_uri,
 )
 from anki_assistant.web.routes_review import _anki_errors
 
@@ -338,7 +339,11 @@ def replace_source_text(source_id: str, body: ReplaceIn, request: Request) -> So
 
 @router.post("/sources/{source_id}/open")
 def open_source_file(source_id: str, request: Request) -> dict[str, str]:
-    """Open a PDF source in Zotero (macOS `open -a Zotero`). Local-only app, no security concern."""
+    """Open a PDF source via its ``zotero://open-pdf`` URI so Zotero's reader shows it directly.
+
+    Falls back to opening the file with the default app when the Zotero lookup fails.
+    Local-only app, no security concern.
+    """
     store = _store(request)
     source = store.by_id(source_id)
     if source is None:
@@ -348,5 +353,9 @@ def open_source_file(source_id: str, request: Request) -> dict[str, str]:
     path = Path(source.target).expanduser().resolve()
     if not path.exists():
         raise HTTPException(status_code=404, detail="fichier introuvable")
-    subprocess.Popen(["open", "-a", "Zotero", str(path)])
+    uri = zotero_open_uri(path, store.vault)
+    if uri:
+        subprocess.Popen(["open", uri])
+    else:
+        subprocess.Popen(["open", str(path)])
     return {"status": "ok"}

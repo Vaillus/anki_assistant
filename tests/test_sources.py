@@ -20,6 +20,7 @@ from anki_assistant.sources import (
     html_to_text,
     vault_notes,
     vault_pdfs,
+    zotero_open_uri,
 )
 
 
@@ -340,6 +341,83 @@ def test_vault_pdfs_searches_only_zotero_folder(tmp_path: Path) -> None:
 def test_vault_pdfs_missing_vault_returns_empty(tmp_path: Path) -> None:
     vault = Vault(name="V", path=tmp_path / "does-not-exist")
     assert vault_pdfs(vault, "") == []
+
+
+# --------------------------------------------------------------- zotero lookup
+
+
+def _make_zotero_db(db_path: Path, attachments: list[tuple[str, str]]) -> None:
+    """Create a minimal Zotero SQLite database with the given (path, key) pairs."""
+    import sqlite3
+
+    con = sqlite3.connect(str(db_path))
+    con.execute("CREATE TABLE items (itemID INTEGER PRIMARY KEY, key TEXT)")
+    con.execute(
+        "CREATE TABLE itemAttachments"
+        " (itemID INTEGER PRIMARY KEY, parentItemID INTEGER, contentType TEXT, path TEXT)"
+    )
+    for i, (path, key) in enumerate(attachments, start=1):
+        con.execute("INSERT INTO items VALUES (?, ?)", (i, key))
+        con.execute(
+            "INSERT INTO itemAttachments VALUES (?, NULL, 'application/pdf', ?)",
+            (i, path),
+        )
+    con.commit()
+    con.close()
+
+
+def test_zotero_open_uri_finds_linked_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    zotero_dir = vault.path / "Zotero"
+    zotero_dir.mkdir(parents=True)
+    pdf = zotero_dir / "Author_2023_Title.pdf"
+    pdf.write_bytes(b"")
+
+    db_path = tmp_path / "zotero.sqlite"
+    _make_zotero_db(db_path, [("attachments:Author_2023_Title.pdf", "ABC12345")])
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+
+    assert zotero_open_uri(pdf, vault) == "zotero://open-pdf/library/items/ABC12345"
+
+
+def test_zotero_open_uri_returns_none_when_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    zotero_dir = vault.path / "Zotero"
+    zotero_dir.mkdir(parents=True)
+    pdf = zotero_dir / "Unknown.pdf"
+    pdf.write_bytes(b"")
+
+    db_path = tmp_path / "zotero.sqlite"
+    _make_zotero_db(db_path, [("attachments:Other.pdf", "XYZ00000")])
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+
+    assert zotero_open_uri(pdf, vault) is None
+
+
+def test_zotero_open_uri_returns_none_when_no_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", tmp_path / "nope.sqlite")
+    assert zotero_open_uri(tmp_path / "any.pdf", vault) is None
+
+
+def test_zotero_open_uri_subfolder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    sub = vault.path / "Zotero" / "Lysk"
+    sub.mkdir(parents=True)
+    pdf = sub / "Paper.pdf"
+    pdf.write_bytes(b"")
+
+    db_path = tmp_path / "zotero.sqlite"
+    _make_zotero_db(db_path, [("attachments:Lysk/Paper.pdf", "SUB99999")])
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+
+    assert zotero_open_uri(pdf, vault) == "zotero://open-pdf/library/items/SUB99999"
 
 
 @pytest.fixture(autouse=True)

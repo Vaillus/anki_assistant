@@ -749,10 +749,16 @@ def proposal_tools() -> list[dict[str, Any]]:
                     "target": _TARGET,
                     "original": {
                         "description": (
-                            "Champs de la note originale après découpe, ou null pour la supprimer."
+                            "Champs de la note originale après découpe, ou null pour la supprimer. "
+                            "Quand le type change (ex. Cloze → Basic), passer `model` et donner "
+                            "**tous** les champs du type cible (rien n'est repris de l'ancienne "
+                            "version)."
                         ),
                         "anyOf": [
-                            _obj({"fields": _fields_schema()}, required=["fields"]),
+                            _obj(
+                                {"model": _MODEL, "fields": _fields_schema()},
+                                required=["fields"],
+                            ),
                             {"type": "null"},
                         ],
                     },

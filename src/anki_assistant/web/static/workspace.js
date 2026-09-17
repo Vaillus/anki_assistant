@@ -358,9 +358,14 @@ async function landProposal(input, kind) {
     // turn it into an extra fragment card instead.
     const pieces = (inp.new_notes || []).slice();
     if (inp.original !== null && inp.original !== undefined) {
+      const origModel = (inp.original && inp.original.model) || null;
+      const origModelChanged = origModel && origModel !== shownModel(card);
+      // When the original changes type, fields are complete (different schema); otherwise merge.
       pieces.unshift({
-        fields: Object.assign({}, shownFields(card), (inp.original && inp.original.fields) || {}),
-        model: null,
+        fields: origModelChanged
+          ? Object.assign({}, (inp.original && inp.original.fields) || {})
+          : Object.assign({}, shownFields(card), (inp.original && inp.original.fields) || {}),
+        model: origModel,
       });
     }
     const made = pieces.map((nn) =>

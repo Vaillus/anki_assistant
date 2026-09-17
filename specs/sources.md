@@ -26,7 +26,7 @@ A deck's **effective corpus** is its own sources followed by each ancestor's, ne
 
 ### Text
 
-A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens in Zotero through a server-side `open -a Zotero` call (`POST /api/sources/{id}/open`); a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
+A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens in Zotero's reader through a `zotero://open-pdf` URI looked up from the Zotero SQLite database (`POST /api/sources/{id}/open`); when the lookup fails, falls back to the system default app; a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
 
 A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
@@ -100,4 +100,4 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | `POST /api/sources/anchors/prune` | Remove the orphans' anchors |
 | `POST /api/sources/notes` | Create a vault note and add it to a deck's corpus; may anchor notes to it and reuse an id announced beforehand ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
 | `PATCH /api/sources/{source_id}/text` | Replace one passage of a vault note |
-| `POST /api/sources/{source_id}/open` | Open a PDF source in Zotero (server-side `open -a Zotero`) |
+| `POST /api/sources/{source_id}/open` | Open a PDF source in Zotero via `zotero://open-pdf` URI (falls back to default app) |

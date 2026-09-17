@@ -366,7 +366,7 @@ async function landProposal(input, kind) {
     const made = pieces.map((nn) =>
       addDraftCard({
         parentWid: card.wid,
-        model: nn.model || card.model,
+        model: nn.model || shownModel(card), // the effective type, after a change of type too
         fields: nn.fields || {},
         tags: card.tags,
         deck: card.deck,

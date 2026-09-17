@@ -25,6 +25,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/anki_assistant"]
 
+[project.optional-dependencies]
+ml = ["docling>=2.0"]
+
 [dependency-groups]
 dev = ["ruff>=0.6", "ty", "pytest>=8", "httpx>=0.27"]
 proto = []

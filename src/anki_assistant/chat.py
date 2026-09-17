@@ -174,6 +174,8 @@ class CorpusEntry:
     missing: bool = False
     #: Notes anchored to this source; the index marks those that are in context.
     anchored_note_ids: list[int] = field(default_factory=list)
+    n_pages: int | None = None
+    toc: list[tuple[int, str]] = field(default_factory=list)
 
 
 class DeckLike(Protocol):
@@ -354,8 +356,16 @@ def _index_line(entry: CorpusEntry, note_ids: Sequence[int]) -> str:
         meta.append(f"déclarée sur le deck {entry.deck}")
     if meta:
         bits.append("(" + ", ".join(meta) + ")")
+    if entry.kind == "pdf" and entry.n_pages is not None and not entry.pages:
+        meta.append(f"{entry.n_pages} p.")
     if entry.missing:
         bits.append("⚠ fichier introuvable")
+    if entry.toc:
+        _MAX_TOC = 10
+        toc_parts = [f"p.{p} {h}" for p, h in entry.toc[:_MAX_TOC]]
+        if len(entry.toc) > _MAX_TOC:
+            toc_parts.append(f"+{len(entry.toc) - _MAX_TOC}")
+        bits.append("— structure : " + " · ".join(toc_parts))
     anchored = [nid for nid in note_ids if nid in entry.anchored_note_ids]
     if anchored:
         bits.append("— ancrée à la note " + ", ".join(f"#{nid}" for nid in anchored))
@@ -369,7 +379,8 @@ def _index_block(corpus_index: Sequence[CorpusEntry], note_ids: Sequence[int]) -
         "",
         "Une ligne par source : [id] type : cible (pages, note). Cet index ne contient pas le "
         "texte des sources. Pour lire une source : l'utilisateur la joint (elle apparaît alors "
-        "dans « Sources jointes » ci-dessous), ou tu appelles read_source avec son id.",
+        "dans « Sources jointes » ci-dessous), ou tu appelles read_source avec son id. Pour un "
+        "PDF, tu peux préciser les pages à lire avec le paramètre pages de read_source.",
         "",
     ]
     if not corpus_index:
@@ -1000,14 +1011,23 @@ def read_tool_defs() -> list[dict[str, Any]]:
             "description": (
                 "Lire le texte d'une source du corpus (voir l'index) dans ce tour. Le texte "
                 "n'est pas conservé au tour suivant : si tu en as encore besoin, relis-le, ou "
-                "demande à l'utilisateur de joindre la source."
+                "demande à l'utilisateur de joindre la source. Pour un PDF, tu peux demander "
+                "des pages précises avec le paramètre pages."
             ),
             "input_schema": _obj(
                 {
                     "source_id": {
                         "type": "string",
                         "description": "Identifiant de la source, tel que donné dans l'index.",
-                    }
+                    },
+                    "pages": {
+                        "type": "string",
+                        "description": (
+                            "PDF seulement : plage de pages à lire, ex. « 12-19 » ou "
+                            "« 3-5,9 ». Sans ce paramètre, les pages associées à la source "
+                            "sont lues."
+                        ),
+                    },
                 },
                 required=["source_id"],
             ),

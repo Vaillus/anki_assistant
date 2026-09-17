@@ -30,13 +30,15 @@ A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an 
 
 A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
-Each source yields one **extracted text**, the same wherever the app shows or sends it — the Source tab, an attached source in the chat, a read by Claude:
+Each source yields one **extracted text**, the same wherever the app shows or sends it — attached in the chat, read by Claude, or fetched via the API:
 
 - A vault note yields its Markdown as written, without the YAML front matter block at the top.
-- A PDF yields the text of the pages in its range (every page when there is none), each page preceded by a marker giving its number. <!-- TODO: rework PDF extraction -->
+- A PDF yields text in two quality tiers. When the source has a page range (or when a specific range is requested via `read_source`), the text is extracted with **Docling** (high-quality Markdown, preserving tables, equations, and formatting) and cached in a **sidecar file** next to the PDF (`Author.pdf.md`). When Docling is not installed, or for a whole-PDF source without a page range, text is extracted with pypdf (fast, lower quality). The sidecar is created lazily on first read and updated incrementally when new pages are requested; it is invalidated when the PDF's modification time changes.
 - A web page is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
 
-The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning so the user learns to set one. Retrieval inside long PDFs is out of scope: the page range is the mechanism.
+A PDF's **structural index** (its bookmark outline or heuristic headings) appears in the corpus index so Claude knows which pages to request without reading anything. Claude can pass a `pages` parameter to `read_source` to read specific pages, overriding the source's own page range.
+
+The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning so the user learns to set one. The Source tab does not display extracted text for PDFs or vault notes (they open in their native viewer); only web sources show a text excerpt.
 
 ## Anchors
 

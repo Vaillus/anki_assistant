@@ -165,6 +165,29 @@ def _anki(request: Request) -> AnkiClient:
 
 
 def _to_view(store: SourceStore, source: Source) -> SourceView:
+    if source.kind == "pdf":
+        n_pages = source.pdf_n_pages()
+        warning = ""
+        if not source.pages and n_pages is not None:
+            warning = (
+                f"PDF entier ({n_pages} pages) sans plage de pages : "
+                "pose une plage pour que Claude lise les bonnes pages."
+            )
+        return SourceView(
+            id=source.id,
+            kind=source.kind,
+            target=source.target,
+            pages=source.pages,
+            note=source.note,
+            on_deck=source.deck,
+            exists=source.exists(store.vault),
+            uri=source.uri(store.vault),
+            text="",
+            truncated=False,
+            n_pages=n_pages,
+            warning=warning,
+            anchored_count=len(store.anchors_to(source.id)),
+        )
     text = source.text(store.vault)
     return SourceView(
         id=source.id,

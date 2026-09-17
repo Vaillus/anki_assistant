@@ -399,6 +399,24 @@ class Source:
     def pdf_path(self) -> Path | None:
         return Path(self.target).expanduser() if self.kind == "pdf" else None
 
+    def pdf_n_pages(self) -> int | None:
+        path = self.pdf_path()
+        if path is None or not path.exists():
+            return None
+        from anki_assistant.pdf_cache import get_pdf_toc
+
+        n_pages, _ = get_pdf_toc(path)
+        return n_pages
+
+    def pdf_toc(self) -> list[tuple[int, str]]:
+        path = self.pdf_path()
+        if path is None or not path.exists():
+            return []
+        from anki_assistant.pdf_cache import get_pdf_toc
+
+        _, toc = get_pdf_toc(path)
+        return [(e.page, e.heading) for e in toc]
+
     def note_path(self, vault: Vault) -> Path | None:
         """Filesystem path of the Obsidian note, whether or not it exists."""
         if self.kind != "obsidian":
@@ -461,7 +479,12 @@ class Source:
         path = self.pdf_path()
         if path is None or not path.exists():
             return SourceText(text="", truncated=False, n_pages=None, warning="")
-        full_text, n_pages = _read_pdf_cached(path, self.pages)
+        if self.pages:
+            from anki_assistant.pdf_cache import get_pdf_text
+
+            full_text, n_pages, _ = get_pdf_text(path, self.pages)
+        else:
+            full_text, n_pages = _read_pdf_cached(path, self.pages)
         warning = ""
         if not self.pages:
             chars_str = f"{max_chars:,}".replace(",", " ")

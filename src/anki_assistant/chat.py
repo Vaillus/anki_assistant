@@ -159,6 +159,7 @@ class SourceTextLike(Protocol):
     truncated: bool
     n_pages: int | None
     warning: str
+    extraction: str
 
 
 @dataclass
@@ -380,7 +381,9 @@ def _index_block(corpus_index: Sequence[CorpusEntry], note_ids: Sequence[int]) -
         "Une ligne par source : [id] type : cible (pages, note). Cet index ne contient pas le "
         "texte des sources. Pour lire une source : l'utilisateur la joint (elle apparaît alors "
         "dans « Sources jointes » ci-dessous), ou tu appelles read_source avec son id. Pour un "
-        "PDF, tu peux préciser les pages à lire avec le paramètre pages de read_source.",
+        "PDF, consulte d'abord la structure ci-dessous pour identifier les pages pertinentes, "
+        "puis appelle read_source avec le paramètre pages (ex. « 18-21 »). Ne lis jamais un "
+        "PDF entier : cible les sections qui répondent à la question.",
         "",
     ]
     if not corpus_index:
@@ -391,8 +394,9 @@ def _index_block(corpus_index: Sequence[CorpusEntry], note_ids: Sequence[int]) -
 
 
 def _source_head(source: SourceLike, text: SourceTextLike, level: int) -> list[str]:
-    n = len(text.text or "")
-    lines = [f"{'#' * level} {source.target} ({source.kind}, {_num(n)} car.)"]
+    label = text.extraction or source.kind
+    pages_tag = f", pages {source.pages}" if source.pages else ""
+    lines = [f"{'#' * level} {source.target} ({label}{pages_tag})"]
     meta = [f"source {source.id}"]
     if source.pages:
         meta.append(f"pages {source.pages}")

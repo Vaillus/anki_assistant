@@ -149,7 +149,7 @@ def test_get_pdf_text_creates_sidecar(tmp_path: Path, monkeypatch: pytest.Monkey
     pdf = tmp_path / "test.pdf"
     _write_pdf(pdf, 3)
 
-    text, n_pages, toc = get_pdf_text(pdf, pages="1-2", prefer_docling=False)
+    text, n_pages, toc, _ = get_pdf_text(pdf, pages="1-2", prefer_docling=False)
     assert n_pages == 3
     assert "--- page 1 ---" in text
     assert "--- page 2 ---" in text
@@ -182,7 +182,7 @@ def test_get_pdf_text_all_pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     pdf = tmp_path / "test.pdf"
     _write_pdf(pdf, 3)
 
-    text, n_pages, _ = get_pdf_text(pdf, prefer_docling=False)
+    text, n_pages, _, _ = get_pdf_text(pdf, prefer_docling=False)
     assert n_pages == 3
     assert "--- page 1 ---" in text
     assert "--- page 2 ---" in text
@@ -202,5 +202,5 @@ def test_get_pdf_text_reuses_cached_pages(tmp_path: Path, monkeypatch: pytest.Mo
     )
     write_sidecar(pdf, meta, {1: "cached page one"})
 
-    text, _, _ = get_pdf_text(pdf, pages="1", prefer_docling=False)
+    text, _, _, _ = get_pdf_text(pdf, pages="1", prefer_docling=False)
     assert "cached page one" in text

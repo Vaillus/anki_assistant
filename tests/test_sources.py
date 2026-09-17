@@ -197,20 +197,18 @@ def test_pdf_page_range_parsing_and_markers(tmp_path: Path) -> None:
     assert result.warning == ""  # a page range was given
 
 
-def test_pdf_whole_document_gets_warning(tmp_path: Path) -> None:
+def test_pdf_whole_document_returns_outline(tmp_path: Path) -> None:
     pdf_path = tmp_path / "doc.pdf"
     _write_pdf(pdf_path, 3)
 
     vault = Vault(name="V", path=tmp_path)
-    source = Source(deck="d", kind="pdf", target=str(pdf_path))  # no pages -> whole doc
+    source = Source(deck="d", kind="pdf", target=str(pdf_path))  # no pages -> outline only
     result = source.text(vault)
 
     assert result.n_pages == 3
-    assert "--- page 1 ---" in result.text
-    assert "--- page 2 ---" in result.text
-    assert "--- page 3 ---" in result.text
-    assert "sans plage de pages" in result.warning
-    assert "3 pages" in result.warning
+    assert "--- page 1 ---" not in result.text
+    assert "read_source" in result.warning
+    assert not result.truncated
 
 
 def test_pdf_discontinuous_ranges(tmp_path: Path) -> None:

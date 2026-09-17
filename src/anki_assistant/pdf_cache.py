@@ -182,7 +182,7 @@ def write_sidecar(pdf_path: Path, meta: SidecarMeta, pages: dict[int, str]) -> N
 def _extract_docling(pdf_path: Path, page_numbers: list[int]) -> dict[int, str]:
     if not HAS_DOCLING:
         return {}
-    from docling.document_converter import DocumentConverter  # ty: ignore[unresolved-import]
+    from docling.document_converter import DocumentConverter
 
     converter = DocumentConverter()
     result: dict[int, str] = {}
@@ -232,9 +232,10 @@ def get_pdf_text(
     pdf_path: Path,
     pages: str = "",
     prefer_docling: bool = True,
-) -> tuple[str, int, list[TocEntry]]:
-    """Return ``(assembled_text, n_pages, toc)`` for the requested page range.
+) -> tuple[str, int, list[TocEntry], str]:
+    """Return ``(assembled_text, n_pages, toc, extraction)`` for the requested page range.
 
+    *extraction* is ``"docling"``, ``"pypdf"``, or ``"sidecar"`` (cached).
     Checks the sidecar cache first.  Extracts missing pages with Docling (when
     available and *prefer_docling* is True) or pypdf, and updates the sidecar.
     """
@@ -257,15 +258,22 @@ def get_pdf_text(
     missing = [p for p in page_nums if p not in cached_pages]
 
     if missing:
+        extraction = "pypdf"
         extracted: dict[int, str] = {}
         if prefer_docling and HAS_DOCLING:
             extracted = _extract_docling(pdf_path, missing)
+            if extracted:
+                extraction = "docling"
         still_missing = [p for p in missing if p not in extracted]
         if still_missing:
             extracted.update(_extract_pypdf(reader, still_missing))
+            if not extracted:
+                extraction = "pypdf"
         cached_pages.update(extracted)
         meta.extracted = meta.extracted | set(extracted)
         write_sidecar(pdf_path, meta, cached_pages)
+    else:
+        extraction = "sidecar"
 
     blocks = [f"--- page {p} ---\n\n{cached_pages.get(p, '')}" for p in page_nums]
-    return "\n\n".join(blocks), n_pages, toc
+    return "\n\n".join(blocks), n_pages, toc, extraction

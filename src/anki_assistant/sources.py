@@ -345,6 +345,7 @@ class SourceText:
     truncated: bool
     n_pages: int | None
     warning: str = ""
+    extraction: str = ""
 
 
 @dataclass
@@ -482,19 +483,26 @@ class Source:
         if self.pages:
             from anki_assistant.pdf_cache import get_pdf_text
 
-            full_text, n_pages, _ = get_pdf_text(path, self.pages)
-        else:
-            full_text, n_pages = _read_pdf_cached(path, self.pages)
-        warning = ""
-        if not self.pages:
-            chars_str = f"{max_chars:,}".replace(",", " ")
-            warning = (
-                f"PDF entier ({n_pages} pages) sans plage de pages : "
-                f"seules les {chars_str} premiers caractères sont passés."
+            full_text, n_pages, _, extraction = get_pdf_text(path, self.pages)
+            truncated = len(full_text) > max_chars
+            return SourceText(
+                text=full_text[:max_chars],
+                truncated=truncated,
+                n_pages=n_pages,
+                extraction=extraction,
             )
-        truncated = len(full_text) > max_chars
+        toc_entries = self.pdf_toc()
+        n_pages = self.pdf_n_pages()
+        if toc_entries:
+            lines = [f"- p.{p} {h}" for p, h in toc_entries]
+            outline = "Structure du document :\n" + "\n".join(lines)
+        else:
+            outline = f"PDF de {n_pages} pages, pas de structure détectée."
         return SourceText(
-            text=full_text[:max_chars], truncated=truncated, n_pages=n_pages, warning=warning
+            text=outline,
+            truncated=False,
+            n_pages=n_pages,
+            warning="Utilise read_source avec le paramètre pages pour lire des pages précises.",
         )
 
 

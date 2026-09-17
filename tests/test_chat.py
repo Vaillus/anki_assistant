@@ -180,6 +180,7 @@ class FakeText:
     truncated: bool = False
     n_pages: int | None = None
     warning: str = ""
+    extraction: str = ""
 
 
 def card(**overrides: Any) -> chat.WorkspaceCard:
@@ -265,7 +266,7 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
     assert "Le contenu de la note Obsidian." not in index  # the index carries no text
 
     sources = blocks[2]["text"]
-    assert "## Allocation sur des angles disjoints (obsidian, 31 car.)" in sources
+    assert "## Allocation sur des angles disjoints (obsidian)" in sources
     assert "Le contenu de la note Obsidian." in sources
 
     context = blocks[3]["text"]
@@ -505,7 +506,7 @@ def test_format_note_type_lists_fields_templates_and_css() -> None:
 def test_format_source_first_line_is_the_reading_summary() -> None:
     text = chat.format_source(FakeSource(pages="12-19", note="chap. 2"), FakeText("x" * 3200))
     lines = text.splitlines()
-    assert lines[0] == "# Allocation sur des angles disjoints (obsidian, 3 200 car.)"
+    assert lines[0] == "# Allocation sur des angles disjoints (obsidian, pages 12-19)"
     assert lines[1] == "source k7q2vd · pages 12-19 · chap. 2 · déclarée sur le deck courant"
     assert lines[-1] == "x" * 3200
     empty = chat.format_source(FakeSource(), FakeText(""))

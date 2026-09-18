@@ -75,7 +75,6 @@ const S = {
   // column 3 (Source)
   corpus: null, // { deck, inherited_from, sources: [] }
   corpusLoading: false,
-  srcExpanded: {}, // index -> bool
   srcForm: null, // { kind, target, pages, note, copyInherited } while the add form is open
   // workspace (specs/workspace.md) — null when closed; see workspace.js for the shape
   ws: null,
@@ -187,11 +186,6 @@ const short = (id) => "#" + String(id).slice(-4);
 
 function nl2br(s) {
   return esc(s).replace(/\n/g, "<br>");
-}
-
-function fold(text, limit) {
-  const t = String(text || "");
-  return t.length > limit ? t.slice(0, limit) : t;
 }
 
 /* ---------- state selectors ---------- */

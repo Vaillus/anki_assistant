@@ -20,6 +20,7 @@ from anki_assistant.sources import (
     html_to_text,
     vault_notes,
     vault_pdfs,
+    zotero_open_uri,
 )
 
 
@@ -196,20 +197,18 @@ def test_pdf_page_range_parsing_and_markers(tmp_path: Path) -> None:
     assert result.warning == ""  # a page range was given
 
 
-def test_pdf_whole_document_gets_warning(tmp_path: Path) -> None:
+def test_pdf_whole_document_returns_outline(tmp_path: Path) -> None:
     pdf_path = tmp_path / "doc.pdf"
     _write_pdf(pdf_path, 3)
 
     vault = Vault(name="V", path=tmp_path)
-    source = Source(deck="d", kind="pdf", target=str(pdf_path))  # no pages -> whole doc
+    source = Source(deck="d", kind="pdf", target=str(pdf_path))  # no pages -> outline only
     result = source.text(vault)
 
     assert result.n_pages == 3
-    assert "--- page 1 ---" in result.text
-    assert "--- page 2 ---" in result.text
-    assert "--- page 3 ---" in result.text
-    assert "sans plage de pages" in result.warning
-    assert "3 pages" in result.warning
+    assert "--- page 1 ---" not in result.text
+    assert "read_source" in result.warning
+    assert not result.truncated
 
 
 def test_pdf_discontinuous_ranges(tmp_path: Path) -> None:
@@ -340,6 +339,83 @@ def test_vault_pdfs_searches_only_zotero_folder(tmp_path: Path) -> None:
 def test_vault_pdfs_missing_vault_returns_empty(tmp_path: Path) -> None:
     vault = Vault(name="V", path=tmp_path / "does-not-exist")
     assert vault_pdfs(vault, "") == []
+
+
+# --------------------------------------------------------------- zotero lookup
+
+
+def _make_zotero_db(db_path: Path, attachments: list[tuple[str, str]]) -> None:
+    """Create a minimal Zotero SQLite database with the given (path, key) pairs."""
+    import sqlite3
+
+    con = sqlite3.connect(str(db_path))
+    con.execute("CREATE TABLE items (itemID INTEGER PRIMARY KEY, key TEXT)")
+    con.execute(
+        "CREATE TABLE itemAttachments"
+        " (itemID INTEGER PRIMARY KEY, parentItemID INTEGER, contentType TEXT, path TEXT)"
+    )
+    for i, (path, key) in enumerate(attachments, start=1):
+        con.execute("INSERT INTO items VALUES (?, ?)", (i, key))
+        con.execute(
+            "INSERT INTO itemAttachments VALUES (?, NULL, 'application/pdf', ?)",
+            (i, path),
+        )
+    con.commit()
+    con.close()
+
+
+def test_zotero_open_uri_finds_linked_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    zotero_dir = vault.path / "Zotero"
+    zotero_dir.mkdir(parents=True)
+    pdf = zotero_dir / "Author_2023_Title.pdf"
+    pdf.write_bytes(b"")
+
+    db_path = tmp_path / "zotero.sqlite"
+    _make_zotero_db(db_path, [("attachments:Author_2023_Title.pdf", "ABC12345")])
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+
+    assert zotero_open_uri(pdf, vault) == "zotero://open-pdf/library/items/ABC12345"
+
+
+def test_zotero_open_uri_returns_none_when_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    zotero_dir = vault.path / "Zotero"
+    zotero_dir.mkdir(parents=True)
+    pdf = zotero_dir / "Unknown.pdf"
+    pdf.write_bytes(b"")
+
+    db_path = tmp_path / "zotero.sqlite"
+    _make_zotero_db(db_path, [("attachments:Other.pdf", "XYZ00000")])
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+
+    assert zotero_open_uri(pdf, vault) is None
+
+
+def test_zotero_open_uri_returns_none_when_no_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", tmp_path / "nope.sqlite")
+    assert zotero_open_uri(tmp_path / "any.pdf", vault) is None
+
+
+def test_zotero_open_uri_subfolder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    vault = Vault(name="V", path=tmp_path / "vault")
+    sub = vault.path / "Zotero" / "Lysk"
+    sub.mkdir(parents=True)
+    pdf = sub / "Paper.pdf"
+    pdf.write_bytes(b"")
+
+    db_path = tmp_path / "zotero.sqlite"
+    _make_zotero_db(db_path, [("attachments:Lysk/Paper.pdf", "SUB99999")])
+    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+
+    assert zotero_open_uri(pdf, vault) == "zotero://open-pdf/library/items/SUB99999"
 
 
 @pytest.fixture(autouse=True)
@@ -703,7 +779,7 @@ def test_api_post_source_appends_with_detected_kind_anchors_and_id(
     view = res.json()["source"]
     assert view["kind"] == "web" and view["id"] == "chat00" and view["on_deck"] == "a::b"
     assert view["exists"] is True and view["uri"] == "https://x.org/p"
-    assert view["text"] == "T\n\nbody" and view["anchored_count"] == 2
+    assert view["text"] == "" and view["anchored_count"] == 2
     assert [s.id for s in store.corpus("a::b")] == ["note00", "chat00"], "inherited copied first"
     assert store.anchors(7) == ["note00", "chat00"] and store.anchors(8) == ["chat00"]
 
@@ -741,7 +817,7 @@ def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
     )
     assert res.status_code == 200, res.text
     assert res.json()["source"]["id"] == "chat00"
-    assert res.json()["source"]["text"] == "# KKT"
+    assert res.json()["source"]["text"] == ""
     assert store.anchors(7) == ["note00", "chat00"]
     assert store.anchors(8) == ["chat00"]
     again = api.post("/api/sources/notes", json={"deck": "a", "name": "maths/kkt", "content": "x"})
@@ -752,11 +828,11 @@ def test_api_replace_source_text_maps_errors(tmp_path: Path) -> None:
     api, _ = _api(tmp_path)
     ok = api.patch("/api/sources/note00/text", json={"old": "unique", "new": "modifié"})
     assert ok.status_code == 200
-    assert ok.json()["source"]["text"] == "un passage modifié"
+    assert ok.json()["source"]["text"] == ""
     assert (
         api.patch("/api/sources/note00/text", json={"old": "unique", "new": "x"}).status_code == 409
     )
     assert api.patch("/api/sources/nope00/text", json={"old": "a", "new": "b"}).status_code == 404
     # undo = the same call with old and new swapped
     back = api.patch("/api/sources/note00/text", json={"old": "modifié", "new": "unique"})
-    assert back.json()["source"]["text"] == "un passage unique"
+    assert back.json()["source"]["text"] == ""

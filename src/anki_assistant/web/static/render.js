@@ -4,7 +4,6 @@
 
 "use strict";
 
-const FOLD = 4000; // source text fold, per specs/sources.md
 
 function draw() {
   const root = document.getElementById("app");
@@ -294,9 +293,6 @@ function sourceRow(s, i) {
   if (s.note) meta.push(esc(s.note));
   if (s.n_pages) meta.push(s.n_pages + " p.");
   const inherited = s.on_deck && S.deck && s.on_deck !== S.deck;
-  const text = String(s.text || "");
-  const expanded = !!S.srcExpanded[i];
-  const shown = expanded ? text : fold(text, FOLD);
   return (
     '<div class="source">' +
     '<div class="source-head">' +
@@ -328,19 +324,6 @@ function sourceRow(s, i) {
     (inherited ? '<div class="muted small">héritée de ' + esc(s.on_deck) + "</div>" : "") +
     (s.exists === false ? '<div class="warn">⚠ fichier introuvable</div>' : "") +
     (s.warning ? '<div class="warn">⚠ ' + esc(s.warning) + "</div>" : "") +
-    (text
-      ? '<pre class="excerpt">' + esc(shown) + "</pre>"
-      : '<div class="muted small">' +
-        (s.kind === "web" ? "(page sans texte)" : "(aucun texte extrait)") +
-        "</div>") +
-    (text.length > FOLD
-      ? '<button class="ghost small" data-act="expand-src" data-i="' +
-        i +
-        '">' +
-        (expanded ? "replier" : "afficher plus (" + text.length + " car.)") +
-        "</button>"
-      : "") +
-    (s.truncated ? '<div class="muted small">texte tronqué côté serveur</div>' : "") +
     "</div>"
   );
 }

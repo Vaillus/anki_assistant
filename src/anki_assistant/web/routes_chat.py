@@ -178,6 +178,20 @@ def read_tools_for(
         source_id = str(inp.get("source_id") or "").strip()
         if not source_id:
             raise ValueError("source_id manquant")
+        pages_override = str(inp.get("pages") or "").strip()
+        if pages_override:
+            source = store.by_id(source_id)
+            if source is None:
+                raise KeyError(f"source inconnue : {source_id}")
+            if source.kind != "pdf":
+                raise ValueError("le paramètre pages ne s'applique qu'à un PDF")
+            from anki_assistant.sources import is_valid_pages
+
+            if not is_valid_pages(pages_override):
+                raise ValueError(f"format de pages invalide : {pages_override!r}")
+            source = replace(source, pages=pages_override)
+            text = source.text(store.vault)
+            return format_source(source, text)
         source, text = load_source(source_id)
         return format_source(source, text)
 
@@ -231,6 +245,8 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
                 deck=source.deck,
                 missing=not source.exists(store.vault),
                 anchored_note_ids=store.anchors_to(source.id),
+                n_pages=source.pdf_n_pages() if source.kind == "pdf" else None,
+                toc=source.pdf_toc() if source.kind == "pdf" else [],
             )
             for source in store.corpus(deck)
         ]

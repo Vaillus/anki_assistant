@@ -57,7 +57,6 @@ async function selectDeck(name) {
   S.revealed = {};
   S.corpus = null;
   S.srcForm = null;
-  S.srcExpanded = {};
   S.error = "";
   draw();
   await Promise.all([loadNotes(), loadCorpus()]);
@@ -290,10 +289,6 @@ document.addEventListener("click", (e) => {
     undoLastValidation();
   } else if (act === "dismiss-error") {
     S.error = "";
-    draw();
-  } else if (act === "expand-src") {
-    const i = Number(el.getAttribute("data-i"));
-    S.srcExpanded[i] = !S.srcExpanded[i];
     draw();
   } else if (act === "remove-src") {
     removeSource(Number(el.getAttribute("data-i")));

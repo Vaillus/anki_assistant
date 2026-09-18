@@ -26,17 +26,32 @@ A deck's **effective corpus** is its own sources followed by each ancestor's, ne
 
 ### Text
 
-A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens in Zotero through a server-side `open -a Zotero` call (`POST /api/sources/{id}/open`); a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
+A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens in Zotero's reader through a `zotero://open-pdf` URI looked up from the Zotero SQLite database (`POST /api/sources/{id}/open`); when the lookup fails, falls back to the system default app; a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.
 
 A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
-Each source yields one **extracted text**, the same wherever the app shows or sends it — the Source tab, an attached source in the chat, a read by Claude:
+Each source yields **extracted text** when read by Claude:
 
-- A vault note yields its Markdown as written, without the YAML front matter block at the top.
-- A PDF yields the text of the pages in its range (every page when there is none), each page preceded by a marker giving its number. <!-- TODO: rework PDF extraction -->
-- A web page is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
+- A **vault note** yields its Markdown as written, without the YAML front matter block at the top.
+- A **web page** is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
+- A **PDF** exposes three representations described [below](#pdf-representations).
 
-The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning so the user learns to set one. Retrieval inside long PDFs is out of scope: the page range is the mechanism.
+Extracted text is capped at 60 000 characters; the source says whether it was **truncated**. The Source tab does not display extracted text — each kind opens in its native viewer or browser.
+
+#### PDF representations
+
+A PDF source exposes three representations of the document, from lightest to heaviest:
+
+- **Structural index** — an ordered list of (page number, heading) entries covering the document's contents, derived from the PDF's bookmark outline or, when no bookmarks exist, from a heuristic scan of page headings. Always available without extraction cost.
+- **Extracted text** — page-level Markdown for a requested set of pages, preserving tables, equations, and formatting. Produced by Docling; when Docling is not installed, pypdf is the fallback (plain text only). Cached in a **sidecar file** next to the PDF (`<name>.pdf.md`) so that subsequent reads of the same pages return instantly.
+- **Raw file** — the PDF itself, opened in Zotero or the default viewer for human reading. No text is extracted.
+
+Which representation a consumer gets depends on whether a page range is present:
+
+- **No page range** — the source returns its structural index. The chat's corpus index includes it inline ([chat.md § What Claude sees](./chat.md#what-claude-sees)) so that Claude can identify relevant pages; the Source tab shows the page count and a warning to set a range. No text is extracted.
+- **Page range given** — on the source entry's `pages` field or as a `pages` override on `read_source` ([chat.md § Read tools](./chat.md#read-tools)) — the source returns extracted text for those pages. Claude uses the structural index to choose which pages to request.
+
+The sidecar file is created lazily on first extraction and grows incrementally: each newly requested page is extracted and appended, pages already cached are reused. The sidecar is invalidated when the PDF's modification time changes.
 
 ## Anchors
 
@@ -71,8 +86,7 @@ The Source tab shows the effective corpus of the deck selected in column 1 ([rev
 
 Each source is a row:
 
-- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
-- **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
+- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, a warning for PDFs without a page range, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
 
 **Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
 
@@ -89,7 +103,7 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | Route | Purpose |
 |---|---|
 | `GET /api/sources` | Every deck's own corpus, as stored |
-| `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with each source's extracted text and where it is inherited from; with `note_id`, the note's anchors |
+| `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with source metadata and where each is inherited from; with `note_id`, the note's anchors |
 | `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
 | `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind |
 | `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |
@@ -100,4 +114,4 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | `POST /api/sources/anchors/prune` | Remove the orphans' anchors |
 | `POST /api/sources/notes` | Create a vault note and add it to a deck's corpus; may anchor notes to it and reuse an id announced beforehand ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
 | `PATCH /api/sources/{source_id}/text` | Replace one passage of a vault note |
-| `POST /api/sources/{source_id}/open` | Open a PDF source in Zotero (server-side `open -a Zotero`) |
+| `POST /api/sources/{source_id}/open` | Open a PDF source in Zotero via `zotero://open-pdf` URI (falls back to default app) |

@@ -37,9 +37,11 @@ when needed (`_fetch_web_cached`) and reduced to plain text by `html_to_text`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
+import sqlite3
 import time
 import urllib.parse
 from collections.abc import Iterable, Sequence
@@ -57,6 +59,9 @@ Kind = Literal["pdf", "obsidian", "web"]
 KINDS: tuple[Kind, ...] = ("pdf", "obsidian", "web")
 
 DEFAULT_MAX_CHARS = 60_000
+ZOTERO_DB = Path("~/Zotero/zotero.sqlite").expanduser()
+
+log = logging.getLogger(__name__)
 
 #: Seconds allowed for fetching a web source.
 WEB_TIMEOUT = 15.0
@@ -340,6 +345,7 @@ class SourceText:
     truncated: bool
     n_pages: int | None
     warning: str = ""
+    extraction: str = ""
 
 
 @dataclass
@@ -393,6 +399,24 @@ class Source:
 
     def pdf_path(self) -> Path | None:
         return Path(self.target).expanduser() if self.kind == "pdf" else None
+
+    def pdf_n_pages(self) -> int | None:
+        path = self.pdf_path()
+        if path is None or not path.exists():
+            return None
+        from anki_assistant.pdf_cache import get_pdf_toc
+
+        n_pages, _ = get_pdf_toc(path)
+        return n_pages
+
+    def pdf_toc(self) -> list[tuple[int, str]]:
+        path = self.pdf_path()
+        if path is None or not path.exists():
+            return []
+        from anki_assistant.pdf_cache import get_pdf_toc
+
+        _, toc = get_pdf_toc(path)
+        return [(e.page, e.heading) for e in toc]
 
     def note_path(self, vault: Vault) -> Path | None:
         """Filesystem path of the Obsidian note, whether or not it exists."""
@@ -456,17 +480,29 @@ class Source:
         path = self.pdf_path()
         if path is None or not path.exists():
             return SourceText(text="", truncated=False, n_pages=None, warning="")
-        full_text, n_pages = _read_pdf_cached(path, self.pages)
-        warning = ""
-        if not self.pages:
-            chars_str = f"{max_chars:,}".replace(",", " ")
-            warning = (
-                f"PDF entier ({n_pages} pages) sans plage de pages : "
-                f"seules les {chars_str} premiers caractères sont passés."
+        if self.pages:
+            from anki_assistant.pdf_cache import get_pdf_text
+
+            full_text, n_pages, _, extraction = get_pdf_text(path, self.pages)
+            truncated = len(full_text) > max_chars
+            return SourceText(
+                text=full_text[:max_chars],
+                truncated=truncated,
+                n_pages=n_pages,
+                extraction=extraction,
             )
-        truncated = len(full_text) > max_chars
+        toc_entries = self.pdf_toc()
+        n_pages = self.pdf_n_pages()
+        if toc_entries:
+            lines = [f"- p.{p} {h}" for p, h in toc_entries]
+            outline = "Structure du document :\n" + "\n".join(lines)
+        else:
+            outline = f"PDF de {n_pages} pages, pas de structure détectée."
         return SourceText(
-            text=full_text[:max_chars], truncated=truncated, n_pages=n_pages, warning=warning
+            text=outline,
+            truncated=False,
+            n_pages=n_pages,
+            warning="Utilise read_source avec le paramètre pages pour lire des pages précises.",
         )
 
 
@@ -782,3 +818,40 @@ def vault_pdfs(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
                 results.append(str(path))
     results.sort(key=str.lower)
     return results[:limit]
+
+
+def zotero_open_uri(pdf_path: Path, vault: Vault) -> str | None:
+    """Return a ``zotero://open-pdf/…`` URI for *pdf_path*, or *None* if the lookup fails.
+
+    Queries the Zotero SQLite database for a linked attachment whose relative path (under the
+    vault's ``Zotero/`` folder) matches the file.  The match is case-insensitive because macOS
+    default filesystems (APFS) are case-insensitive and Zotero may store a different case than
+    the actual filename.
+    """
+    if not ZOTERO_DB.exists():
+        return None
+    zotero_root = vault.path / "Zotero"
+    resolved = pdf_path.expanduser().resolve()
+    try:
+        relative = resolved.relative_to(zotero_root.resolve())
+    except ValueError:
+        return None
+    db_path = f"attachments:{relative}"
+    try:
+        con = sqlite3.connect(f"file:{ZOTERO_DB}?mode=ro&immutable=1", uri=True)
+        try:
+            row = con.execute(
+                "SELECT i.key FROM itemAttachments ia"
+                " JOIN items i ON i.itemID = ia.itemID"
+                " WHERE ia.contentType = 'application/pdf'"
+                "   AND ia.path = ? COLLATE NOCASE",
+                (db_path,),
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        log.warning("failed to query Zotero database", exc_info=True)
+        return None
+    if row is None:
+        return None
+    return f"zotero://open-pdf/library/items/{row[0]}"

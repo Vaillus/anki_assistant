@@ -14,7 +14,7 @@ The server keeps nothing between requests. On every **turn** — one user messag
 
 1. **Standing instructions** — reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; use the proposal tools rather than describing changes in prose; target [active](./workspace.md#card-head) cards by [workspace id](./workspace.md#cards); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
 
-2. **Corpus index** — one line per source of the deck's [corpus](./sources.md): id, kind, target, page range, and a ⚠ marker when the file is missing. Sources [anchored](./sources.md#anchors) to a card of the workspace are marked. No source text — that is what attaching and `read_source` are for.
+2. **Corpus index** — one line per source of the deck's [corpus](./sources.md): id, kind, target, page range, and a ⚠ marker when the file is missing. Sources [anchored](./sources.md#anchors) to a card of the workspace are marked. PDF sources include a compact **structural index** (from the PDF's bookmarks or heuristic headings) so Claude knows which pages to target with `read_source`. No source text — that is what attaching and `read_source` are for.
 
 3. **Attached sources** — the full text of each source the user has attached (see [How source text enters context](#how-source-text-enters-context)). An attached source stays in every turn's prompt until the user removes it. Total attached text is capped at 150 000 characters; the cap is stated in the prompt.
 
@@ -45,7 +45,7 @@ Claude sees only what the system prompt pushes. Everything else it pulls through
 | `get_notes`     | The full notes (raw field values, tags, flags, reason), in the same format as the cards in context.  |
 | `add_notes`     | The same text as `get_notes`, and the notes become cards of the workspace.                           |
 | `get_note_type` | Field names, card templates and CSS of a note type. When Claude needs information about a note type. |
-| `read_source`   | The source's full text.                                                                              |
+| `read_source`   | The source's text. Optional `pages` parameter (PDF only) overrides the source's page range.          |
 
 ### The tool loop
 
@@ -133,4 +133,4 @@ Nothing else in the chat writes to Anki; undo lives in the [workspace](./workspa
 
 ## Out of scope for v1
 
-Retrieval inside long PDFs (the user sets `pages` instead), persistence of conversations, Claude acting without a click, editing note type definitions (read-only through `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).
+Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).

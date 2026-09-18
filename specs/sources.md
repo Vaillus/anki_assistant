@@ -30,15 +30,17 @@ A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an 
 
 A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
-Each source yields one **extracted text**, the same wherever the app shows or sends it — attached in the chat, read by Claude, or fetched via the API:
+Each source yields **extracted text** when read by Claude or displayed in the UI. How that text is produced depends on the kind:
 
-- A vault note yields its Markdown as written, without the YAML front matter block at the top.
-- A PDF yields text in two quality tiers. When the source has a page range (or when a specific range is requested via `read_source`), the text is extracted with **Docling** (high-quality Markdown, preserving tables, equations, and formatting) and cached in a **sidecar file** next to the PDF (`Author.pdf.md`). When Docling is not installed, or for a whole-PDF source without a page range, text is extracted with pypdf (fast, lower quality). The sidecar is created lazily on first read and updated incrementally when new pages are requested; it is invalidated when the PDF's modification time changes.
-- A web page is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
+- A **vault note** yields its Markdown as written, without the YAML front matter block at the top.
+- A **PDF** has two modes. When a page range is specified — either on the source entry or as a `pages` override on `read_source` ([chat.md § Read tools](./chat.md#read-tools)) — the text for those pages is extracted with **Docling** (high-quality Markdown preserving tables, equations, and formatting) and cached in a **sidecar file** next to the PDF (`Author.pdf.md`). When Docling is not installed, pypdf is the fallback. When no page range is specified, no text is extracted: the source returns its **structural index** only — a list of page numbers and headings — so that Claude or the user can identify the relevant pages first.
+- A **web page** is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
 
-A PDF's **structural index** (its bookmark outline or heuristic headings) appears in the corpus index so Claude knows which pages to request without reading anything. Claude can pass a `pages` parameter to `read_source` to read specific pages, overriding the source's own page range.
+The sidecar file is created lazily on first read and updated incrementally when new pages are requested; it is invalidated when the PDF's modification time changes.
 
-The extracted text is capped at 60 000 characters, and the source says whether it was **truncated**. A PDF with no page range also carries a warning so the user learns to set one. The Source tab does not display extracted text for PDFs or vault notes (they open in their native viewer); only web sources show a text excerpt.
+A PDF's **structural index** comes from the PDF's bookmark outline, or from a heuristic scan of page headings when no bookmarks exist. It appears in the chat's corpus index ([chat.md § What Claude sees](./chat.md#what-claude-sees)) and is returned as the source's text when no page range is given. Claude uses it to target `read_source` calls to specific pages.
+
+Extracted text for vault notes and web pages is capped at 60 000 characters; the source says whether it was **truncated**. The Source tab does not display extracted text for PDFs or vault notes (they open in their native viewer); only web sources show a text excerpt.
 
 ## Anchors
 
@@ -73,8 +75,8 @@ The Source tab shows the effective corpus of the deck selected in column 1 ([rev
 
 Each source is a row:
 
-- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, the whole-PDF warning, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
-- **Text** — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it.
+- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, a warning for PDFs without a page range, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
+- **Text** (web sources only) — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it. PDFs and vault notes do not show text — they open in their native viewer.
 
 **Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
 

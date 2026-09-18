@@ -133,4 +133,4 @@ Nothing else in the chat writes to Anki; undo lives in the [workspace](./workspa
 
 ## Out of scope for v1
 
-Retrieval inside long PDFs (the user sets `pages` instead), persistence of conversations, Claude acting without a click, editing note type definitions (read-only through `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).
+Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).

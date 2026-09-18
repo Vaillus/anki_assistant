@@ -100,7 +100,7 @@ Click on a field to edit: the field becomes a textarea holding the raw value, fo
 
 Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « éditée ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version keeps its rationale and gains the « éditée » mark.
 
-A `propose_edit` with a different model replaces the entire field set with the new type's fields; the card head shows the [effective type](./notes.md#effective-type) with a ⇄ indicator. The plan sends the shown version's effective type, for a draft as for an existing note.
+A `propose_edit` with a different note type replaces the entire field set with the new type's fields; the card head shows the version's [note type](./notes.md#note-type-across-versions) with a ⇄ indicator. The plan sends the shown version's note type, for a draft as for an existing note.
 
 ### Versions
 
@@ -112,7 +112,7 @@ A dropped version is gone from the workspace. The conversation notes the rejecti
 
 ### Split
 
-`propose_split` on a card marks it deleted and yields one **fragment** card per note in the proposal — the one it would leave on the original included, when there is one — each linked to that card as its **parent**. Fragments inherit the parent's [effective type](./notes.md#effective-type) (unless the proposal names another), tags, deck and [anchors](./sources.md#anchors). Their **scheduling state** (interval, due date, ease, review count, lapses) is copied at validation from the most-reviewed card of the nearest ancestor that is an existing note.
+`propose_split` on a card marks it deleted and yields one **fragment** card per note in the proposal — the one it would leave on the original included, when there is one — each linked to that card as its **parent**. Fragments inherit the parent's version [note type](./notes.md#note-type-across-versions) (unless the proposal names another), tags, deck and [anchors](./sources.md#anchors). Their **scheduling state** (interval, due date, ease, review count, lapses) is copied at validation from the most-reviewed card of the nearest ancestor that is an existing note.
 
 Fragments are ordinary draft cards afterward: Claude can target one for a retouch or split it again, the user can edit or drop it.
 
@@ -121,7 +121,7 @@ Fragments are ordinary draft cards afterward: Claude can target one for a retouc
 1. **The root**, on opening — absent when the workspace was opened without a note.
 2. **`add_notes`** ([chat.md § Read tools](./chat.md#read-tools)): Claude asks for notes to be shown, typically after a search. The workspace appends one card per note, v0 = the note.
 3. **A proposal on a note not in the workspace** (`propose_edit`, `propose_split`, `propose_move` targeting a note id absent from the cards): the note is fetched, its card added, then the proposal applied to it.
-4. **`propose_create`**: a new draft card with no parent; tags and anchors default to the root's unless the proposal gives `source_ids`. When there is no root, `model` must be given and tags start empty.
+4. **`propose_create`**: a new draft card with no parent; tags and anchors default to the root's unless the proposal gives `source_ids`. When there is no root, the note type (`model`) must be given and tags start empty.
 
 Notes already in the workspace are never added twice. The workspace holds at most **50 cards**; additions that would exceed the cap are refused with an error asking Claude to narrow down.
 
@@ -145,8 +145,8 @@ A draft note is created. An existing note's card becomes one action — deleted 
 
 | Card | Anki writes | Flag |
 |---|---|---|
-| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with model, tags; anchors written to `sources.json`; a fragment's cards receive the inherited scheduling state ([Split](#split)). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
-| Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the model changed | cleared |
+| Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with the version's note type and tags; anchors written to `sources.json`; a fragment's cards receive the inherited scheduling state ([Split](#split)). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
+| Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the note type changed | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped and reported when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |
 | Existing, moved (combined with edit, keep or defer) | `changeDeck` on all Anki cards; anchors re-checked against the destination corpus ([sources.md § Anchors](./sources.md#anchors)) | cleared (unless deferred) |
@@ -160,7 +160,7 @@ Whether a note *has* `Back Extra` — for the comment as for the clearing — is
 
 ### Order and rollback
 
-Writes proceed in a safe order: validate, snapshot, creates, edits, moves, unflag/flag, deletes. Before touching Anki the plan is validated — shape, field names against the note type the card writes, that is `model` when given (case-corrected or refused) — and nothing is written on failure. Deletion comes last so that a failure anywhere before it has lost no content.
+Writes proceed in a safe order: validate, snapshot, creates, edits, moves, unflag/flag, deletes. Before touching Anki the plan is validated — shape, field names against the version's note type (case-corrected or refused) — and nothing is written on failure. Deletion comes last so that a failure anywhere before it has lost no content.
 
 On the first failure the write stops and a rollback is attempted: created notes deleted, edited notes restored from the snapshot, moved notes moved back. The workspace stays open; draft cards that were created and not rolled back gain their `note_id` so a retry does not duplicate them.
 

@@ -18,7 +18,7 @@ The server keeps nothing between requests. On every **turn** — one user messag
 
 3. **Attached sources** — the full text of each source the user has attached (see [How source text enters context](#how-source-text-enters-context)). An attached source stays in every turn's prompt until the user removes it. Total attached text is capped at 150 000 characters; the cap is stated in the prompt.
 
-4. **Cards of the workspace** — every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace id, note id or « brouillon », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
+4. **Cards of the workspace** — a **note types** section listing every note type of the collection with its field names (so Claude can propose type conversions without a tool call), followed by every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace id, note id or « brouillon », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
 
 Blocks 1–3 are stable for the life of the workspace; block 3 (attached sources) is marked for the API's prompt cache (`cache_control: ephemeral`). A change on the workspace re-processes only block 4. Attaching or detaching a source invalidates the cache.
 
@@ -44,7 +44,7 @@ Claude sees only what the system prompt pushes. Everything else it pulls through
 | `search_notes`  | The matching notes, in the shape controlled by `detail` (see below).                                 |
 | `get_notes`     | The full notes (raw field values, tags, flags, reason), in the same format as the cards in context.  |
 | `add_notes`     | The same text as `get_notes`, and the notes become cards of the workspace.                           |
-| `get_note_type` | Field names, card templates and CSS of a note type. When Claude needs information about a note type. |
+| `get_note_type` | Card templates and CSS of a note type. Field names are already in context (block 4); this tool is for inspecting the rendering details. |
 | `read_source`   | The source's text. Optional `pages` parameter (PDF only) overrides the source's page range.          |
 
 ### The tool loop
@@ -141,4 +141,4 @@ Nothing else in the chat writes to Anki; undo lives in the [workspace](./workspa
 
 ## Out of scope for v1
 
-Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).
+Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through the note-types listing and `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).

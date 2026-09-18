@@ -27,7 +27,7 @@ graph LR
     API --> Client["AnkiClient (client.py)"] --> AC["AnkiConnect · localhost:8765"]
     API --> Sources["SourceStore (sources.py) · sources.json"]
     Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
-    Sources --> PDF["PDF files · pypdf"]
+    Sources --> PDF["PDF files · Docling / pypdf"]
     Sources -- fetch --> Web["Web pages · httpx"]
     API --> Chat["chat.py · Anthropic API"]
 ```
@@ -47,6 +47,7 @@ graph LR
 | `src/anki_assistant/client.py` | Typed client over AnkiConnect | — |
 | `src/anki_assistant/models.py` | `Card`, `Note` dataclasses | — |
 | `src/anki_assistant/sources.py` | `SourceStore`: corpora, anchors, text extraction, vault writes | [sources.md](./sources.md) |
+| `src/anki_assistant/pdf_cache.py` | Sidecar cache, structural index, Docling extraction | [sources.md](./sources.md) |
 | `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes | [review.md](./review.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
 | `src/anki_assistant/chat.py` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |

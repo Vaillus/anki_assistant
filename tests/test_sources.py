@@ -779,7 +779,7 @@ def test_api_post_source_appends_with_detected_kind_anchors_and_id(
     view = res.json()["source"]
     assert view["kind"] == "web" and view["id"] == "chat00" and view["on_deck"] == "a::b"
     assert view["exists"] is True and view["uri"] == "https://x.org/p"
-    assert view["text"] == "T\n\nbody" and view["anchored_count"] == 2
+    assert view["text"] == "" and view["anchored_count"] == 2
     assert [s.id for s in store.corpus("a::b")] == ["note00", "chat00"], "inherited copied first"
     assert store.anchors(7) == ["note00", "chat00"] and store.anchors(8) == ["chat00"]
 
@@ -817,7 +817,7 @@ def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
     )
     assert res.status_code == 200, res.text
     assert res.json()["source"]["id"] == "chat00"
-    assert res.json()["source"]["text"] == "# KKT"
+    assert res.json()["source"]["text"] == ""
     assert store.anchors(7) == ["note00", "chat00"]
     assert store.anchors(8) == ["chat00"]
     again = api.post("/api/sources/notes", json={"deck": "a", "name": "maths/kkt", "content": "x"})
@@ -828,11 +828,11 @@ def test_api_replace_source_text_maps_errors(tmp_path: Path) -> None:
     api, _ = _api(tmp_path)
     ok = api.patch("/api/sources/note00/text", json={"old": "unique", "new": "modifié"})
     assert ok.status_code == 200
-    assert ok.json()["source"]["text"] == "un passage modifié"
+    assert ok.json()["source"]["text"] == ""
     assert (
         api.patch("/api/sources/note00/text", json={"old": "unique", "new": "x"}).status_code == 409
     )
     assert api.patch("/api/sources/nope00/text", json={"old": "a", "new": "b"}).status_code == 404
     # undo = the same call with old and new swapped
     back = api.patch("/api/sources/note00/text", json={"old": "modifié", "new": "unique"})
-    assert back.json()["source"]["text"] == "un passage unique"
+    assert back.json()["source"]["text"] == ""

@@ -30,17 +30,28 @@ A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an 
 
 A web source is a **pointer, not a snapshot**: nothing of the page is stored, the text is fetched when needed. A page whose content the user wants to keep as it stands is a vault note (via `propose_create_source` in [chat.md § Source proposals](./chat.md#source-proposals)), not a web source.
 
-Each source yields **extracted text** when read by Claude or displayed in the UI. How that text is produced depends on the kind:
+Each source yields **extracted text** when read by Claude:
 
 - A **vault note** yields its Markdown as written, without the YAML front matter block at the top.
-- A **PDF** has two modes. When a page range is specified — either on the source entry or as a `pages` override on `read_source` ([chat.md § Read tools](./chat.md#read-tools)) — the text for those pages is extracted with **Docling** (high-quality Markdown preserving tables, equations, and formatting) and cached in a **sidecar file** next to the PDF (`Author.pdf.md`). When Docling is not installed, pypdf is the fallback. When no page range is specified, no text is extracted: the source returns its **structural index** only — a list of page numbers and headings — so that Claude or the user can identify the relevant pages first.
 - A **web page** is fetched and reduced to its main text content. A page that cannot be fetched yields an empty text with a warning.
+- A **PDF** exposes three representations described [below](#pdf-representations).
 
-The sidecar file is created lazily on first read and updated incrementally when new pages are requested; it is invalidated when the PDF's modification time changes.
+Extracted text is capped at 60 000 characters; the source says whether it was **truncated**. The Source tab does not display extracted text — each kind opens in its native viewer or browser.
 
-A PDF's **structural index** comes from the PDF's bookmark outline, or from a heuristic scan of page headings when no bookmarks exist. It appears in the chat's corpus index ([chat.md § What Claude sees](./chat.md#what-claude-sees)) and is returned as the source's text when no page range is given. Claude uses it to target `read_source` calls to specific pages.
+#### PDF representations
 
-Extracted text for vault notes and web pages is capped at 60 000 characters; the source says whether it was **truncated**. The Source tab does not display extracted text for PDFs or vault notes (they open in their native viewer); only web sources show a text excerpt.
+A PDF source exposes three representations of the document, from lightest to heaviest:
+
+- **Structural index** — an ordered list of (page number, heading) entries covering the document's contents, derived from the PDF's bookmark outline or, when no bookmarks exist, from a heuristic scan of page headings. Always available without extraction cost.
+- **Extracted text** — page-level Markdown for a requested set of pages, preserving tables, equations, and formatting. Produced by Docling; when Docling is not installed, pypdf is the fallback (plain text only). Cached in a **sidecar file** next to the PDF (`<name>.pdf.md`) so that subsequent reads of the same pages return instantly.
+- **Raw file** — the PDF itself, opened in Zotero or the default viewer for human reading. No text is extracted.
+
+Which representation a consumer gets depends on whether a page range is present:
+
+- **No page range** — the source returns its structural index. The chat's corpus index includes it inline ([chat.md § What Claude sees](./chat.md#what-claude-sees)) so that Claude can identify relevant pages; the Source tab shows the page count and a warning to set a range. No text is extracted.
+- **Page range given** — on the source entry's `pages` field or as a `pages` override on `read_source` ([chat.md § Read tools](./chat.md#read-tools)) — the source returns extracted text for those pages. Claude uses the structural index to choose which pages to request.
+
+The sidecar file is created lazily on first extraction and grows incrementally: each newly requested page is extracted and appended, pages already cached are reused. The sidecar is invalidated when the PDF's modification time changes.
 
 ## Anchors
 
@@ -76,7 +87,6 @@ The Source tab shows the effective corpus of the deck selected in column 1 ([rev
 Each source is a row:
 
 - **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, a warning for PDFs without a page range, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
-- **Text** (web sources only) — the extracted text in a scrollable monospace block, folded after 4 000 characters with « afficher plus » to expand, and a note when the server truncated it. PDFs and vault notes do not show text — they open in their native viewer.
 
 **Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
 
@@ -93,7 +103,7 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | Route | Purpose |
 |---|---|
 | `GET /api/sources` | Every deck's own corpus, as stored |
-| `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with each source's extracted text and where it is inherited from; with `note_id`, the note's anchors |
+| `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with source metadata and where each is inherited from; with `note_id`, the note's anchors |
 | `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
 | `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind |
 | `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |

@@ -7,7 +7,7 @@ the read tools (decks, notes, note types, sources).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from anki_assistant.models import strip_html
@@ -32,10 +32,11 @@ STANDING_INSTRUCTIONS = """\
 Tu assistes Hugo dans la revue de ses notes Anki signalées (« flaguées »). L'utilisateur \
 travaille dans un espace de travail : les cartes qu'il regarde (la note qu'il a ouverte, les \
 brouillons préparés pour elle, les notes ajoutées depuis) sont listées plus bas avec leur \
-identifiant (w1, w2…). Ce prompt te donne aussi le deck en cours, l'index de son corpus et les \
-sources jointes. Le reste — les autres notes du deck ou de la collection, le texte d'une source \
-non jointe, l'arborescence des decks, un type de note — se lit avec les outils de lecture, et \
-ce qui n'est nulle part dans la collection se cherche sur le web.
+identifiant (w1, w2…). Ce prompt te donne aussi le deck en cours, les types de notes \
+(noms et champs), l'index de son corpus et les sources jointes. Le reste — les autres \
+notes du deck ou de la collection, le texte d'une source non jointe, l'arborescence des \
+decks — se lit avec les outils de lecture, et ce qui n'est nulle part dans la collection \
+se cherche sur le web.
 
 Règles :
 - Réponds dans la langue de l'utilisateur, français par défaut.
@@ -282,12 +283,24 @@ def _attached_block(attached: Sequence[Attached]) -> str:
     return "\n".join(parts)
 
 
+def _note_types_block(note_types: Mapping[str, Sequence[str]]) -> str:
+    """A compact listing of every note type and its fields, so Claude can propose
+    type conversions without a tool call."""
+    if not note_types:
+        return ""
+    lines = ["# Types de notes de la collection", ""]
+    for name, fields in sorted(note_types.items()):
+        lines.append(f"- **{name}** : {', '.join(fields)}")
+    return "\n".join(lines)
+
+
 def build_system(
     deck: str,
     corpus_index: Sequence[CorpusEntry],
     attached: Sequence[Attached],
     cards: Sequence[WorkspaceCard],
     flagged_count: int | None = None,
+    note_types: Mapping[str, Sequence[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """System prompt as four text blocks (specs/chat.md#context).
 
@@ -302,6 +315,8 @@ def build_system(
     if flagged_count is not None:
         header.append(f"Notes signalées dans ce deck : {flagged_count}.")
     header.append(f"Cartes dans l'espace de travail : {len(cards)}, dont {active} active(s).")
+
+    types_part = _note_types_block(note_types or {})
 
     notes_part = ["# Cartes de l'espace de travail", ""]
     if cards:
@@ -325,7 +340,10 @@ def build_system(
             "text": _attached_block(attached),
             "cache_control": {"type": "ephemeral"},
         },
-        {"type": "text", "text": "\n\n".join(header) + "\n\n" + "\n".join(notes_part)},
+        {
+            "type": "text",
+            "text": "\n\n".join(header) + "\n\n" + types_part + "\n\n" + "\n".join(notes_part),
+        },
     ]
 
 

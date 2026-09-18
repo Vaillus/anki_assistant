@@ -270,6 +270,7 @@ async def stream_chat(
     read_tools: Mapping[str, ReadTool] | None = None,
     model: str | None = None,
     flagged_count: int | None = None,
+    note_types: Mapping[str, Sequence[str]] | None = None,
 ) -> AsyncIterator[ChatEvent]:
     """Run one chat turn (with its tool loop) and yield the events the client should receive.
 
@@ -288,7 +289,7 @@ async def stream_chat(
     try:
         corpus_index = load_corpus(deck)
         attached = [load_source(str(source_id)) for source_id in source_ids]
-        system = build_system(deck, corpus_index, attached, cards, flagged_count)
+        system = build_system(deck, corpus_index, attached, cards, flagged_count, note_types)
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI, never raised into the SSE body
         yield ChatEvent("error", {"detail": f"Contexte indisponible : {exc}"})
         return

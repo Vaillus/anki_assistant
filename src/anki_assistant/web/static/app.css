@@ -315,11 +315,60 @@ a { color: var(--accent); }
 .chat textarea { width: 100%; height: 68px; }
 .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; min-height: 18px; }
 
-.msg { padding: 8px 10px; margin: 6px 0; max-width: 95%; white-space: pre-wrap; }
-.msg.user { background: var(--accentbg); margin-left: auto; }
+.msg { padding: 8px 10px; margin: 6px 0; max-width: 95%; }
+.msg.user { background: var(--accentbg); margin-left: auto; white-space: pre-wrap; }
 .msg.assistant { background: var(--assistantbg); }
 .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
 .cursor { opacity: .5; }
+
+/* ---------- chat: markdown in assistant messages ---------- */
+
+.msg.assistant p { margin: 0 0 6px; }
+.msg.assistant p:last-child { margin-bottom: 0; }
+.msg.assistant ul, .msg.assistant ol { margin: 4px 0 8px; padding-left: 20px; }
+.msg.assistant li { margin: 2px 0; }
+.msg.assistant li > p { margin: 0; }
+.msg.assistant strong { font-weight: 600; }
+.msg.assistant pre {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin: 6px 0;
+}
+.msg.assistant code {
+  background: var(--raised);
+  padding: 1px 4px;
+  font-size: 12px;
+}
+.msg.assistant pre code { background: none; padding: 0; font-size: inherit; }
+.msg.assistant blockquote {
+  border-left: 3px solid var(--line-strong);
+  margin: 6px 0;
+  padding: 2px 10px;
+  color: var(--ink-dim);
+}
+.msg.assistant h1, .msg.assistant h2, .msg.assistant h3,
+.msg.assistant h4, .msg.assistant h5, .msg.assistant h6 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.msg.assistant table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.msg.assistant th, .msg.assistant td {
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+}
+.msg.assistant th { background: var(--raised); font-weight: 600; }
+.msg.assistant hr { border: none; border-top: 1px solid var(--line); margin: 8px 0; }
+
+/* display math blocks */
+.msg.assistant mjx-container[display="true"] { margin: 8px 0; overflow-x: auto; }
 
 .proposal {
   background: var(--panel);

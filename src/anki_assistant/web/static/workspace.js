@@ -1384,24 +1384,29 @@ function linkify(text) {
   return (out + esc(text.slice(last))).replace(/\n/g, "<br>");
 }
 
-/* The reply text with a [n] marker after each cited passage, linking to the page. */
+/* The reply text with a [n] marker after each cited passage, linking to the page.
+   User messages use plain linkify; assistant messages go through Markdown + math. */
 function bodyHtml(m) {
   const text = m.text || "";
+  if (m.who === "user") return linkify(text);
+
+  // Assistant: embed citation HTML into the raw text, then render Markdown.
   const byN = {};
   (m.sources || []).forEach((s) => {
     byN[s.n] = s;
   });
-  let out = "";
+  let full = "";
   let at = 0;
   (m.cites || []).forEach((c) => {
     const pos = Math.min(Math.max(c.pos, at), text.length);
     const s = byN[c.n] || {};
-    out +=
-      linkify(text.slice(at, pos)) +
+    full +=
+      text.slice(at, pos) +
       '<a class="cite" href="' + esc(s.url || "#") + '" target="_blank" rel="noopener" title="' + esc(c.cited || "") + '">[' + c.n + "]</a>";
     at = pos;
   });
-  return out + linkify(text.slice(at));
+  full += text.slice(at);
+  return renderMarkdown(full);
 }
 
 function sourcesHtml(m) {

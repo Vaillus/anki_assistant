@@ -88,6 +88,14 @@ The standing instructions tell Claude not to paste URLs into its prose — citat
 
 Web results are not replayed across turns: they are dropped like any other read and survive as bracket notation. Re-reading a page costs a round trip to the open web — so `web_fetch` on something worth keeping is a reason to propose it as a source rather than fetch it twice.
 
+### Message rendering
+
+**User messages** are plain text with HTML escaping, URL linkification, and newlines converted to `<br>`.
+
+**Assistant messages** go through a Markdown pipeline (marked.js, GFM with line breaks) that renders headings, bold, italic, lists, code blocks, tables, and blockquotes. URLs are autolinked by GFM and open in a new tab. Citation `[n]` markers are embedded as HTML before Markdown processing and survive as inline elements.
+
+**Math in assistant messages.** Six delimiter styles are supported: `\(…\)`, `\[…\]`, `[$]…[/$]`, `[$$]…[/$$]`, `$…$`, and `$$…$$`. Math expressions are extracted before Markdown processes the text (so backtick escaping or list formatting cannot break them) and restored after, with dollar-sign delimiters normalised to `\(…\)` / `\[…\]` — the backslash forms MathJax already recognises. The field [rendering transform](./review.md#rendering) is unaffected: it does not use Markdown and does not gain dollar-sign delimiters.
+
 ## Proposal tools
 
 A **proposal** is a structured description of a change — which card, which fields, why — that lands on the workspace as a [version](./workspace.md#versions), a [fragment](./workspace.md#split), a new [draft card](./workspace.md#how-notes-enter) or a [move badge](./workspace.md#card-head). Nothing is written to Anki until « Valider » ([workspace.md § Validation](./workspace.md#validation)).

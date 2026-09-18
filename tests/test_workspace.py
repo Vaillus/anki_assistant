@@ -571,6 +571,64 @@ def test_undo_reverts_model_change(anki: FailingAnki, store: SourceStore):
     assert anki.notes[nid]["fields"] == {"Text": "old", "Back Extra": ""}
 
 
+def test_model_change_decides_back_extra_from_the_new_type(anki: FailingAnki, store: SourceStore):
+    """A Cloze turned Basic has no `Back Extra`: « vider Back Extra » writes nothing there, and
+    a deferred comment is reported as not written instead of being sent to a missing field."""
+    cleared = anki.add(
+        "d", model="Cloze", fields={"Text": "old {{c1::x}}", "Back Extra": "why"}, flags=(1,)
+    )
+    deferred = anki.add(
+        "d", model="Cloze", fields={"Text": "old {{c1::y}}", "Back Extra": "why"}, flags=(1,)
+    )
+    plan = ApplyPlan(
+        deck="d",
+        clear_reason=True,
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="edit",
+                note_id=cleared,
+                model="Basic",
+                fields={"Front": "q", "Back": "a"},
+            ),
+            CardPlan(
+                wid="w2",
+                action="edit",
+                note_id=deferred,
+                model="Basic",
+                fields={"Front": "q2", "Back": "a2"},
+                defer=True,
+                comment="à revoir",
+            ),
+        ],
+    )
+    report, snap = workspace.apply(anki, store, plan)
+    assert report.ok
+    assert snap.written[cleared] == {"Front": "q", "Back": "a"}
+    assert snap.written[deferred] == {"Front": "q2", "Back": "a2"}
+    assert anki.notes[cleared]["fields"] == {"Front": "q", "Back": "a"}
+    assert report.errors == ["w2 : pas de champ Back Extra, commentaire non écrit"]
+    assert report.deferred == [deferred] and anki.flags_of(deferred) == [1]
+    assert "modelFieldNames" in anki.calls
+
+
+def test_check_fields_returns_the_fields_of_every_type_written(
+    anki: FailingAnki, store: SourceStore
+):
+    nid = anki.add("d", model="Cloze", fields={"Text": "t", "Back Extra": ""}, flags=(1,))
+    plan = ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(wid="w1", action="edit", note_id=nid, fields={"Text": "u"}),
+            CardPlan(wid="w2", action="create", model="Basic", deck="d", fields={"Front": "f"}),
+        ],
+    )
+    snap = workspace.take_snapshot(anki, plan)
+    fields_of = workspace.check_fields(anki, plan, snap)
+    assert fields_of == {"Cloze": ["Text", "Back Extra"], "Basic": ["Front", "Back"]}
+    assert workspace.check_fields(anki, ApplyPlan(deck="d"), workspace.Snapshot()) == {}
+
+
 def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, store: SourceStore):
     """An edit where `model` matches the note's current type goes through `review.edit`."""
     nid = anki.add("d", model="Cloze", fields={"Text": "old", "Back Extra": ""}, flags=(1,))

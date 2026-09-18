@@ -48,6 +48,7 @@ __all__ = [
     "check_fields",
     "comment_html",
     "take_snapshot",
+    "target_model",
     "undo",
     "validate",
 ]
@@ -279,23 +280,33 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
     return snap
 
 
-def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> None:
+def target_model(card: CardPlan, snap: Snapshot) -> str:
+    """The note type a created or edited card writes: `model` when given, else the note's."""
+    if card.model:
+        return card.model
+    return snap.notes[int(card.note_id or 0)].model
+
+
+def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> dict[str, list[str]]:
     """Fit the field names of every created or edited note to its note type, before any write.
 
-    A name that differs only by case is corrected in place to the type's spelling. An unknown
-    name, or an empty first field on a note to create (Anki refuses it as an empty note), raises
-    `PlanError` naming the card, the field and the type's fields. Proposals are the usual
-    source: Claude may spell a field from memory instead of reading the type.
+    The note type is the one the card writes ([target_model]): an edit that changes the type is
+    checked against the new type, not the note's current one. A name that differs only by case
+    is corrected in place to the type's spelling. An unknown name, or an empty first field on a
+    note to create (Anki refuses it as an empty note), raises `PlanError` naming the card, the
+    field and the type's fields. Proposals are the usual source: Claude may spell a field from
+    memory instead of reading the type.
+
+    Returns the field names of every note type met, so that `apply` decides about `Back Extra`
+    from the type it writes without asking Anki again.
     """
     targets: dict[str, str] = {}
     for card in plan.cards:
-        if card.action == "create":
-            targets[card.wid] = str(card.model)
-        elif card.action == "edit":
-            targets[card.wid] = card.model or snap.notes[int(card.note_id or 0)].model
-    if not targets:
-        return
+        if card.action in ("create", "edit"):
+            targets[card.wid] = target_model(card, snap)
     fields_of: dict[str, list[str]] = {}
+    if not targets:
+        return fields_of
     errors: list[str] = []
     for model in sorted(set(targets.values())):
         try:
@@ -325,6 +336,7 @@ def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> None:
         card.fields = fixed
     if errors:
         raise PlanError(" ; ".join(errors))
+    return fields_of
 
 
 # --------------------------------------------------------------------------- apply
@@ -379,12 +391,15 @@ def comment_html(comment: str) -> str:
     )
 
 
-def _comment_for(card: CardPlan, snap: NoteSnap, report: ApplyReport) -> str | None:
+def _comment_for(card: CardPlan, field_names: list[str], report: ApplyReport) -> str | None:
     """What a deferred card writes to `Back Extra`: the comment as HTML, or None when there is
-    no comment or the note type has no such field (reported, not fatal: the flag still lands)."""
+    no comment or the note type has no such field (reported, not fatal: the flag still lands).
+
+    `field_names` are those of the type the card writes — after a change of note type, the new
+    type's — not the note's current fields."""
     if not card.deferred or card.comment is None:
         return None
-    if REASON_FIELD not in snap.fields:
+    if REASON_FIELD not in field_names:
         if card.comment.strip():
             report.errors.append(f"{card.wid} : pas de champ {REASON_FIELD}, commentaire non écrit")
         return None
@@ -399,7 +414,7 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
     if errors:
         raise PlanError(" ; ".join(errors))
     snap = take_snapshot(client, plan)
-    check_fields(client, plan, snap)
+    fields_of = check_fields(client, plan, snap)
     report = ApplyReport()
 
     creates = [c for c in plan.cards if c.action == "create"]
@@ -417,17 +432,10 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
         for card in creates:
             step = f"création de {card.wid}"
             fields = dict(card.fields or {})
-            if card.deferred and card.comment is not None:
-                # A proposal may have left the field out: ask the note type, not the proposal.
-                has_field = REASON_FIELD in fields or REASON_FIELD in client.model_field_names(
-                    str(card.model)
-                )
-                if has_field:
-                    fields[REASON_FIELD] = comment_html(card.comment)
-                elif card.comment.strip():
-                    report.errors.append(
-                        f"{card.wid} : pas de champ {REASON_FIELD}, commentaire non écrit"
-                    )
+            # A proposal may have left the field out: the note type says, not the proposal.
+            comment = _comment_for(card, fields_of.get(str(card.model), []), report)
+            if comment is not None:
+                fields[REASON_FIELD] = comment
             view = review.create(
                 client,
                 deck=card.deck or plan.deck,
@@ -450,14 +458,21 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
             nid = int(card.note_id or 0)
             step = f"modification de #{nid}"
             fields = dict(card.fields or {})
-            comment = _comment_for(card, snap.notes[nid], report)
+            new_model = target_model(card, snap)
+            old_model = snap.notes[nid].model
+            # `Back Extra` follows the type being written: a Cloze turned Basic has none.
+            names = fields_of.get(new_model, [])
+            comment = _comment_for(card, names, report)
             if comment is not None:
                 fields[REASON_FIELD] = comment
-            elif not card.deferred and plan.clear_reason and _reason_to_clear(snap.notes[nid]):
+            elif (
+                not card.deferred
+                and plan.clear_reason
+                and REASON_FIELD in names
+                and _reason_to_clear(snap.notes[nid])
+            ):
                 fields[REASON_FIELD] = ""
-            new_model = card.model
-            old_model = snap.notes[nid].model
-            if new_model and new_model != old_model:
+            if new_model != old_model:
                 tags = list(card.tags) if card.tags is not None else list(snap.notes[nid].tags)
                 client.update_note_model(nid, model=new_model, fields=fields, tags=tags)
                 snap.model_changed.append(nid)
@@ -468,7 +483,7 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
         for card in defers:
             nid = int(card.note_id or 0)
             step = f"commentaire de #{nid}"
-            comment = _comment_for(card, snap.notes[nid], report)
+            comment = _comment_for(card, list(snap.notes[nid].fields), report)
             if comment is not None:
                 fields = {REASON_FIELD: comment}
                 client.update_note(nid, fields=fields)

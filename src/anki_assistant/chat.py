@@ -749,10 +749,16 @@ def proposal_tools() -> list[dict[str, Any]]:
                     "target": _TARGET,
                     "original": {
                         "description": (
-                            "Champs de la note originale après découpe, ou null pour la supprimer."
+                            "Champs de la note originale après découpe, ou null pour la supprimer. "
+                            "Toujours donner `model` (le type de note du fragment). "
+                            "Quand le type change (ex. Cloze → Basic), donner **tous** les champs "
+                            "du type cible (rien n'est repris de l'ancienne version)."
                         ),
                         "anyOf": [
-                            _obj({"fields": _fields_schema()}, required=["fields"]),
+                            _obj(
+                                {"model": _MODEL, "fields": _fields_schema()},
+                                required=["model", "fields"],
+                            ),
                             {"type": "null"},
                         ],
                     },
@@ -760,11 +766,12 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "type": "array",
                         "description": (
                             "Notes à créer (tous leurs champs), dans le même deck et avec les "
-                            "mêmes tags que la carte visée."
+                            "mêmes tags que la carte visée. Toujours donner `model`."
                         ),
                         "minItems": 1,
                         "items": _obj(
-                            {"model": _MODEL, "fields": _fields_schema()}, required=["fields"]
+                            {"model": _MODEL, "fields": _fields_schema()},
+                            required=["model", "fields"],
                         ),
                     },
                     "rationale": _RATIONALE,

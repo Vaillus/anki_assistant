@@ -236,19 +236,46 @@ function toggleFlag(card) {
 }
 
 /* A draft always has one as far as the client knows — a proposal may have left the field
-   out — and the server checks the note type at validation (specs/workspace.md#body). */
+   out — and the server checks the note type at validation (specs/workspace.md#body). An
+   existing note is judged on its shown version: after a change of note type its fields are
+   the target type's, which may not have the field. */
 function hasReasonField(card) {
-  return !card.noteId || Object.prototype.hasOwnProperty.call(card.versions[0].fields, REASON_FIELD);
+  return !card.noteId || Object.prototype.hasOwnProperty.call(shownFields(card), REASON_FIELD);
 }
 
 /* ---------------- versions ---------------- */
 
+/* `model` is the note type the version is written for; omitted, the version keeps the shown
+   version's type. A type differing from the card's original sticks to the version, so that a
+   later retouch never sends Basic fields under the Cloze type (specs/workspace.md#editing). */
 function pushVersion(card, fields, by, rationale, model) {
+  var effective = model || shownModel(card);
   var v = { fields: Object.assign({}, fields), by: by, rationale: rationale || "" };
-  if (model) v.model = model;
+  if (effective !== card.model) v.model = effective;
   card.versions.push(v);
   card.vi = card.versions.length - 1;
   card.deleted = false; // a rewrite supersedes a deletion (specs/chat.md#proposal-tools)
+}
+
+/* When a proposal omits `model`, infer it from the fields: if the field names don't match
+   `fallback` but do match exactly one known type, use that type.  Otherwise keep `fallback`.
+   Covers the case where Claude splits a Cloze into Basic cards without passing `model`. */
+function inferModel(fields, fallback) {
+  if (!fields || !S.models) return fallback;
+  var keys = Object.keys(fields);
+  if (!keys.length) return fallback;
+  var fbFields = fieldNames(fallback);
+  if (fbFields.length && keys.every((k) => fbFields.indexOf(k) >= 0)) return fallback;
+  // Fields don't match the fallback type — look for a type whose fields are a superset.
+  var match = null;
+  for (var name in S.models) {
+    var mf = S.models[name];
+    if (mf.length && keys.every((k) => mf.indexOf(k) >= 0)) {
+      if (match) return fallback; // ambiguous: two types match, keep the fallback
+      match = name;
+    }
+  }
+  return match || fallback;
 }
 
 /* The effective model for a card: the shown version's model override, or the card's original. */
@@ -286,7 +313,7 @@ function editField(card, name, value) {
   let v = shownVersion(card);
   if (v.by === "anki") {
     v = { fields: Object.assign({}, v.fields), by: "user", rationale: "" };
-    if (shownVersion(card).model) v.model = shownVersion(card).model;
+    if (shownModel(card) !== card.model) v.model = shownModel(card);
     card.versions.push(v);
     card.vi = card.versions.length - 1;
   }
@@ -340,7 +367,7 @@ async function landProposal(input, kind) {
     const fields = modelChanged
       ? Object.assign({}, inp.fields || {})
       : Object.assign({}, shownFields(card), inp.fields || {});
-    pushVersion(card, fields, "claude", inp.rationale, modelChanged ? newModel : null);
+    pushVersion(card, fields, "claude", inp.rationale, newModel);
     if (Array.isArray(inp.tags)) card.tags = inp.tags.slice();
     return "→ carte " + card.wid;
   }
@@ -352,15 +379,21 @@ async function landProposal(input, kind) {
     // turn it into an extra fragment card instead.
     const pieces = (inp.new_notes || []).slice();
     if (inp.original !== null && inp.original !== undefined) {
+      const origFields = (inp.original && inp.original.fields) || {};
+      const origModel = (inp.original && inp.original.model) || inferModel(origFields, shownModel(card));
+      const origModelChanged = origModel !== shownModel(card);
+      // When the original changes type, fields are complete (different schema); otherwise merge.
       pieces.unshift({
-        fields: Object.assign({}, shownFields(card), (inp.original && inp.original.fields) || {}),
-        model: null,
+        fields: origModelChanged
+          ? Object.assign({}, origFields)
+          : Object.assign({}, shownFields(card), origFields),
+        model: origModelChanged ? origModel : null,
       });
     }
     const made = pieces.map((nn) =>
       addDraftCard({
         parentWid: card.wid,
-        model: nn.model || card.model,
+        model: nn.model || inferModel(nn.fields, shownModel(card)),
         fields: nn.fields || {},
         tags: card.tags,
         deck: card.deck,
@@ -733,7 +766,7 @@ function planCard(c) {
       action: "create",
       parent_wid: schedParent,
       deck: c.deck,
-      model: c.model,
+      model: shownModel(c),
       fields: shownFields(c),
       tags: c.tags,
       source_ids: c.anchors || [],

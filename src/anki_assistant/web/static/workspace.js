@@ -461,14 +461,19 @@ function historyForServer() {
   const msgs = S.ws.chat;
   const lastAssistant = msgs.map((m) => m.who).lastIndexOf("assistant");
   msgs.forEach((m, i) => {
-    const bits = [textWithMarkers(m)];
+    const bits = [];
+    if (m.parts) {
+      m.parts.forEach((part) => {
+        if (part.type === "text") bits.push(textWithMarkers(part));
+        else if (part.type === "reading") bits.push("[lecture: " + (part.tool || "?") + (part.summary ? " → " + part.summary : "") + "]");
+        else if (part.type === "added") bits.push("[ajout: " + part.count + " notes]");
+      });
+    } else {
+      bits.push(textWithMarkers(m));
+    }
     if ((m.sources || []).length) {
       bits.push("[sources : " + m.sources.map((s) => "[" + s.n + "] " + s.url).join(", ") + "]");
     }
-    (m.reads || []).forEach((r) => {
-      bits.push("[lecture: " + (r.tool || "?") + (r.summary ? " → " + r.summary : "") + "]");
-    });
-    (m.added || []).forEach((a) => bits.push("[ajout: " + a.count + " notes]"));
     (m.proposals || []).forEach((p) => {
       if (p.landed) bits.push("[proposition: " + p.kind + " " + p.landed + "]");
       else if (isSourceProposal(p.kind)) {
@@ -540,11 +545,8 @@ async function sendChat() {
   ws.chat.push({ who: "user", text });
   const reply = {
     who: "assistant",
-    text: "",
-    cites: [],
+    parts: [],
     sources: [],
-    reads: [],
-    added: [],
     proposals: [],
     streaming: true,
     error: "",
@@ -554,6 +556,14 @@ async function sendChat() {
   ws.chatBusy = true;
   draw();
   scrollChatLogToBottom();
+
+  function currentTextPart() {
+    const last = reply.parts[reply.parts.length - 1];
+    if (last && last.type === "text") return last;
+    const part = { type: "text", text: "", cites: [] };
+    reply.parts.push(part);
+    return part;
+  }
 
   // Landing a proposal may fetch a note; keep the order of arrival with a promise chain.
   let landing = Promise.resolve();
@@ -571,21 +581,21 @@ async function sendChat() {
     await streamChat(payload, (name, data) => {
       const d = data || {};
       if (name === "text") {
-        reply.text += d.delta || "";
+        currentTextPart().text += d.delta || "";
         scheduleLogRefresh();
       } else if (name === "citation") {
-        // Arrives right after the text of the cited passage: the marker goes where the text ends.
-        reply.cites.push({ pos: reply.text.length, n: d.n, cited: d.cited_text || "" });
+        const tp = currentTextPart();
+        tp.cites.push({ pos: tp.text.length, n: d.n, cited: d.cited_text || "" });
         if (!reply.sources.some((s) => s.n === d.n)) {
           reply.sources.push({ n: d.n, url: d.url || "", title: d.title || "" });
         }
         scheduleLogRefresh();
       } else if (name === "reading") {
-        reply.reads.push({ tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
+        reply.parts.push({ type: "reading", tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
         scheduleLogRefresh();
       } else if (name === "added") {
-        const entry = { count: 0, rationale: d.rationale || "", error: "" };
-        reply.added.push(entry);
+        const entry = { type: "added", count: 0, rationale: d.rationale || "", error: "" };
+        reply.parts.push(entry);
         later(async () => {
           if (S.ws !== ws) return;
           try {
@@ -1384,20 +1394,11 @@ function linkify(text) {
   return (out + esc(text.slice(last))).replace(/\n/g, "<br>");
 }
 
-/* The reply text with a [n] marker after each cited passage, linking to the page.
-   User messages use plain linkify; assistant messages go through Markdown + math. */
-function bodyHtml(m) {
-  const text = m.text || "";
-  if (m.who === "user") return linkify(text);
-
-  // Assistant: embed citation HTML into the raw text, then render Markdown.
-  const byN = {};
-  (m.sources || []).forEach((s) => {
-    byN[s.n] = s;
-  });
+/* An assistant text segment: citation links embedded in the raw text, then Markdown + math. */
+function textSegmentHtml(text, cites, byN) {
   let full = "";
   let at = 0;
-  (m.cites || []).forEach((c) => {
+  (cites || []).forEach((c) => {
     const pos = Math.min(Math.max(c.pos, at), text.length);
     const s = byN[c.n] || {};
     full +=
@@ -1407,6 +1408,16 @@ function bodyHtml(m) {
   });
   full += text.slice(at);
   return renderMarkdown(full);
+}
+
+/* User messages use plain linkify; assistant messages go through Markdown + math. */
+function bodyHtml(m) {
+  if (m.who === "user") return linkify(m.text || "");
+  const byN = {};
+  (m.sources || []).forEach((s) => {
+    byN[s.n] = s;
+  });
+  return textSegmentHtml(m.text || "", m.cites || [], byN);
 }
 
 function sourcesHtml(m) {
@@ -1445,29 +1456,34 @@ function sourcesHtml(m) {
 
 function msgHtml(m, mi) {
   const who = m.who === "user" ? "toi" : "claude";
-  const body = bodyHtml(m) + (m.streaming ? '<span class="cursor">▍</span>' : "") + sourcesHtml(m);
-  const reads = (m.reads || [])
-    .map((r) => '<div class="reading">lit : ' + esc(r.tool || "?") + (r.summary ? " → " + linkify(r.summary) : "") + "</div>")
-    .join("");
-  const added = (m.added || [])
-    .map(
-      (a) =>
+  if (!m.parts) {
+    const body = bodyHtml(m) + (m.streaming ? '<span class="cursor">▍</span>' : "") + sourcesHtml(m);
+    return '<div class="msg ' + (m.who === "user" ? "user" : "assistant") + '"><div class="who">' + who + "</div>" + body + "</div>";
+  }
+  const byN = {};
+  (m.sources || []).forEach((s) => {
+    byN[s.n] = s;
+  });
+  let html = '<div class="msg assistant"><div class="who">' + who + "</div>";
+  m.parts.forEach((part) => {
+    if (part.type === "text") {
+      html += textSegmentHtml(part.text || "", part.cites || [], byN);
+    } else if (part.type === "reading") {
+      html += '<div class="reading">lit : ' + esc(part.tool || "?") + (part.summary ? " → " + linkify(part.summary) : "") + "</div>";
+    } else if (part.type === "added") {
+      html +=
         '<div class="reading">' +
-        (a.error ? "ajout refusé : " + esc(a.error) : "ajoute : " + a.count + " note(s)") +
-        (a.rationale ? " — " + esc(a.rationale) : "") +
-        "</div>",
-    )
-    .join("");
-  const props = (m.proposals || []).map((p, pi) => proposalHtml(p, mi, pi)).join("");
-  return (
-    '<div class="msg ' + (m.who === "user" ? "user" : "assistant") + '"><div class="who">' + who + "</div>" +
-    reads +
-    added +
-    body +
-    props +
-    (m.error ? '<div class="banner">' + esc(m.error) + "</div>" : "") +
-    "</div>"
-  );
+        (part.error ? "ajout refusé : " + esc(part.error) : "ajoute : " + part.count + " note(s)") +
+        (part.rationale ? " — " + esc(part.rationale) : "") +
+        "</div>";
+    }
+  });
+  if (m.streaming) html += '<span class="cursor">▍</span>';
+  html += sourcesHtml(m);
+  html += (m.proposals || []).map((p, pi) => proposalHtml(p, mi, pi)).join("");
+  if (m.error) html += '<div class="banner">' + esc(m.error) + "</div>";
+  html += "</div>";
+  return html;
 }
 
 /* Card proposals are one pointer line; source proposals keep their inline card. */

@@ -260,6 +260,10 @@ tu tires du web arrive avec la proposition de source qui le fonde, pas tout seul
 pas d'URL dans ta réponse : les passages tirés du web sont cités automatiquement (renvoi \
 numéroté vers la page, liste des sources sous la réponse) ; une URL en clair ne sert qu'à \
 recommander une page que tu n'as pas citée.
+- Ne lis une source (`read_source`) que si tu en as réellement besoin pour répondre : vérifier \
+un fait douteux, corriger une erreur factuelle, ou compléter un champ avec de l'information \
+absente de la carte et du contexte. Si la carte, les sources jointes et ta connaissance du \
+sujet suffisent, ne lis pas.
 - Les champs sont des valeurs de champ Anki **brutes** : HTML, marqueurs de cloze \
 `{{c1::réponse}}` ou `{{c1::réponse::indice}}` conservés. Produis les tiens dans la même syntaxe \
 et garde-la valide : numéros contigus à partir de c1, accolades équilibrées, au moins un cloze \

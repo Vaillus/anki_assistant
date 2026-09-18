@@ -29,7 +29,7 @@ graph LR
     Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
     Sources --> PDF["PDF files · Docling / pypdf"]
     Sources -- fetch --> Web["Web pages · httpx"]
-    API --> Chat["chat.py · Anthropic API"]
+    API --> Chat["chat/ · Anthropic API"]
 ```
 
 **Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
@@ -50,7 +50,7 @@ graph LR
 | `src/anki_assistant/pdf_cache.py` | Sidecar cache, structural index, Docling extraction | [sources.md](./sources.md) |
 | `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes | [review.md](./review.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
-| `src/anki_assistant/chat.py` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
+| `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
 | `src/anki_assistant/web/main.py` | FastAPI app factory, static mount, router includes | — |
 | `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…` | [review.md](./review.md#api) |

@@ -254,3 +254,59 @@ function typesetMath() {
     MathJax.typesetPromise().catch(() => {});
   }
 }
+
+/* ---------- chat markdown + math ---------- */
+
+/* marked configuration (runs once, on first call). */
+let _markedReady = false;
+function ensureMarked() {
+  if (_markedReady || !window.marked) return;
+  _markedReady = true;
+  marked.use({ breaks: true, gfm: true });
+}
+
+/* Render Markdown with LaTeX math protection for assistant chat messages.
+   Math expressions are extracted before Markdown processing and restored after,
+   with dollar-sign delimiters converted to backslash ones that MathJax recognizes. */
+function renderMarkdown(text) {
+  if (!window.marked) return linkify(text);
+  ensureMarked();
+
+  var placeholders = [];
+  var src = String(text || "");
+
+  function protect(re, display) {
+    src = src.replace(re, function (m) {
+      var i = placeholders.length;
+      placeholders.push({ text: m, display: display });
+      return display
+        ? "\n\n<div data-mph=\"" + i + "\"></div>\n\n"
+        : "<span data-mph=\"" + i + "\"></span>";
+    });
+  }
+
+  // Display math first (greedy), then inline — order matters.
+  protect(/\$\$([\s\S]+?)\$\$/g, true);
+  protect(/\\\[[\s\S]+?\\\]/g, true);
+  protect(/\[\$\$\][\s\S]+?\[\/\$\$\]/g, true);
+  protect(/(?<![\\$])\$(?!\$|\s)([^$]+?)(?<!\s)\$/g, false);
+  protect(/\\\([\s\S]+?\\\)/g, false);
+  protect(/\[\$\][\s\S]+?\[\/\$\]/g, false);
+
+  var html = marked.parse(src);
+
+  // Restore math, normalising dollar delimiters to backslash ones.
+  html = html.replace(/<(?:div|span) data-mph="(\d+)"><\/(?:div|span)>/g, function (_, id) {
+    var p = placeholders[Number(id)];
+    var m = p.text;
+    if (m.startsWith("$$") && m.endsWith("$$")) return "\\[" + m.slice(2, -2) + "\\]";
+    if (m.startsWith("$") && m.endsWith("$")) return "\\(" + m.slice(1, -1) + "\\)";
+    return m;
+  });
+
+  // External links open in a new tab (citation <a> tags already have target="_blank").
+  html = html.replace(/<a href="(https?:\/\/[^"]*)"(?![^>]*target=)/g,
+    '<a href="$1" target="_blank" rel="noopener"');
+
+  return html;
+}

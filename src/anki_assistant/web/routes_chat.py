@@ -257,6 +257,8 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
             raise KeyError(f"source inconnue : {source_id}")
         return source, source.text(store.vault)
 
+    note_types = anki.model_names_and_fields()
+
     async def body_stream() -> AsyncIterator[str]:
         events = stream_chat(
             client,
@@ -268,6 +270,7 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
             load_source,
             read_tools=read_tools_for(anki, store, body.deck, load_source),
             flagged_count=body.flagged_count,
+            note_types=note_types,
         )
         async for event in events:
             yield _sse(event)

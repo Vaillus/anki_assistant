@@ -4,6 +4,8 @@
 
 Three parts: a scrolling **log** of messages and tool-call lines (reading summaries, pointer lines, source-proposal cards), a **chips row** for attaching sources to the context, and a **message box** with the model id and « Envoyer ». The **client** is the browser; the **server** is the local FastAPI process — "server" never means Anthropic's side.
 
+Within a single assistant message, text segments, reading summaries and added-notes lines render in the order they arrive during the [tool loop](#the-tool-loop) — a read that happens between two stretches of text appears between them, not above all text. Proposals stay grouped at the bottom of the message.
+
 A **conversation** is the message log plus the sources attached to it. It belongs to one workspace: it starts empty when the workspace opens and is dropped when the workspace closes. The conversation serves the [workspace](./workspace.md).
 
 When no `ANTHROPIC_API_KEY` is configured, the pane shows a banner and disables the input. The model is set by `ANKI_CHAT_MODEL` (default `claude-opus-4-6`); `GET /api/chat/status` reports both.
@@ -12,15 +14,15 @@ When no `ANTHROPIC_API_KEY` is configured, the pane shows a banner and disables 
 
 The server keeps nothing between requests. On every **turn** — one user message and the reply to it — the client sends the whole conversation and the current state of every card, and the server rebuilds the **system prompt** from four blocks:
 
-1. **Standing instructions** — reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; use the proposal tools rather than describing changes in prose; target [active](./workspace.md#card-head) cards by [workspace id](./workspace.md#cards); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
+1. **Standing instructions** — reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; **call** the proposal tools rather than describing changes in prose; the bracket markers that appear in the conversation history (`[proposition: …]`, `[lecture: …]`, `[ajout: …]`) are system-generated — never write them as text, only a tool call makes a proposal effective; target [active](./workspace.md#card-head) cards by [workspace id](./workspace.md#cards); only call `read_source` when genuinely needed (to verify a doubtful fact, correct an error, or fill in missing information); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
 
 2. **Corpus index** — one line per source of the deck's [corpus](./sources.md): id, kind, target, page range, and a ⚠ marker when the file is missing. Sources [anchored](./sources.md#anchors) to a card of the workspace are marked. PDF sources include a compact **structural index** (from the PDF's bookmarks or heuristic headings) so Claude knows which pages to target with `read_source`. No source text — that is what attaching and `read_source` are for.
 
 3. **Attached sources** — the full text of each source the user has attached (see [How source text enters context](#how-source-text-enters-context)). An attached source stays in every turn's prompt until the user removes it. Total attached text is capped at 150 000 characters; the cap is stated in the prompt.
 
-4. **Cards of the workspace** — every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace id, note id or « brouillon », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
+4. **Cards of the workspace** — a **note types** section listing every note type of the collection with its field names (so Claude can propose type conversions without a tool call), followed by every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace id, note id or « brouillon », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
 
-Blocks 1–3 are stable for the life of the workspace and marked for the API's prompt cache; a change on the workspace re-processes only block 4. Attaching or detaching a source invalidates the cache.
+Blocks 1–3 are stable for the life of the workspace; block 3 (attached sources) is marked for the API's prompt cache (`cache_control: ephemeral`). A change on the workspace re-processes only block 4. Attaching or detaching a source invalidates the cache.
 
 ### How source text enters context
 
@@ -44,7 +46,7 @@ Claude sees only what the system prompt pushes. Everything else it pulls through
 | `search_notes`  | The matching notes, in the shape controlled by `detail` (see below).                                 |
 | `get_notes`     | The full notes (raw field values, tags, flags, reason), in the same format as the cards in context.  |
 | `add_notes`     | The same text as `get_notes`, and the notes become cards of the workspace.                           |
-| `get_note_type` | Field names, card templates and CSS of a note type. When Claude needs information about a note type. |
+| `get_note_type` | Card templates and CSS of a note type. Field names are already in context (block 4); this tool is for inspecting the rendering details. |
 | `read_source`   | The source's text. Optional `pages` parameter (PDF only) overrides the source's page range.          |
 
 ### The tool loop
@@ -87,6 +89,14 @@ The API attaches a **citation** to each passage of the reply that draws on a web
 The standing instructions tell Claude not to paste URLs into its prose — citations already provide the link — except to recommend a page the reply did not quote from. The instructions also ask Claude to call `propose_add_source` whenever it cites a page that is a good reference for the deck. Independently of Claude, the Sources list shows a **« + corpus »** button next to every cited page that is not already in the corpus; clicking adds it via `POST /api/sources`.
 
 Web results are not replayed across turns: they are dropped like any other read and survive as bracket notation. Re-reading a page costs a round trip to the open web — so `web_fetch` on something worth keeping is a reason to propose it as a source rather than fetch it twice.
+
+### Message rendering
+
+**User messages** are plain text with HTML escaping, URL linkification, and newlines converted to `<br>`.
+
+**Assistant messages** go through a Markdown pipeline (marked.js, GFM with line breaks) that renders headings, bold, italic, lists, code blocks, tables, and blockquotes. URLs are autolinked by GFM and open in a new tab. Citation `[n]` markers are embedded as HTML before Markdown processing and survive as inline elements.
+
+**Math in assistant messages.** Six delimiter styles are supported: `\(…\)`, `\[…\]`, `[$]…[/$]`, `[$$]…[/$$]`, `$…$`, and `$$…$$`. Math expressions are extracted before Markdown processes the text (so backtick escaping or list formatting cannot break them) and restored after, with dollar-sign delimiters normalised to `\(…\)` / `\[…\]` — the backslash forms MathJax already recognises. The field [rendering transform](./review.md#rendering) is unaffected: it does not use Markdown and does not gain dollar-sign delimiters.
 
 ## Proposal tools
 
@@ -133,4 +143,4 @@ Nothing else in the chat writes to Anki; undo lives in the [workspace](./workspa
 
 ## Out of scope for v1
 
-Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).
+Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through the note-types listing and `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).

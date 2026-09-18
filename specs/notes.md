@@ -29,6 +29,12 @@ The app does not hardcode note type names — it iterates whatever fields Anki d
 
 Other types work — the app iterates whatever fields the type declares — but the review queue, the workspace and the chat prompt are designed around these two.
 
+## Effective type
+
+In the [workspace](./workspace.md), a card's note type can change across [versions](./workspace.md#versions). The **effective type** of a version is its note type — it decides which fields the version has and is the type [written to Anki](./workspace.md#validation) when the user validates.
+
+The original fields from Anki (**v0**) are always of the note's original type. A [proposal](./chat.md#proposal-tools) that names a different type sets a new effective type for that version, and the version's fields are the complete set of the new type — not a merge with the previous version's fields. A version that does not name a type — a [hand edit](./workspace.md#editing), a proposal without `model`, or a proposal naming the same type — inherits the effective type of the version it starts from. [Fragments](./workspace.md#split) inherit the parent card's effective type unless the proposal names another.
+
 ## Reason (Back Extra)
 
 `Back Extra` is the only field name the code knows by name. When a flagged note has a `Back Extra` field, its plain-text value is the **reason** — the text displayed prominently as "why this was flagged" and included in Claude's context. If the note type has no `Back Extra` field, or the note is not flagged, the reason is empty.

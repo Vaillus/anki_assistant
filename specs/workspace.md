@@ -100,7 +100,7 @@ Click on a field to edit: the field becomes a textarea holding the raw value, fo
 
 Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « éditée ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version keeps its rationale and gains the « éditée » mark.
 
-A `propose_edit` with a different model replaces the entire field set with the target type's fields ([chat.md § Proposal tools](./chat.md#proposal-tools)); the card head shows the effective type with a ⇄ indicator. The **effective type** is a property of the version, and every later version inherits it: a retouch by Claude without `model`, or naming the same type, and a hand edit keep the type of the version they start from. Only a proposal naming another type changes it again, and only v0 is ever of the original type. The plan sends the shown version's type, for a draft as for an existing note.
+A `propose_edit` with a different model replaces the entire field set with the new type's fields; the card head shows the [effective type](./notes.md#effective-type) with a ⇄ indicator. The plan sends the shown version's effective type, for a draft as for an existing note.
 
 ### Versions
 
@@ -112,7 +112,7 @@ A dropped version is gone from the workspace. The conversation notes the rejecti
 
 ### Split
 
-`propose_split` on a card marks it deleted and yields one **fragment** card per note in the proposal — the one it would leave on the original included, when there is one — each linked to that card as its **parent**. Fragments inherit the parent's note type (unless the proposal names another), tags, deck and [anchors](./sources.md#anchors). Their **scheduling state** (interval, due date, ease, review count, lapses) is copied at validation from the most-reviewed card of the nearest ancestor that is an existing note.
+`propose_split` on a card marks it deleted and yields one **fragment** card per note in the proposal — the one it would leave on the original included, when there is one — each linked to that card as its **parent**. Fragments inherit the parent's [effective type](./notes.md#effective-type) (unless the proposal names another), tags, deck and [anchors](./sources.md#anchors). Their **scheduling state** (interval, due date, ease, review count, lapses) is copied at validation from the most-reviewed card of the nearest ancestor that is an existing note.
 
 Fragments are ordinary draft cards afterward: Claude can target one for a retouch or split it again, the user can edit or drop it.
 

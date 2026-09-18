@@ -12,7 +12,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 
 | File | Concept |
 |---|---|
-| [notes.md](./notes.md) | Note, card, note type, field, reason, field syntax |
+| [notes.md](./notes.md) | Note, card, note type, effective type, field, reason, field syntax |
 | [review.md](./review.md) | The three-column page: deck tree, queue, decisions, rendering, keyboard |
 | [sources.md](./sources.md) | Corpus, source, anchors, extracted text, vault writes, Source tab |
 | [workspace.md](./workspace.md) | The overlay: cards, versions, split, flag toggle, validation, undo |

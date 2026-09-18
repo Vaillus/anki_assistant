@@ -447,8 +447,9 @@ def read_tool_defs() -> list[dict[str, Any]]:
         {
             "name": "get_note_type",
             "description": (
-                "Lire un type de note : ses champs, ses templates de carte (recto / verso) et "
-                "son CSS."
+                "Lire les templates de carte (recto / verso) et le CSS d'un type de note. "
+                "Les noms de champs sont déjà dans le contexte (section « Types de notes ») ; "
+                "cet outil sert à inspecter le rendu."
             ),
             "input_schema": _obj(
                 {"model": {"type": "string", "description": "Nom du type de note."}},

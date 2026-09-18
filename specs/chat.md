@@ -4,6 +4,8 @@
 
 Three parts: a scrolling **log** of messages and tool-call lines (reading summaries, pointer lines, source-proposal cards), a **chips row** for attaching sources to the context, and a **message box** with the model id and « Envoyer ». The **client** is the browser; the **server** is the local FastAPI process — "server" never means Anthropic's side.
 
+Within a single assistant message, text segments, reading summaries and added-notes lines render in the order they arrive during the [tool loop](#the-tool-loop) — a read that happens between two stretches of text appears between them, not above all text. Proposals stay grouped at the bottom of the message.
+
 A **conversation** is the message log plus the sources attached to it. It belongs to one workspace: it starts empty when the workspace opens and is dropped when the workspace closes. The conversation serves the [workspace](./workspace.md).
 
 When no `ANTHROPIC_API_KEY` is configured, the pane shows a banner and disables the input. The model is set by `ANKI_CHAT_MODEL` (default `claude-opus-4-6`); `GET /api/chat/status` reports both.

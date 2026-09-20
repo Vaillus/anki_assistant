@@ -54,11 +54,13 @@ function deckColumn() {
     '<div class="col-head">' +
     '<img class="logo" src="/static/star.svg" alt="" width="20" height="20">' +
     "<h2>Decks</h2><span class=\"grow\"></span>" +
+    '<button class="ghost" data-act="new-deck" title="Nouveau paquet">+</button>' +
     '<button class="ghost" data-act="alldecks">' +
     (S.showAllDecks ? "flagged only" : "all") +
     "</button>" +
     themePicker() +
     "</div>" +
+    newDeckInput() +
     rows +
     "</div>"
   );
@@ -90,6 +92,23 @@ function themePicker() {
     group("dark", "dark") +
     group("light", "light") +
     "</select>"
+  );
+}
+
+function newDeckInput() {
+  if (!S.newDeck) return "";
+  var opts = (S.decks || []).map(function (d) {
+    return '<option value="' + esc(d.name) + '">';
+  }).join("");
+  return (
+    '<div class="new-deck-form">' +
+    '<input data-input="new-deck" data-focus="new-deck" list="deck-parents" ' +
+    'placeholder="Parent::Nouveau paquet" value="' + esc(S.newDeck.value || "") + '">' +
+    '<datalist id="deck-parents">' + opts + '</datalist>' +
+    (S.newDeck.error
+      ? '<div class="new-deck-error">' + esc(S.newDeck.error) + '</div>'
+      : '') +
+    '</div>'
   );
 }
 

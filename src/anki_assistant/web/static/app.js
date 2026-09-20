@@ -147,6 +147,49 @@ async function keepNote(noteId) {
   }
 }
 
+/* ---------------- create deck (specs/review.md#creating-a-deck) ---------------- */
+
+async function submitNewDeck() {
+  if (!S.newDeck) return;
+  var name = (S.newDeck.value || "").trim();
+  if (!name) { S.newDeck.error = "Nom vide"; draw(); return; }
+  var exists = (S.decks || []).some(function (d) { return d.name === name; });
+  if (exists) { S.newDeck.error = "Ce paquet existe déjà"; draw(); return; }
+  S.busy = true;
+  S.newDeck.error = "";
+  draw();
+  try {
+    await API.createDeck(name);
+    S.newDeck = null;
+    S.busy = false;
+    await loadDecks();
+    S.showAllDecks = true;
+    await selectDeck(name);
+  } catch (e) {
+    S.busy = false;
+    if (e.status === 409) S.newDeck.error = "Ce paquet existe déjà";
+    else S.newDeck.error = e.message;
+    draw();
+  }
+}
+
+async function deleteDeck(name) {
+  if (!confirm("Supprimer le paquet « " + name + " » et toutes ses cartes ?")) return;
+  S.busy = true;
+  draw();
+  try {
+    await API.deleteDeck(name);
+    if (S.deck === name) { S.deck = null; S.notes = null; S.corpus = null; }
+    S.busy = false;
+    await loadDecks();
+    draw();
+  } catch (e) {
+    S.busy = false;
+    S.error = e.message;
+    draw();
+  }
+}
+
 /* ---------------- delegated events ---------------- */
 
 document.addEventListener("click", (e) => {
@@ -208,6 +251,10 @@ document.addEventListener("click", (e) => {
     saveNewSource();
   } else if (act === "open-pdf") {
     API.openSourceFile(el.getAttribute("data-id")).catch(() => {});
+  } else if (act === "new-deck") {
+    S.newDeck = { value: "", error: "" };
+    S.refocus = "new-deck";
+    draw();
   }
 });
 
@@ -216,7 +263,11 @@ document.addEventListener("input", (e) => {
   if (!el) return;
   const key = el.getAttribute("data-input");
   if (key === "theme") {
-    setTheme(el.value); // reachable from behind the overlay, so it comes before the guards
+    setTheme(el.value);
+    return;
+  }
+  if (key === "new-deck") {
+    if (S.newDeck) S.newDeck.value = el.value;
     return;
   }
   if (S.ws) {
@@ -255,6 +306,52 @@ document.addEventListener("focusout", (e) => {
   if (el && el.getAttribute && el.getAttribute("data-input") === "ws-field") wsBlur(el);
 });
 
+/* ---------------- context menu (specs/review.md#creating-a-deck) ---------------- */
+
+document.addEventListener("contextmenu", function (e) {
+  var el = e.target.closest(".deck[data-deck]");
+  if (!el || S.ws) return;
+  e.preventDefault();
+  // Remove any existing menu
+  var old = document.getElementById("ctx-menu");
+  if (old) old.remove();
+  var deckName = el.getAttribute("data-deck");
+  var menu = document.createElement("div");
+  menu.id = "ctx-menu";
+  menu.className = "ctx-menu";
+  menu.innerHTML =
+    '<div class="ctx-item" data-act="ctx-new-child" data-deck="' + esc(deckName) + '">' +
+    "Nouveau sous-paquet</div>" +
+    '<div class="ctx-item danger" data-act="ctx-delete-deck" data-deck="' + esc(deckName) + '">' +
+    "Supprimer le paquet</div>";
+  menu.style.left = e.clientX + "px";
+  menu.style.top = e.clientY + "px";
+  document.body.appendChild(menu);
+  function dismiss() {
+    menu.remove();
+    document.removeEventListener("click", dismiss, true);
+    document.removeEventListener("contextmenu", dismiss, true);
+  }
+  setTimeout(function () {
+    document.addEventListener("click", dismiss, true);
+    document.addEventListener("contextmenu", dismiss, true);
+  }, 0);
+  menu.addEventListener("click", function (ev) {
+    var item = ev.target.closest("[data-act]");
+    if (!item) return;
+    dismiss();
+    var act = item.getAttribute("data-act");
+    var deck = item.getAttribute("data-deck");
+    if (act === "ctx-new-child") {
+      S.newDeck = { value: deck + "::", error: "" };
+      S.refocus = "new-deck";
+      draw();
+    } else if (act === "ctx-delete-deck") {
+      deleteDeck(deck);
+    }
+  });
+});
+
 /* ---------------- keyboard ---------------- */
 
 document.addEventListener("keydown", (e) => {
@@ -282,7 +379,12 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  if (inField) return; // every key belongs to the field
+  if (inField && active.getAttribute("data-input") === "new-deck") {
+    if (e.key === "Enter") { e.preventDefault(); submitNewDeck(); }
+    else if (e.key === "Escape") { e.preventDefault(); S.newDeck = null; draw(); }
+    return;
+  }
+  if (inField) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
 
   if (e.key === "j" || e.key === "ArrowDown") {

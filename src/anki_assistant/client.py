@@ -90,6 +90,14 @@ class AnkiClient:
     def deck_names_and_ids(self) -> dict[str, int]:
         return self.invoke("deckNamesAndIds")
 
+    def create_deck(self, name: str) -> int:
+        """Create a deck (and any intermediate parents). Returns the deck id."""
+        return int(self.invoke("createDeck", deck=name))
+
+    def delete_deck(self, name: str, *, cards_too: bool = False) -> None:
+        """Delete a deck. When *cards_too* is False, cards move to Default."""
+        self.invoke("deleteDecks", decks=[name], cardsToo=cards_too)
+
     def deck_stats(self, *deck_names: str) -> dict[str, Any]:
         """Per-deck counts (new/learn/review/total). Keyed by deck id as a string."""
         return self.invoke("getDeckStats", decks=list(deck_names))

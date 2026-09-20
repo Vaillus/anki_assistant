@@ -17,6 +17,19 @@ Column 1 lists every deck as a row indented by its depth in the `::` hierarchy. 
 
 By default only decks with a rolled-up count above zero are shown; a toggle shows all decks. Selecting a deck loads its queue (column 2) and its Source tab (column 3).
 
+### Creating a deck
+
+Two entry points, same outcome:
+
+1. **Header button** — a `+` button in the deck tree header, next to the toggle. Clicking it opens an inline input at the top of the deck list where the user types the full deck name. An autocomplete dropdown suggests existing deck paths as the user types, so they can pick a parent prefix (e.g. selecting `Médecine::Cardio` and then typing `::Arythmies`).
+2. **Context menu** — right-clicking a deck row opens a context menu with two items: "Nouveau sous-paquet" (opens the inline input pre-filled with the right-clicked deck's name followed by `::`) and "Supprimer le paquet" (deletes the deck and its cards after a `confirm()` prompt).
+
+Pressing `Entrée` in the input submits; `Échap` cancels and closes the input. The input is dismissed after a successful creation or on cancel.
+
+**Validation.** Before creating, the frontend checks that the name is non-empty and does not match an existing deck name (case-sensitive, against the loaded deck list). On conflict the input shows an inline error ("Ce paquet existe déjà") and stays open.
+
+**Creation.** `POST /api/decks` with `{ "name": "<full deck name>" }`. The server calls AnkiConnect's `createDeck`, which creates intermediate decks if needed. Returns the created deck name. On success the deck tree refreshes and the new deck is selected.
+
 ## Queue (column 2)
 
 The **queue** is the list of notes for the selected deck and all its sub-decks. Each note carries a `deck` field saying where it actually lives. Flagged notes come first, then unflagged; within each group by note id ascending (creation order). The queue shows flagged notes only by default; a toggle ("show all") shows the whole deck, unflagged notes at 55 % opacity. When the queue is empty the column shows "Nothing to review here."
@@ -74,6 +87,8 @@ All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note �
 | Route | Purpose |
 |---|---|
 | `GET /api/decks` | All decks with flagged counts and source kinds |
+| `POST /api/decks` | Create a new deck |
+| `DELETE /api/decks` | Delete a deck (cards move to Default) |
 | `GET /api/notes?deck=` | Notes for a deck and its sub-decks |
 | `GET /api/notes/{id}` | One note |
 | `POST /api/notes/lookup` | Several notes by id |

@@ -38,6 +38,8 @@ const q = encodeURIComponent;
 const API = {
   // review
   decks: () => jfetch("/api/decks"),
+  createDeck: (name) => jfetch("/api/decks", jsonBody("POST", { name })),
+  deleteDeck: (name) => jfetch("/api/decks?name=" + q(name), { method: "DELETE" }),
   notes: (deck) => jfetch("/api/notes?deck=" + q(deck)),
   note: (id) => jfetch("/api/notes/" + id),
   models: () => jfetch("/api/models"),

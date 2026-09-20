@@ -79,6 +79,6 @@ def undo_workspace(request: Request) -> ApplyReport:
 
 @router.get("/workspace/undo")
 def undo_status(request: Request) -> dict[str, bool]:
-    """Whether « Annuler la dernière validation » has something to revert."""
+    """Whether « Undo last validation » has something to revert."""
     snap = getattr(request.app.state, "last_validation", None)
     return {"available": snap is not None and not snap.deleted}

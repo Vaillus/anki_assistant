@@ -302,13 +302,13 @@ def create(
     fields: Mapping[str, str],
     tags: Sequence[str] | None = None,
 ) -> NoteView:
-    """Créer: add a sibling note. The note it was created from is left untouched, flag included."""
+    """Create: add a sibling note. The note it was created from is left untouched, flag included."""
     new_id = client.add_note(deck=deck, model=model, fields=dict(fields), tags=list(tags or []))
     return get_note(client, new_id)
 
 
 def move(client: AnkiClient, note_id: int, deck: str) -> NoteView:
-    """Déplacer: send every card of the note to another deck and resolve it."""
+    """Move: send every card of the note to another deck and resolve it."""
     note = _fetch_note(client, note_id)
     card_ids = list(note.card_ids) or client.note_card_ids(note_id)
     if card_ids:

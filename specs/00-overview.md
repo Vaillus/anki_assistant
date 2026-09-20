@@ -34,7 +34,7 @@ graph LR
 
 **Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
 
-**Who writes to Anki.** Two paths only: « Garder » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Valider » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)). The server keeps one snapshot for « Annuler la dernière validation ».
+**Who writes to Anki.** Two paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)). The server keeps one snapshot for « Undo last validation ».
 
 **Who writes to the vault.** Two operations only, both behind a user click: create a file, replace a passage ([sources.md § Writing to the vault](./sources.md#writing-to-the-vault)).
 
@@ -65,4 +65,4 @@ graph LR
 
 ## Conventions
 
-French UI copy, English code and specs.
+English UI copy, code and specs.

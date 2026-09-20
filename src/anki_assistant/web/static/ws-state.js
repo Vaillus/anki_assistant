@@ -216,7 +216,7 @@ async function closeWorkspace(force) {
   const n = wsDirty();
   if (!force && n > 0) {
     const ok = window.confirm(
-      n + " carte(s) modifiée(s) non validée(s) seront perdues. Fermer quand même ?",
+      n + " modified card(s) not yet applied will be lost. Close anyway?",
     );
     if (!ok) return;
   }
@@ -333,18 +333,18 @@ function editField(card, name, value) {
 
 /* ---------------- proposals landing on the workspace ---------------- */
 
-/* `target` is a workspace id or an Anki note id in digits; an absent note is fetched and added
-   (specs/chat.md#proposal-tools). Throws with a French message when it cannot. */
+/* `target` is a workspace number or an Anki note id in digits; an absent note is fetched and
+   added (specs/chat.md#proposal-tools). */
 async function resolveTarget(target) {
   const t = String(target === null || target === undefined ? "" : target).trim();
   const byWid = wsCard(t);
   if (byWid) return byWid;
-  if (!/^\d+$/.test(t)) throw new Error("cible inconnue : " + t);
+  if (!/^\d+$/.test(t)) throw new Error("unknown target: " + t);
   const nid = Number(t);
   const byNote = wsCardByNote(nid);
   if (byNote) return byNote;
   const notes = await lookupNotes([nid]);
-  if (!notes.length) throw new Error("note introuvable : #" + t);
+  if (!notes.length) throw new Error("note not found: #" + t);
   return addNoteCard(notes[0]);
 }
 
@@ -352,7 +352,7 @@ async function lookupNotes(ids) {
   const missing = ids.filter((id) => !wsCardByNote(id));
   if (!missing.length) return [];
   if (S.ws.cards.length + missing.length > MAX_CARDS) {
-    throw new Error("espace de travail plein (" + MAX_CARDS + " cartes)");
+    throw new Error("workspace full (" + MAX_CARDS + " cards)");
   }
   return (await API.lookup(missing)) || [];
 }
@@ -379,7 +379,7 @@ async function landProposal(input, kind) {
       : Object.assign({}, shownFields(card), inp.fields || {});
     pushVersion(card, fields, "claude", inp.rationale, newModel);
     if (Array.isArray(inp.tags)) card.tags = inp.tags.slice();
-    return "→ carte " + card.wid;
+    return "→ card " + card.wid;
   }
   if (kind === "split") {
     const card = await resolveTarget(inp.target);
@@ -424,14 +424,14 @@ async function landProposal(input, kind) {
       anchors: inp.source_ids || (root && root.anchors) || [],
       rationale: inp.rationale,
     });
-    return "→ carte " + card.wid;
+    return "→ card " + card.wid;
   }
   if (kind === "move") {
     const card = await resolveTarget(inp.target);
     card.moveTo = inp.deck || null;
-    return "→ carte " + card.wid + " → " + esc(inp.deck || "?");
+    return "→ card " + card.wid + " → " + esc(inp.deck || "?");
   }
-  throw new Error("proposition inconnue : " + kind);
+  throw new Error("unknown proposal: " + kind);
 }
 
 async function landAdded(noteIds) {
@@ -475,23 +475,23 @@ function historyForServer() {
     if (m.parts) {
       m.parts.forEach((part) => {
         if (part.type === "text") bits.push(textWithMarkers(part));
-        else if (part.type === "reading") bits.push("[lecture: " + (part.tool || "?") + (part.summary ? " → " + part.summary : "") + "]");
-        else if (part.type === "added") bits.push("[ajout: " + part.count + " notes]");
+        else if (part.type === "reading") bits.push("[read: " + (part.tool || "?") + (part.summary ? " → " + part.summary : "") + "]");
+        else if (part.type === "added") bits.push("[added: " + part.count + " notes]");
       });
     } else {
       bits.push(textWithMarkers(m));
     }
     if ((m.sources || []).length) {
-      bits.push("[sources : " + m.sources.map((s) => "[" + s.n + "] " + s.url).join(", ") + "]");
+      bits.push("[sources: " + m.sources.map((s) => "[" + s.n + "] " + s.url).join(", ") + "]");
     }
     (m.proposals || []).forEach((p) => {
-      if (p.landed) bits.push("[proposition: " + p.kind + " " + p.landed + "]");
+      if (p.landed) bits.push("[proposal: " + p.kind + " " + p.landed + "]");
       else if (isSourceProposal(p.kind)) {
-        bits.push("[proposition: " + p.kind + (p.applied ? " (appliquée)" : "") + "]");
+        bits.push("[proposal: " + p.kind + (p.applied ? " (applied)" : "") + "]");
       }
     });
     if (i === lastAssistant) {
-      S.ws.rejected.forEach((r) => bits.push("[version rejetée : " + r + "]"));
+      S.ws.rejected.forEach((r) => bits.push("[rejected version: " + r + "]"));
     }
     const content = bits.filter((x) => x && x.trim()).join("\n");
     if (!content.trim()) return;

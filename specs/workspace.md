@@ -1,6 +1,6 @@
 # Workspace
 
-> The overlay that opens on a note: cards on the left, a conversation with Claude on the right, one « Valider » that writes everything at once.
+> The overlay that opens on a note: cards on the left, a conversation with Claude on the right, one « Apply » that writes everything at once.
 
 General terms (*note*, *Anki card*, *note type*, *field*, *reason*) are defined in [notes.md](./notes.md). What Claude sees and the tools it has: [chat.md](./chat.md).
 
@@ -8,7 +8,7 @@ The workspace serves the review queue ([review.md](./review.md)).
 
 ## Opening and closing
 
-The workspace opens on a note from the queue (click, or `Entrée` with the note selected), or **without a note** from the empty-queue state (« Ouvrir l'espace de travail »). The page behind is dimmed and stops reacting to keys. Only one workspace at a time.
+The workspace opens on a note from the queue (click, or `Enter` with the note selected), or **without a note** from the empty-queue state (« Open workspace »). The page behind is dimmed and stops reacting to keys. Only one workspace at a time.
 
 Opening on a note builds the **root** card — the note the workspace was opened on — and starts an empty conversation. The root's deck is the **current deck** for the prompt and for `search_notes`.
 
@@ -19,13 +19,13 @@ The conversation belongs to the workspace and dies with it.
 Closing:
 
 - **× (top right) or `Esc`** discards everything: cards, versions, conversation. When the user changed something by hand — a version, a state, a flag toggled, a comment — a confirmation says how many cards will lose their changes; the implicit resolution of the root does not count. Nothing is written to Anki either way.
-- **« Valider »** writes the changes ([Validation](#validation)) and then closes.
+- **« Apply »** writes the changes ([Validation](#validation)) and then closes.
 
 After closing, the queue and deck counts are re-fetched. After a validation the next flagged note is selected; after a discard the selection stays on the root.
 
 Nothing is persisted: a page reload drops an open workspace. Past workspaces are not kept.
 
-While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while a field or the message box is focused only returns the focus; a second `Esc` closes. `Entrée` sends the message (`Shift+Entrée` inserts a line break). No other workspace shortcut in v1.
+While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while a field or the message box is focused only returns the focus; a second `Esc` closes. `Enter` sends the message (`Shift+Enter` inserts a line break). No other workspace shortcut in v1.
 
 ## Cards
 
@@ -34,8 +34,8 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 ```
 ┌ 1 ──────────────────────────────────────────────────┐
 │ card head                                            │
-│  ● 1 #5262 Cloze  ⚑ à revoir  ← v1 / 2 →  [invalider]│
-│  tags: phd                      [supprimer] [→ …] [✂]│
+│  ● 1 #5262 Cloze  ⚑ to review  ← v1 / 2 →  [discard] │
+│  tags: phd                       [delete] [→ …] [✂] │
 ├──────────────────────────────────────────────────────┤
 │ card body                                            │
 │                                                      │
@@ -43,14 +43,14 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 │                                                      │
 │  rationale: « split c2 into its own note »           │
 │                                                      │
-│  ┌ user comment · raison du flag · c2 ────────────┐ │
-│  │ trop vague, à découper                          │ │
+│  ┌ user comment · flag reason · c2 ────────────────┐ │
+│  │ too vague, needs splitting                       │ │
 │  └─────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
   ┊ fragment link
 ┌ 2 (fragment of 1) ──────────────────────────────────┐
 │ card head                                            │
-│  ● 2 brouillon Cloze                                 │
+│  ● 2 draft Cloze                                     │
 │ card body                                            │
 │  Text:  {{c1::KKT}} is the special case when…       │
 └──────────────────────────────────────────────────────┘
@@ -58,7 +58,7 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 
 ### Layout
 
-The workspace is two panes: cards on the left (about 60 % of the width, scrolling on its own), the conversation on the right. The header holds the root's short id, the « vider Back Extra » toggle ([Validation](#validation)), the « Valider » button and the ×.
+The workspace is two panes: cards on the left (about 60 % of the width, scrolling on its own), the conversation on the right. The header holds the root's short id, the « clear Back Extra » toggle ([Validation](#validation)), the « Apply » button and the ×.
 
 Cards are listed root first, then in order of arrival. A [fragment](#split) is shown right after its parent, indented one level deeper, with a tree line joining it to its parent; a fragment's own fragments nest under it the same way, at any depth. Order never changes once a card is in.
 
@@ -68,17 +68,17 @@ One line, left to right:
 
 - **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity and is excluded from the chat context sent to the LLM.
 - **Card number** — the card's workspace number, bold and accent-colored.
-- **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, the tags, and « fragment de 1 » on a fragment.
-- **⚑ flag toggle** — outlined when off; filled, reading « ⚑ à revoir », when on.
-- **State badges** — « supprimée », « gardée », « → deck ».
+- **Identity** — « #5262 » for an existing note, « draft » for a draft, plus the note type, the deck when it differs from the current deck, the tags, and « fragment of 1 » on a fragment.
+- **⚑ flag toggle** — outlined when off; filled, reading « ⚑ to review », when on.
+- **State badges** — « deleted », « kept », « → deck ».
 - **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
-- **Actions** — « invalider »; « retirer », which removes the card from the workspace (and its fragments, when it has any) without touching Anki — a card that was never in the plan stays that way, and a card that was in the plan leaves it; on an existing note, « supprimer » / « restaurer » and « déplacer… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « scinde 1 : » is put in the message box, focused.
+- **Actions** — « discard »; « remove », which removes the card from the workspace (and its fragments, when it has any) without touching Anki — a card that was never in the plan stays that way, and a card that was in the plan leaves it; on an existing note, « delete » / « restore » and « move… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « split 1: » is put in the message box, focused.
 
-The flag toggle is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head — the card is drawn as the note will be, resolved — but stay in the user comment's label (« raison du flag · c2 ») and keep driving the question state of v0.
+The flag toggle is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head — the card is drawn as the note will be, resolved — but stay in the user comment's label (« flag reason · c2 ») and keep driving the question state of v0.
 
 ### Card body
 
-Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). The original version from Anki (**v0**) is shown in question state: flagged clozes hidden, « Révéler » to show them, as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full.
+Fields are rendered with the display renderer ([review.md § Rendering](./review.md#rendering)). The original version from Anki (**v0**) is shown in question state: flagged clozes hidden, « Reveal » to show them, as in the queue ([review.md § Question state](./review.md#question-state)). Every other version is shown in full.
 
 The **user comment** sits at the bottom, under the fields, in every version — the queue's reason callout ([review.md § Rendering](./review.md#rendering)), writable here. When the flag is off it is read-only and shows the reason as v0 held it ([notes.md § Reason](./notes.md#reason-back-extra)), with the flagged clozes in its label.
 
@@ -90,8 +90,8 @@ Under a version proposed by Claude, its rationale in one muted line.
 
 Applied at [validation](#validation); reversible until then.
 
-- **Flag** — whether the note is flagged *after* validation, the ⚑ toggle in the head. **Off** (the default) means resolved. **On** (« à revoir ») means the note keeps or receives a flag and its `Back Extra` is set to the comment. The root opens off — opening a workspace is resolving the note. Combines with an edit and a move. In the plan and the API, flag on = **deferred** (`defer`).
-- **Kept** — an untouched card (v0, tags unchanged), flagged in Anki, flag off: resolved without being edited — the workspace's « Garder » ([review.md § Decisions](./review.md#decisions)).
+- **Flag** — whether the note is flagged *after* validation, the ⚑ toggle in the head. **Off** (the default) means resolved. **On** (« to review ») means the note keeps or receives a flag and its `Back Extra` is set to the comment. The root opens off — opening a workspace is resolving the note. Combines with an edit and a move. In the plan and the API, flag on = **deferred** (`defer`).
+- **Kept** — an untouched card (v0, tags unchanged), flagged in Anki, flag off: resolved without being edited — the workspace's « Keep » ([review.md § Decisions](./review.md#decisions)).
 - **Moved** — carries a destination deck. Combines with an edit.
 - **Deleted** — an existing note is removed from Anki; a draft is simply never written. The card is struck through, not editable, and has no flag. A draft is deleted only by being [split](#split).
 
@@ -99,7 +99,7 @@ Applied at [validation](#validation); reversible until then.
 
 Click on a field to edit: the field becomes a textarea holding the raw value, focused, with no preview; blur closes it and the field is rendered again. The other fields stay rendered meanwhile. Field names are not editable; fields cannot be added or removed by hand.
 
-Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « éditée ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version keeps its rationale and gains the « éditée » mark.
+Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « edited ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version keeps its rationale and gains the « edited » mark.
 
 A `propose_edit` with a different note type replaces the entire field set with the new type's fields; the card head shows the version's [note type](./notes.md#note-type-across-versions) with a ⇄ indicator. The plan sends the shown version's note type, for a draft as for an existing note.
 
@@ -107,7 +107,7 @@ A `propose_edit` with a different note type replaces the entire field set with t
 
 A card's **versions** are a list. An existing note's card starts at **v0**, the values in Anki, read-only. A draft note has no v0: its first version is Claude's. Each proposal by Claude appends a version; the user's hand edits modify the shown version in place. The **shown version** is the one the arrows point at, and the one that counts for validation and for Claude's context ([chat.md § What Claude sees](./chat.md#what-claude-sees)).
 
-**« invalider »** drops the shown version; the previous one is shown (or the next, when a draft's first version was dropped). On an existing note it is offered on every version but v0. Dropping a draft's last version removes the card.
+**« discard »** drops the shown version; the previous one is shown (or the next, when a draft's first version was dropped). On an existing note it is offered on every version but v0. Dropping a draft's last version removes the card.
 
 A dropped version is gone from the workspace. The conversation notes the rejection in the history ([chat.md § What Claude remembers](./chat.md#what-claude-remembers-between-turns)).
 
@@ -130,13 +130,13 @@ Notes cannot be added by hand in v1.
 
 ## Conversation
 
-The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. Two differences in what is rendered: a proposal that lands on the workspace shows as a muted pointer line in the log (« → carte 3 »), not as a card; source proposals (`create_source`, `edit_source`) stay in the log with their « Appliquer » since they write into the vault on click, not at validation.
+The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. Two differences in what is rendered: a proposal that lands on the workspace shows as a muted pointer line in the log (« → card 3 »), not as a card; source proposals (`create_source`, `edit_source`) stay in the log with their « Apply » since they write into the vault on click, not at validation.
 
 ## Validation
 
 ### The button
 
-« Valider » carries the count of what it will do: « Valider · 2 modifiées · 3 créées · 1 supprimée · 1 gardée · 1 à revoir · 1 déplacée » (zero counts omitted); a card counts under every action it carries. Disabled when the plan is empty and during the write. When the plan deletes at least one note, a confirmation lists them. When a source Claude proposed was not applied ([Conversation](#conversation)), a confirmation warns that the notes anchored on it will lose that anchor.
+« Apply » carries the count of what it will do: « Apply · 2 edited · 3 created · 1 deleted · 1 kept · 1 deferred · 1 moved » (zero counts omitted); a card counts under every action it carries. Disabled when the plan is empty and during the write. When the plan deletes at least one note, a confirmation lists them. When a source Claude proposed was not applied ([Conversation](#conversation)), a confirmation warns that the notes anchored on it will lose that anchor.
 
 ### What is written
 
@@ -155,7 +155,7 @@ A draft note is created. An existing note's card becomes one action — deleted 
 
 An edit sends every field of the shown version, not just the ones that changed; the server writes them as-is.
 
-**« vider Back Extra »** (header toggle, on by default): every edited note that had a user comment gets `Back Extra` set to empty. Kept notes are not touched. Deferred notes are exempt: their `Back Extra` is the comment, whatever the toggle says.
+**« clear Back Extra »** (header toggle, on by default): every edited note that had a user comment gets `Back Extra` set to empty. Kept notes are not touched. Deferred notes are exempt: their `Back Extra` is the comment, whatever the toggle says.
 
 Whether a note *has* `Back Extra` — for the comment as for the clearing — is decided by the note type the edit writes, not the one the note had: an edit that turns a Cloze note into a Basic note neither clears nor sets a field Basic does not have, and a comment that cannot be written is reported.
 
@@ -167,7 +167,7 @@ On the first failure the write stops and a rollback is attempted: created notes 
 
 ### Undo
 
-The server keeps the state of every existing note before the write for the **last successful validation** only — one snapshot, overwritten by the next, gone when the server restarts. The queue header shows « Annuler la dernière validation » while one is available.
+The server keeps the state of every existing note before the write for the **last successful validation** only — one snapshot, overwritten by the next, gone when the server restarts. The queue header shows « Undo last validation » while one is available.
 
 Undo is **unavailable** when the validation deleted notes — a deleted note cannot be recreated with its history. It is **refused** when a note no longer holds the values the validation wrote, which means it was edited since; nothing is written then.
 

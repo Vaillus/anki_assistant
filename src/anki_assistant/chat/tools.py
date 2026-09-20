@@ -60,9 +60,7 @@ WEB_RESULTS: dict[str, str] = {
 
 # ------------------------------------------------------------------ schema helpers
 
-_FIELDS_DESC = (
-    "Valeurs de champ Anki brutes, par nom de champ. HTML autorisé, marqueurs de cloze conservés."
-)
+_FIELDS_DESC = "Raw Anki field values, by field name. HTML allowed, cloze markers preserved."
 
 
 def _fields_schema(description: str = _FIELDS_DESC) -> dict[str, Any]:
@@ -75,23 +73,23 @@ def _fields_schema(description: str = _FIELDS_DESC) -> dict[str, Any]:
 
 _RATIONALE = {
     "type": "string",
-    "description": "Une phrase, en français : pourquoi ce changement.",
+    "description": "One sentence, in the user's language: why this change.",
 }
 _TAGS = {
     "type": "array",
     "items": {"type": "string"},
-    "description": "Liste complète des tags après changement. Omettre pour ne pas y toucher.",
+    "description": "Complete tag list after the change. Omit to leave tags untouched.",
 }
 _TARGET = {
     "type": "string",
     "description": (
-        "Carte visée : son identifiant d'espace de travail (« w3 »), ou l'identifiant Anki en "
-        "chiffres d'une note qui n'est pas encore dans l'espace (elle y sera ajoutée)."
+        "Target card: its workspace identifier (« 3 »), or the Anki id (a number) of a note "
+        "not yet in the workspace (it will be added)."
     ),
 }
 _MODEL = {
     "type": "string",
-    "description": "Nom du type de note Anki. Omettre pour reprendre celui de la note de départ.",
+    "description": "Anki note type name. Omit to keep the starting note's type.",
 }
 
 
@@ -144,13 +142,13 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_edit",
             "description": (
-                "Proposer une réécriture d'une carte : une nouvelle version de la carte visée. "
-                "Ne renvoyer que les champs qui changent, en valeur brute complète ; les autres "
-                "champs de la version affichée sont repris tels quels. "
-                "Pour changer le type de note (ex. Cloze → Basic) : passer `model` avec le nom "
-                "du nouveau type et donner **tous** les champs du type cible (rien n'est repris "
-                "de l'ancienne version, les schémas sont différents). L'historique de la c1 est "
-                "conservé ; les c2+ deviennent orphelines jusqu'au prochain « Vérifier la base »."
+                "Propose a rewrite of a card: a new version of the target card. Return only "
+                "the fields that change, as complete raw values; the other fields of the "
+                "shown version are kept as is. "
+                "To change the note type (e.g. Cloze → Basic): pass `model` with the new "
+                "type's name and give **all** fields of the target type (nothing carries over "
+                "from the old version, the schemas differ). c1's scheduling history is kept; "
+                "c2+ become orphaned until the next « Check Database »."
             ),
             "input_schema": _obj(
                 {
@@ -158,14 +156,13 @@ def proposal_tools() -> list[dict[str, Any]]:
                     "model": {
                         "type": "string",
                         "description": (
-                            "Nouveau type de note (ex. « Basic »). Omettre pour garder le type "
-                            "actuel. Quand il change, `fields` doit donner tous les champs du "
-                            "type cible."
+                            "New note type (e.g. « Basic »). Omit to keep the current type. "
+                            "When it changes, `fields` must give all fields of the target type."
                         ),
                     },
                     "fields": _fields_schema(
-                        "Champs modifiés uniquement (ou tous les champs du type cible si `model` "
-                        "change). Valeurs brutes complètes. " + _FIELDS_DESC
+                        "Changed fields only (or all fields of the target type if `model` "
+                        "changes). Complete raw values. " + _FIELDS_DESC
                     ),
                     "tags": _TAGS,
                     "rationale": _RATIONALE,
@@ -176,21 +173,20 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_split",
             "description": (
-                "Proposer de couper une carte en plusieurs. Par défaut la note originale est "
-                "gardée et devient le premier fragment (donner tous ses champs dans "
-                "`original`) ; mettre `original` à null pour la marquer supprimée, chaque "
-                "fragment étant alors une nouvelle note. Les fragments apparaissent comme "
-                "des cartes brouillon sous la carte visée."
+                "Propose cutting a card into several. By default the original note is kept "
+                "and becomes the first fragment (give all its fields in `original`); set "
+                "`original` to null to mark it deleted, each fragment then being a new note. "
+                "Fragments appear as draft cards under the target card."
             ),
             "input_schema": _obj(
                 {
                     "target": _TARGET,
                     "original": {
                         "description": (
-                            "Champs de la note originale après découpe, ou null pour la supprimer. "
-                            "Toujours donner `model` (le type de note du fragment). "
-                            "Quand le type change (ex. Cloze → Basic), donner **tous** les champs "
-                            "du type cible (rien n'est repris de l'ancienne version)."
+                            "Fields of the original note after the split, or null to delete "
+                            "it. Always give `model` (the fragment's note type). When the type "
+                            "changes (e.g. Cloze → Basic), give **all** fields of the target "
+                            "type (nothing carries over from the old version)."
                         ),
                         "anyOf": [
                             _obj(
@@ -203,8 +199,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                     "new_notes": {
                         "type": "array",
                         "description": (
-                            "Notes à créer (tous leurs champs), dans le même deck et avec les "
-                            "mêmes tags que la carte visée. Toujours donner `model`."
+                            "Notes to create (all their fields), in the same deck and with the "
+                            "same tags as the target card. Always give `model`."
                         ),
                         "minItems": 1,
                         "items": _obj(
@@ -220,9 +216,9 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_create",
             "description": (
-                "Proposer une note en plus (tous ses champs), dans le deck courant, sans toucher "
-                "aux cartes existantes : une nouvelle carte brouillon. Les tags de la racine "
-                "sont repris automatiquement."
+                "Propose an additional note (all its fields), in the current deck, without "
+                "touching existing cards: a new draft card. The root's tags are carried over "
+                "automatically."
             ),
             "input_schema": _obj(
                 {
@@ -232,8 +228,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Sources (ids de l'index du corpus) dont la note est tirée : ses "
-                            "ancres. Omettre pour reprendre celles de la racine."
+                            "Sources (ids from the corpus index) the note is drawn from: its "
+                            "anchors. Omit to carry over the root's."
                         ),
                     },
                     "rationale": _RATIONALE,
@@ -244,15 +240,15 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_move",
             "description": (
-                "Proposer de déplacer une carte vers un autre deck (un badge sur la carte, "
-                "appliqué à la validation)."
+                "Propose moving a card to another deck (a badge on the card, applied on "
+                "validation)."
             ),
             "input_schema": _obj(
                 {
                     "target": _TARGET,
                     "deck": {
                         "type": "string",
-                        "description": "Deck de destination, nom complet avec les `::`.",
+                        "description": "Destination deck, full name with `::`.",
                     },
                     "rationale": _RATIONALE,
                 },
@@ -262,43 +258,42 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_add_source",
             "description": (
-                "Proposer d'ajouter au corpus du deck courant une source qui existe déjà : une "
-                "page web (son URL — le serveur la relit quand il en a besoin, rien n'est "
-                "copié), une note du vault ou un PDF sur disque. Typiquement après un web_fetch "
-                "sur une page qui mérite d'être gardée. Le résultat de l'outil donne "
-                "l'identifiant que la source aura une fois ajoutée : réutilise-le dans "
-                "`source_ids` de propose_create."
+                "Propose adding to the current deck's corpus a source that already exists: a "
+                "web page (its URL — the server re-reads it when needed, nothing is copied), a "
+                "vault note, or a PDF on disk. Typically after a web_fetch on a page worth "
+                "keeping. The tool result gives the id the source will carry once added: reuse "
+                "it in propose_create's `source_ids`."
             ),
             "input_schema": _obj(
                 {
                     "target": {
                         "type": "string",
                         "description": (
-                            "URL http(s) de la page, nom d'une note du vault (relatif à sa "
-                            "racine, sans `.md`) ou chemin d'un PDF. L'utilisateur peut le "
-                            "corriger avant d'appliquer."
+                            "http(s) URL of the page, name of a vault note (relative to its "
+                            "root, without `.md`), or path of a PDF. The user can correct it "
+                            "before applying."
                         ),
                     },
                     "kind": {
                         "type": "string",
                         "enum": ["web", "obsidian", "pdf"],
                         "description": (
-                            "Type de la source. Omettre pour le déduire de la cible (URL → web, "
-                            "`.pdf` → pdf, sinon obsidian)."
+                            "Kind of the source. Omit to infer it from the target (URL → web, "
+                            "`.pdf` → pdf, else obsidian)."
                         ),
                     },
                     "pages": {
                         "type": "string",
-                        "description": "PDF seulement : plage de pages, ex. « 12-19 », « 3-5,9 ».",
+                        "description": "PDF only: page range, e.g. « 12-19 », « 3-5,9 ».",
                     },
                     "note": {
                         "type": "string",
-                        "description": "Commentaire court affiché à côté de la source.",
+                        "description": "Short comment displayed next to the source.",
                     },
                     "anchor_note_ids": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "Notes Anki à ancrer à cette source une fois ajoutée.",
+                        "description": "Anki notes to anchor to this source once added.",
                     },
                     "rationale": _RATIONALE,
                 },
@@ -308,29 +303,29 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_create_source",
             "description": (
-                "Proposer de créer une note Obsidian dans le vault et de l'ajouter au corpus du "
-                "deck courant — pour consigner ce qu'une conversation a établi (pour une page "
-                "web qui existe déjà, préférer propose_add_source). Le résultat de l'outil "
-                "donne l'identifiant que la source aura une fois créée : réutilise-le dans "
-                "`source_ids` de propose_create."
+                "Propose creating an Obsidian note in the vault and adding it to the current "
+                "deck's corpus — to record what a conversation established (for a web page "
+                "that already exists, prefer propose_add_source). The tool result gives the id "
+                "the source will carry once created: reuse it in propose_create's "
+                "`source_ids`."
             ),
             "input_schema": _obj(
                 {
                     "name": {
                         "type": "string",
                         "description": (
-                            "Nom de la note, relatif à la racine du vault, `/` autorisé pour un "
-                            "dossier, sans `.md`. L'utilisateur peut le modifier avant d'appliquer."
+                            "Note name, relative to the vault root, `/` allowed for a folder, "
+                            "without `.md`. The user can edit it before applying."
                         ),
                     },
                     "content": {
                         "type": "string",
-                        "description": "Contenu Markdown complet de la note.",
+                        "description": "Complete Markdown content of the note.",
                     },
                     "anchor_note_ids": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "Notes Anki à ancrer à cette source une fois créée.",
+                        "description": "Anki notes to anchor to this source once created.",
                     },
                     "rationale": _RATIONALE,
                 },
@@ -340,18 +335,18 @@ def proposal_tools() -> list[dict[str, Any]]:
         {
             "name": "propose_edit_source",
             "description": (
-                "Proposer de remplacer un passage d'une source Obsidian par un autre. `old` doit "
-                "apparaître exactement une fois dans la source (copie-le tel quel) ; le "
-                "remplacement est refusé sinon. Une source pdf ou web ne se modifie pas."
+                "Propose replacing one passage of an Obsidian source with another. `old` must "
+                "appear exactly once in the source (copy it verbatim); the replacement is "
+                "refused otherwise. A pdf or web source cannot be edited."
             ),
             "input_schema": _obj(
                 {
                     "source_id": {
                         "type": "string",
-                        "description": "Identifiant de la source (voir l'index du corpus).",
+                        "description": "Source identifier (see the corpus index).",
                     },
-                    "old": {"type": "string", "description": "Passage actuel, verbatim."},
-                    "new": {"type": "string", "description": "Passage de remplacement."},
+                    "old": {"type": "string", "description": "Current passage, verbatim."},
+                    "new": {"type": "string", "description": "Replacement passage."},
                     "rationale": _RATIONALE,
                 },
                 required=["source_id", "old", "new", "rationale"],
@@ -366,36 +361,36 @@ def read_tool_defs() -> list[dict[str, Any]]:
         {
             "name": "list_decks",
             "description": (
-                "Lire l'arborescence des decks avec le nombre de notes flaguées de chacun. "
-                "À utiliser pour situer le deck courant ou choisir une destination de déplacement."
+                "Read the deck tree with each deck's flagged note count. Use to locate the "
+                "current deck or pick a move destination."
             ),
             "input_schema": _obj({}),
         },
         {
             "name": "search_notes",
             "description": (
-                "Chercher des notes avec la syntaxe de recherche Anki (ex. `re:lagrang`, "
-                "`Text:*KKT*`, `tag:convexité`, `flag:1`). La recherche est limitée au deck "
-                "courant et à ses sous-decks sauf si la requête nomme un deck (`deck:…`). "
-                "`detail` choisit la forme du résultat : `count` (le nombre seul), `brief` (une "
-                "ligne par note, champs en texte brut tronqués — pour repérer des notes), `full` "
-                "(champs bruts complets, tags, flags, raison — pour un audit de format ou de "
-                "structure, que le texte tronqué ne permet pas)."
+                "Search notes with Anki's search syntax (e.g. `re:lagrang`, `Text:*KKT*`, "
+                "`tag:convexity`, `flag:1`). The search is limited to the current deck and its "
+                "subdecks unless the query names a deck (`deck:…`). `detail` picks the result's "
+                "shape: `count` (the number alone), `brief` (one line per note, fields as "
+                "truncated plain text — for spotting notes), `full` (complete raw fields, tags, "
+                "flags, reason — for a format or structure audit, which truncated text does not "
+                "allow)."
             ),
             "input_schema": _obj(
                 {
-                    "query": {"type": "string", "description": "Requête Anki."},
+                    "query": {"type": "string", "description": "Anki query."},
                     "detail": {
                         "type": "string",
                         "enum": ["count", "brief", "full"],
-                        "description": "Forme du résultat. Défaut : brief.",
+                        "description": "Result shape. Default: brief.",
                     },
                     "fields": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            'Avec `full` : ne renvoyer que ces champs (ex. ["Text"]), quand les '
-                            "autres sont du bruit."
+                            'With `full`: only return these fields (e.g. ["Text"]), when the '
+                            "others are noise."
                         ),
                     },
                 },
@@ -405,8 +400,8 @@ def read_tool_defs() -> list[dict[str, Any]]:
         {
             "name": "get_notes",
             "description": (
-                "Lire des notes en entier (champs bruts, tags, flags, raison), dans le même "
-                "format que les cartes en contexte. Rien ne change dans l'espace de travail."
+                "Read notes in full (raw fields, tags, flags, reason), in the same format as "
+                "the cards in context. Nothing changes in the workspace."
             ),
             "input_schema": _obj(
                 {
@@ -414,7 +409,7 @@ def read_tool_defs() -> list[dict[str, Any]]:
                         "type": "array",
                         "items": {"type": "integer"},
                         "minItems": 1,
-                        "description": "Identifiants des notes.",
+                        "description": "Note identifiers.",
                     }
                 },
                 required=["note_ids"],
@@ -423,10 +418,10 @@ def read_tool_defs() -> list[dict[str, Any]]:
         {
             "name": "add_notes",
             "description": (
-                "Ajouter des notes à l'espace de travail pour que l'utilisateur les voie et que "
-                "tu puisses les viser — typiquement après un search_notes. Renvoie les notes en "
-                f"entier comme get_notes. L'espace tient {MAX_CARDS} cartes au plus : au-delà, "
-                "l'outil refuse et il faut resserrer."
+                "Add notes to the workspace so the user sees them and you can target them — "
+                "typically after a search_notes. Returns the notes in full like get_notes. The "
+                f"workspace holds {MAX_CARDS} cards at most: beyond that, the tool refuses and "
+                "the selection must be narrowed."
             ),
             "input_schema": _obj(
                 {
@@ -434,11 +429,11 @@ def read_tool_defs() -> list[dict[str, Any]]:
                         "type": "array",
                         "items": {"type": "integer"},
                         "minItems": 1,
-                        "description": "Identifiants des notes à ajouter.",
+                        "description": "Identifiers of the notes to add.",
                     },
                     "rationale": {
                         "type": "string",
-                        "description": "Une phrase, en français : pourquoi ces notes.",
+                        "description": "One sentence, in the user's language: why these notes.",
                     },
                 },
                 required=["note_ids", "rationale"],
@@ -447,35 +442,34 @@ def read_tool_defs() -> list[dict[str, Any]]:
         {
             "name": "get_note_type",
             "description": (
-                "Lire les templates de carte (recto / verso) et le CSS d'un type de note. "
-                "Les noms de champs sont déjà dans le contexte (section « Types de notes ») ; "
-                "cet outil sert à inspecter le rendu."
+                "Read the card templates (front / back) and CSS of a note type. Field names "
+                "are already in context (« Note types » section); this tool is for inspecting "
+                "the rendering."
             ),
             "input_schema": _obj(
-                {"model": {"type": "string", "description": "Nom du type de note."}},
+                {"model": {"type": "string", "description": "Note type name."}},
                 required=["model"],
             ),
         },
         {
             "name": "read_source",
             "description": (
-                "Lire le texte d'une source du corpus (voir l'index) dans ce tour. Le texte "
-                "n'est pas conservé au tour suivant : si tu en as encore besoin, relis-le, ou "
-                "demande à l'utilisateur de joindre la source. Pour un PDF, tu peux demander "
-                "des pages précises avec le paramètre pages."
+                "Read the text of a corpus source (see the index) for this turn. The text is "
+                "not kept for the next turn: if you still need it, read it again, or ask the "
+                "user to attach the source. For a PDF, you can request specific pages with the "
+                "pages parameter."
             ),
             "input_schema": _obj(
                 {
                     "source_id": {
                         "type": "string",
-                        "description": "Identifiant de la source, tel que donné dans l'index.",
+                        "description": "Source identifier, as given in the index.",
                     },
                     "pages": {
                         "type": "string",
                         "description": (
-                            "PDF seulement : plage de pages à lire, ex. « 12-19 » ou "
-                            "« 3-5,9 ». Sans ce paramètre, les pages associées à la source "
-                            "sont lues."
+                            "PDF only: page range to read, e.g. « 12-19 » or « 3-5,9 ». "
+                            "Without this parameter, the source's associated pages are read."
                         ),
                     },
                 },

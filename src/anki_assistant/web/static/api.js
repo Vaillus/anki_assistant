@@ -8,7 +8,7 @@ async function jfetch(url, opts) {
   try {
     res = await fetch(url, opts);
   } catch (e) {
-    throw new Error("Serveur injoignable (" + (e && e.message ? e.message : "réseau") + ")");
+    throw new Error("Server unreachable (" + (e && e.message ? e.message : "network") + ")");
   }
   if (res.status === 204) return null;
   const ct = res.headers.get("content-type") || "";
@@ -77,7 +77,7 @@ async function streamChat(body, onEvent) {
   try {
     res = await fetch("/api/chat", jsonBody("POST", body));
   } catch (e) {
-    throw new Error("Serveur injoignable (" + (e && e.message ? e.message : "réseau") + ")");
+    throw new Error("Server unreachable (" + (e && e.message ? e.message : "network") + ")");
   }
   if (!res.ok) {
     let detail = "";
@@ -91,7 +91,7 @@ async function streamChat(body, onEvent) {
     err.status = res.status;
     throw err;
   }
-  if (!res.body) throw new Error("Réponse sans flux");
+  if (!res.body) throw new Error("Response has no stream");
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

@@ -260,8 +260,8 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
 
     index = blocks[1]["text"]
     assert "[k7q2vd] obsidian : Allocation sur des angles disjoints" in index
-    assert "déclarée sur le deck courant" in index
-    assert f"ancrée à la note #{NOTE_ID}" in index
+    assert "declared on deck courant" in index
+    assert f"anchored to note #{NOTE_ID}" in index
     assert "[m3x8pa] pdf : ~/s.pdf" in index
     assert "Le contenu de la note Obsidian." not in index  # the index carries no text
 
@@ -271,16 +271,16 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
 
     context = blocks[3]["text"]
     assert "courant::00-Thèse" in context
-    assert "Notes signalées dans ce deck : 3." in context
-    assert "Cartes dans l'espace de travail : 1 active(s)." in context
-    assert f"### Carte w1 — note {NOTE_ID}" in context
+    assert "Flagged notes in this deck: 3." in context
+    assert "Cards in the workspace: 1 active." in context
+    assert f"### Card w1 — note {NOTE_ID}" in context
     assert "{{c1::disjoint}}" in context  # raw fields, cloze markers kept
-    assert "champs bruts (version affichée)" in context
-    assert "version d'origine (Anki) :\n  - Text : avant" in context
-    assert "raison du flag : For a given sensor ?" in context
-    assert "carte(s) flaguée(s) : c2" in context
-    assert "ancres : [k7q2vd] Allocation sur des angles disjoints" in context
-    assert "Carte w2" not in context  # inactive card excluded from prompt
+    assert "raw fields (shown version)" in context
+    assert "original version (Anki):\n  - Text: avant" in context
+    assert "flag reason: For a given sensor ?" in context
+    assert "flagged card(s): c2" in context
+    assert "anchors: [k7q2vd] Allocation sur des angles disjoints" in context
+    assert "Card w2" not in context  # inactive card excluded from prompt
 
 
 def test_card_context_says_when_a_card_is_deferred_and_with_which_comment() -> None:
@@ -291,19 +291,18 @@ def test_card_context_says_when_a_card_is_deferred_and_with_which_comment() -> N
         card(wid="w4", note_id=None, defer=True, comment="brouillon à finir"),
     ]
     context = chat.build_system("d", [], [], cards)[3]["text"]
-    assert "(sera créée flaguée, commentaire prévu : « brouillon à finir »)" in context
+    assert "(will be created flagged, planned comment: « brouillon à finir »)" in context
     assert (
-        "marquée à revoir plus tard "
-        "(le flag reste, commentaire prévu : « trop vague, voir le cours »)"
+        "marked for later review (flag stays, planned comment: « trop vague, voir le cours »)"
     ) in context
-    assert "marquée à revoir plus tard (le flag reste)" in context
-    assert context.count("à revoir plus tard") == 3
+    assert "marked for later review (flag stays)" in context
+    assert context.count("marked for later review") == 3
 
 
 def test_standing_instructions_say_only_what_the_spec_lists() -> None:
     text = chat.build_system("d", [], [], [])[0]["text"]
     for needle in (
-        "français",
+        "English",
         "propose_add_source",
         "propose_create_source",
         "propose_edit_source",
@@ -318,10 +317,10 @@ def test_standing_instructions_say_only_what_the_spec_lists() -> None:
 
 def test_empty_index_and_no_attached_source_are_said_explicitly() -> None:
     blocks = chat.build_system("d", [], [], [])
-    assert "Aucune source n'est associée" in blocks[1]["text"]
-    assert "Aucune source jointe" in blocks[2]["text"]
+    assert "No source is attached" in blocks[1]["text"]
+    assert "No source attached" in blocks[2]["text"]
     assert "read_source" in blocks[2]["text"]
-    assert "(Aucune carte.)" in blocks[3]["text"]
+    assert "(No card.)" in blocks[3]["text"]
 
 
 def test_attached_sources_are_capped_in_total_and_the_cap_is_stated() -> None:
@@ -330,9 +329,9 @@ def test_attached_sources_are_capped_in_total_and_the_cap_is_stated() -> None:
     assert big in text  # first source fits whole
     assert "b" * 10 in text and "b" * 11 not in text  # second cut to the remaining budget
     assert "c" * 100 not in text  # third source omitted entirely
-    assert "150 000 caractères au total" in text
-    assert "Source coupée ici" in text
-    assert "Source omise" in text
+    assert "150,000 characters total" in text
+    assert "Source cut here" in text
+    assert "Source omitted" in text
 
 
 def test_attached_source_relays_warning_and_truncation() -> None:
@@ -340,12 +339,12 @@ def test_attached_source_relays_warning_and_truncation() -> None:
     text = FakeText("x", truncated=True, warning="PDF entier (312 pages) sans plage de pages.")
     block = chat.build_system("d", [], [(source, text)], [])[2]["text"]
     assert "PDF entier (312 pages)" in block
-    assert "tronqué" in block
+    assert "truncated" in block
 
 
 def test_index_marks_missing_files() -> None:
     text = chat.build_system("d", [entry(missing=True)], [], [])[1]["text"]
-    assert "⚠ fichier introuvable" in text
+    assert "⚠ file not found" in text
 
 
 # ------------------------------------------------------------------------------- tools
@@ -449,7 +448,7 @@ def test_format_notes_brief_is_one_compact_line_per_note() -> None:
     )
     text = chat.format_notes_brief([FakeNote(), long_note], "courant::00-Thèse")
     lines = text.splitlines()
-    assert lines[0] == "# 2 note(s) du deck courant::00-Thèse"
+    assert lines[0] == "# 2 note(s) in deck courant::00-Thèse"
     row1 = next(line for line in lines if line.startswith(f"#{NOTE_ID}"))
     assert "⚑" in row1
     assert "Text: L'angle est {{c1::disjoint}} du précédent." in row1
@@ -464,7 +463,7 @@ def test_format_notes_brief_is_one_compact_line_per_note() -> None:
 def test_format_notes_brief_names_the_deck_when_it_differs() -> None:
     text = chat.format_notes_brief([FakeNote()], "autre::deck")
     assert f"#{NOTE_ID} · courant::00-Thèse · ⚑ · " in text
-    assert "(aucune note)" in chat.format_notes_brief([], "d")
+    assert "(no note)" in chat.format_notes_brief([], "d")
 
 
 def test_format_decks_indents_by_depth_and_keeps_full_names() -> None:
@@ -480,8 +479,8 @@ def test_format_decks_indents_by_depth_and_keeps_full_names() -> None:
 def test_format_notes_reuses_the_context_layout() -> None:
     text = chat.format_notes([FakeNote()])
     assert f"### Note {NOTE_ID}" in text
-    assert "raison du flag : For a given sensor ?" in text
-    assert "aucune note" in chat.format_notes([])
+    assert "flag reason: For a given sensor ?" in text
+    assert "no note found" in chat.format_notes([])
 
 
 def test_format_note_type_lists_fields_templates_and_css() -> None:
@@ -494,9 +493,9 @@ def test_format_note_type_lists_fields_templates_and_css() -> None:
         css=".card { color: black; }",
     )
     text = chat.format_note_type(note_type)
-    assert "# Type de note Cloze" in text
-    assert "Champs : Text, Back Extra" in text
-    assert "### Recto\n```html\n{{cloze:Text}}\n```" in text
+    assert "# Note type Cloze" in text
+    assert "Fields: Text, Back Extra" in text
+    assert "### Front\n```html\n{{cloze:Text}}\n```" in text
     assert "## CSS\n```css\n.card { color: black; }\n```" in text
 
 
@@ -504,10 +503,10 @@ def test_format_source_first_line_is_the_reading_summary() -> None:
     text = chat.format_source(FakeSource(pages="12-19", note="chap. 2"), FakeText("x" * 3200))
     lines = text.splitlines()
     assert lines[0] == "# Allocation sur des angles disjoints (obsidian, pages 12-19)"
-    assert lines[1] == "source k7q2vd · pages 12-19 · chap. 2 · déclarée sur le deck courant"
+    assert lines[1] == "source k7q2vd · pages 12-19 · chap. 2 · declared on deck courant"
     assert lines[-1] == "x" * 3200
     empty = chat.format_source(FakeSource(), FakeText(""))
-    assert "aucun texte" in empty
+    assert "no text" in empty
 
 
 # ------------------------------------------------------------------------- stream_chat
@@ -677,7 +676,7 @@ def test_absent_target_is_refused_when_the_workspace_is_full() -> None:
     client = _one_tool_turn(block)
     events = run_chat(client, cards=full)
     assert [event.type for event in events] == ["done"]
-    assert "plein" in _first_result(client)["content"]
+    assert "full" in _first_result(client)["content"]
     # A card already in the workspace is still a valid target at the cap.
     block2 = tool_use_block(
         "toolu_g", "propose_edit", {"target": "w3", "fields": {}, "rationale": "r"}
@@ -712,7 +711,7 @@ def test_add_notes_over_the_cap_is_refused_without_reading() -> None:
     events = run_chat(client, cards=full, read_tools={"get_notes": lambda inp: calls.append(inp)})
     assert [event.type for event in events] == ["done"]
     assert calls == []
-    assert "plein" in _first_result(client)["content"]
+    assert "full" in _first_result(client)["content"]
     # Notes already in the workspace do not count: re-adding w1's note is fine.
     block2 = tool_use_block("toolu_ok", "add_notes", {"note_ids": [1, 700], "rationale": "r"})
     client2 = _one_tool_turn(block2)
@@ -729,7 +728,7 @@ def test_add_notes_failure_is_an_error_result_and_no_added_event() -> None:
 
     events = run_chat(client, read_tools={"get_notes": boom})
     assert [event.type for event in events] == ["reading", "done"]
-    assert events[0].data["summary"].startswith("erreur")
+    assert events[0].data["summary"].startswith("error")
     assert _first_result(client)["is_error"] is True
 
 
@@ -775,7 +774,7 @@ def test_read_tool_failure_becomes_an_error_tool_result_not_a_chat_error() -> No
 
     events = run_chat(client, read_tools={"get_notes": get_notes})
     assert [event.type for event in events] == ["reading", "done"]
-    assert events[0].data["summary"].startswith("erreur : ")
+    assert events[0].data["summary"].startswith("error: ")
     result = client.messages.calls[1]["messages"][2]["content"][0]
     assert result["is_error"] is True
     assert "No note with id 1" in result["content"]
@@ -840,7 +839,7 @@ def test_web_search_reading_names_the_query_and_spells_out_the_urls() -> None:
         "summary": reading["summary"],
     }
     # The URLs are the provenance guarantee; past WEB_URLS_SHOWN the rest is counted.
-    assert reading["summary"].startswith("« conditions KKT » → 7 résultat(s) : https://ex1.org/p")
+    assert reading["summary"].startswith("« conditions KKT » → 7 result(s): https://ex1.org/p")
     assert "https://ex5.org/p" in reading["summary"]
     assert "https://ex6.org/p" not in reading["summary"]
     assert reading["summary"].endswith("(+2)")
@@ -852,7 +851,7 @@ def test_web_search_without_results_says_so() -> None:
         [([], final_message([call, web_result_block("srvtoolu_1", [])], "end_turn"))]
     )
     events = run_chat(client)
-    assert events[0].data["summary"] == "« rien » → aucun résultat"
+    assert events[0].data["summary"] == "« rien » → no results"
 
 
 def test_web_tool_error_is_a_reading_not_a_chat_error() -> None:
@@ -861,7 +860,7 @@ def test_web_tool_error_is_a_reading_not_a_chat_error() -> None:
     client = FakeAnthropic([([], final_message([call, failed], "end_turn"))])
     events = run_chat(client)
     assert [event.type for event in events] == ["reading", "done"]
-    assert events[0].data["summary"] == "« x » → erreur : max_uses_exceeded"
+    assert events[0].data["summary"] == "« x » → error: max_uses_exceeded"
 
 
 def test_web_fetch_succeeds_with_a_single_object_and_reads_as_its_url() -> None:
@@ -905,7 +904,7 @@ def test_pause_turn_resumes_with_the_assistant_message_unchanged() -> None:
     # Text streams as it is generated; the search is only known from the final message. The log
     # renders reads above the body either way (workspace.js#msgHtml).
     assert [event.type for event in events] == ["text", "reading", "done"]
-    assert events[1].data["summary"] == "« conditions KKT » → 1 résultat(s) : https://ex.org/kkt"
+    assert events[1].data["summary"] == "« conditions KKT » → 1 result(s): https://ex.org/kkt"
     assert events[-1].data["stop_reason"] == "end_turn"
 
     # Resumed with the assistant message verbatim (encrypted content intact) and nothing added.
@@ -1088,12 +1087,12 @@ def test_search_notes_tool_honours_detail_fields_and_the_full_cap(monkeypatch: A
     tools = routes_chat.read_tools_for(anki, store, "d", no_source)
     search = tools["search_notes"]
 
-    assert search({"query": "x", "detail": "count"}) == "# 3 note(s) correspondent à x"
-    assert search({"query": "x"}).startswith("# 2 note(s) du deck d")
+    assert search({"query": "x", "detail": "count"}) == "# 3 note(s) match x"
+    assert search({"query": "x"}).startswith("# 2 note(s) in deck d")
     refused = search({"query": "x", "detail": "full"})
-    assert "non renvoyé" in refused and "fields" in refused
+    assert "not returned" in refused and "fields" in refused
     narrowed = search({"query": "x", "detail": "full", "fields": ["Back Extra"]})
-    assert "Back Extra : b" in narrowed and "aaaa" not in narrowed
+    assert "Back Extra: b" in narrowed and "aaaa" not in narrowed
 
 
 def make_client(monkeypatch: Any):  # noqa: ANN201 - TestClient

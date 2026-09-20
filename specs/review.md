@@ -19,13 +19,13 @@ By default only decks with a rolled-up count above zero are shown; a toggle show
 
 ## Queue (column 2)
 
-The **queue** is the list of notes for the selected deck and all its sub-decks. Each note carries a `deck` field saying where it actually lives. Flagged notes come first, then unflagged; within each group by note id ascending (creation order). The queue shows flagged notes only by default; a toggle ("voir toutes") shows the whole deck, unflagged notes at 55 % opacity. When the queue is empty the column shows "Rien à revoir ici."
+The **queue** is the list of notes for the selected deck and all its sub-decks. Each note carries a `deck` field saying where it actually lives. Flagged notes come first, then unflagged; within each group by note id ascending (creation order). The queue shows flagged notes only by default; a toggle ("show all") shows the whole deck, unflagged notes at 55 % opacity. When the queue is empty the column shows "Nothing to review here."
 
 One note is selected at a time. After a deck change the first flagged note is selected. After a decision resolves a note, the next flagged note in the visible list is selected (or nothing if the queue is empty). Keyboard navigation: `j`/`↓` and `k`/`↑` move the selection.
 
 Each note shows three things, top to bottom:
 
-1. **Identity line** — short id (`#` + last 4 digits), note type, card count, tags. Flagged notes get a flag badge and a "garder" control. When the note is a flagged Cloze, the badge names the flagged cards ("⚑ c2", one label per flagged card).
+1. **Identity line** — short id (`#` + last 4 digits), note type, card count, tags. Flagged notes get a flag badge and a "keep" control. When the note is a flagged Cloze, the badge names the flagged cards ("⚑ c2", one label per flagged card).
 2. **Fields** — every field except `Back Extra`, rendered through the [display transform](#rendering). Flagged Cloze notes are shown with their flagged clozes hidden by default (see [Question state](#question-state)).
 3. **Reason callout** — when the note is flagged and the [reason](./notes.md#reason-back-extra) is non-empty, a labelled block below the fields shows it. This is the only place `Back Extra` appears in the queue. Shown regardless of question state.
 
@@ -33,7 +33,7 @@ Each note shows three things, top to bottom:
 
 A flagged Cloze note starts with its flagged clozes hidden and the rest visible — the question side the reviewer saw when they placed the flag. A hidden cloze shows its hint, or `[…]` when there is no hint; the cloze-number label stays.
 
-"Révéler" (`Espace` on the selected note, or clicking a hidden cloze) switches to full view; the same gesture switches back. The state is per note, reset when the deck changes or the queue is refetched after a decision.
+"Reveal" (`Space` on the selected note, or clicking a hidden cloze) switches to full view; the same gesture switches back. The state is per note, reset when the deck changes or the queue is refetched after a decision.
 
 Notes without hideable clozes — unflagged, no cloze deletions in their fields, or flagged cards whose ordinals match no cloze — are shown in full, with no reveal control.
 
@@ -43,13 +43,13 @@ The queue offers three gestures on a note. Everything that edits a note happens 
 
 | Gesture | Trigger | Anki writes | Flag | Queue effect |
 |---|---|---|---|---|
-| **Garder** | "garder" control, or `g` on selected note | none | cleared on all cards | note leaves the queue |
-| **Passer** | `p`, or `j`/`k` | none | kept | selection moves to the next note |
-| **Ouvrir** | click on note, or `Entrée` on selected note | none (until the workspace validates) | — | the workspace opens |
+| **Keep** | "keep" control, or `g` on selected note | none | cleared on all cards | note leaves the queue |
+| **Skip** | `p`, or `j`/`k` | none | kept | selection moves to the next note |
+| **Open** | click on note, or `Enter` on selected note | none (until the workspace validates) | — | the workspace opens |
 
-**Garder** clears nothing but the flag: the flag was a false alarm, the note is fine, its `Back Extra` stays. No confirmation. Clearing a flag means setting the flag value to zero on every card of the note.
+**Keep** clears nothing but the flag: the flag was a false alarm, the note is fine, its `Back Extra` stays. No confirmation. Clearing a flag means setting the flag value to zero on every card of the note.
 
-After Garder and after a workspace validation, the deck tree and queue refresh and the next flagged note is selected. A discarded workspace refreshes too but leaves the selection where it was. The queue header shows "Annuler la dernière validation" while the server holds a snapshot from the last workspace validation ([workspace.md § Undo](./workspace.md#undo)).
+After Keep and after a workspace validation, the deck tree and queue refresh and the next flagged note is selected. A discarded workspace refreshes too but leaves the selection where it was. The queue header shows "Undo last validation" while the server holds a snapshot from the last workspace validation ([workspace.md § Undo](./workspace.md#undo)).
 
 What each workspace action writes — splits, moves, deletes, how [anchors](./sources.md#anchors) follow — is specified in [workspace.md § Validation](./workspace.md#validation).
 
@@ -99,10 +99,10 @@ With the workspace closed and no input focused:
 |---|---|
 | `j` / `↓` | Select next note |
 | `k` / `↑` | Select previous note |
-| `g` | Garder (clear flag on selected note) |
-| `p` | Passer (skip to next note) |
-| `Entrée` | Ouvrir (open workspace on selected note) |
-| `Espace` | Toggle question state (reveal / hide flagged clozes) |
+| `g` | Keep (clear flag on selected note) |
+| `p` | Skip (skip to next note) |
+| `Enter` | Open (open workspace on selected note) |
+| `Space` | Toggle question state (reveal / hide flagged clozes) |
 
 Keys are ignored while an input, textarea, or select is focused. Workspace keyboard shortcuts are specified in [workspace.md § Opening and closing](./workspace.md#opening-and-closing).
 

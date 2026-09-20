@@ -136,7 +136,7 @@ async function sendChat() {
         }
         scheduleLogRefresh();
       } else if (name === "error") {
-        reply.error = d.detail || "erreur";
+        reply.error = d.detail || "error";
         scheduleLogRefresh();
       }
     });
@@ -178,7 +178,7 @@ async function applySourceProposal(mi, pi) {
   try {
     if (p.kind === "add_source") {
       const target = String(p.target != null ? p.target : input.target || "").trim();
-      if (!target) throw new Error("indique une cible");
+      if (!target) throw new Error("provide a target");
       const entry = {
         target,
         kind: SOURCE_KINDS.indexOf(input.kind) >= 0 ? input.kind : detectKind(target),
@@ -191,7 +191,7 @@ async function applySourceProposal(mi, pi) {
       refreshAnchorsOf(input.anchor_note_ids || []);
     } else if (p.kind === "create_source") {
       const name = String(p.name != null ? p.name : input.name || "").trim();
-      if (!name) throw new Error("indique un nom de note");
+      if (!name) throw new Error("provide a note name");
       await API.createSourceNote({
         deck: S.ws.deck,
         name,
@@ -203,7 +203,7 @@ async function applySourceProposal(mi, pi) {
     } else if (p.kind === "edit_source") {
       await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
     } else {
-      throw new Error("proposition inconnue : " + p.kind);
+      throw new Error("unknown proposal: " + p.kind);
     }
     p.applied = true;
     S.busy = false;
@@ -258,7 +258,7 @@ async function revertSourceProposal(mi, pi) {
     S.busy = false;
     await loadCorpus();
   } catch (e) {
-    p.error = e.status === 409 ? "modifiée depuis, annulation impossible" : e.message;
+    p.error = e.status === 409 ? "modified since, cannot revert" : e.message;
     S.busy = false;
     draw();
   }
@@ -274,11 +274,11 @@ async function validateWorkspace() {
   const deleting = ws.cards.filter((c) => c.noteId && c.deleted);
   if (deleting.length) {
     const ok = window.confirm(
-      "Supprimer définitivement " +
+      "Permanently delete " +
         deleting.length +
-        " note(s) : " +
+        " note(s): " +
         deleting.map((c) => short(c.noteId)).join(", ") +
-        " ?",
+        "?",
     );
     if (!ok) return;
   }
@@ -289,7 +289,7 @@ async function validateWorkspace() {
   );
   if (unapplied) {
     const ok = window.confirm(
-      "Une source proposée n'a pas été appliquée : les notes ancrées dessus perdront cette ancre. Valider quand même ?",
+      "A proposed source has not been applied: notes anchored to it will lose that anchor. Apply anyway?",
     );
     if (!ok) return;
   }
@@ -314,7 +314,7 @@ async function validateWorkspace() {
     await afterDecision({ resolvedId: root ? root.noteId : null });
     return;
   }
-  ws.report = report || { ok: false, errors: ["réponse vide"], created: {} };
+  ws.report = report || { ok: false, errors: ["empty response"], created: {} };
   Object.keys(ws.report.created || {}).forEach((wid) => {
     const c = wsCard(wid);
     if (c) {
@@ -366,7 +366,7 @@ function wsClick(act, el, e) {
     return draw();
   }
   if (act === "ws-split" && card && !card.deleted) {
-    S.ws.chatDraft = "scinde " + card.wid + " : ";
+    S.ws.chatDraft = "split " + card.wid + ": ";
     S.refocus = "chat";
     return draw();
   }

@@ -702,9 +702,9 @@ def test_replace_in_note_requires_exactly_one_match(tmp_path: Path) -> None:
 
     store.replace_in_note("note00", "beta", "BETA")
     assert path.read_text(encoding="utf-8") == "alpha BETA alpha gamma"
-    with pytest.raises(ValueError, match="ambigu"):
+    with pytest.raises(ValueError, match="ambiguous"):
         store.replace_in_note("note00", "alpha", "x")
-    with pytest.raises(ValueError, match="introuvable"):
+    with pytest.raises(ValueError, match="not found"):
         store.replace_in_note("note00", "delta", "x")
     with pytest.raises(ValueError, match="Obsidian"):
         store.replace_in_note("pdf000", "a", "b")

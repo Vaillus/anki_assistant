@@ -39,7 +39,7 @@ from anki_assistant.sources import SourceStore
 router = APIRouter()
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-NO_KEY_DETAIL = "ANTHROPIC_API_KEY absente : ajoute-la dans .env puis relance anki-web."
+NO_KEY_DETAIL = "ANTHROPIC_API_KEY missing: add it to .env then restart anki-web."
 #: Upper bound on the notes a `search_notes` call fetches from Anki (brief / full).
 SEARCH_LIMIT = 5000
 
@@ -136,13 +136,13 @@ def read_tools_for(
     def search_notes(inp: Mapping[str, Any]) -> str:
         query = str(inp.get("query") or "").strip()
         if not query:
-            raise ValueError("query manquante")
+            raise ValueError("missing query")
         detail = str(inp.get("detail") or "brief")
         if detail not in ("count", "brief", "full"):
-            raise ValueError(f"detail inconnu : {detail} (count, brief ou full)")
+            raise ValueError(f"unknown detail: {detail} (count, brief, or full)")
         scoped = scope_query(query, deck)
         if detail == "count":
-            return f"# {len(anki.find_note_ids(scoped))} note(s) correspondent à {query}"
+            return f"# {len(anki.find_note_ids(scoped))} note(s) match {query}"
         views = review.search_notes(anki, scoped, limit=SEARCH_LIMIT)
         if detail == "brief":
             return format_notes_brief(views, deck)
@@ -155,40 +155,40 @@ def read_tools_for(
         text = format_notes(views)
         if len(text) > MAX_FULL_RESULT_CHARS:
             return (
-                f"# {len(views)} note(s) correspondent — résultat non renvoyé\n\n"
-                f"En detail=full il ferait {len(text)} caractères, plus que le plafond de "
-                f"{MAX_FULL_RESULT_CHARS}. Affine la requête ou limite `fields` aux champs "
-                "utiles ; detail=brief donne l'aperçu."
+                f"# {len(views)} note(s) match — result not returned\n\n"
+                f"With detail=full it would be {len(text)} characters, more than the "
+                f"{MAX_FULL_RESULT_CHARS} cap. Narrow the query or limit `fields` to the "
+                "useful ones; detail=brief gives an overview."
             )
         return text
 
     def get_notes(inp: Mapping[str, Any]) -> str:
         ids = [int(i) for i in inp.get("note_ids") or []]
         if not ids:
-            raise ValueError("note_ids vide")
+            raise ValueError("empty note_ids")
         return format_notes(review.get_notes(anki, ids))
 
     def get_note_type(inp: Mapping[str, Any]) -> str:
         model = str(inp.get("model") or "").strip()
         if not model:
-            raise ValueError("model manquant")
+            raise ValueError("missing model")
         return format_note_type(anki.note_type(model))
 
     def read_source(inp: Mapping[str, Any]) -> str:
         source_id = str(inp.get("source_id") or "").strip()
         if not source_id:
-            raise ValueError("source_id manquant")
+            raise ValueError("missing source_id")
         pages_override = str(inp.get("pages") or "").strip()
         if pages_override:
             source = store.by_id(source_id)
             if source is None:
-                raise KeyError(f"source inconnue : {source_id}")
+                raise KeyError(f"unknown source: {source_id}")
             if source.kind != "pdf":
-                raise ValueError("le paramètre pages ne s'applique qu'à un PDF")
+                raise ValueError("the pages parameter only applies to a PDF")
             from anki_assistant.sources import is_valid_pages
 
             if not is_valid_pages(pages_override):
-                raise ValueError(f"format de pages invalide : {pages_override!r}")
+                raise ValueError(f"invalid pages format: {pages_override!r}")
             source = replace(source, pages=pages_override)
             text = source.text(store.vault)
             return format_source(source, text)
@@ -254,7 +254,7 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
     def load_source(source_id: str) -> Attached:
         source = store.by_id(source_id)
         if source is None:
-            raise KeyError(f"source inconnue : {source_id}")
+            raise KeyError(f"unknown source: {source_id}")
         return source, source.text(store.vault)
 
     note_types = anki.model_names_and_fields()

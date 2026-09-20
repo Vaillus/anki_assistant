@@ -79,7 +79,7 @@ const S = {
   srcForm: null, // { kind, target, pages, note, copyInherited } while the add form is open
   // workspace (specs/workspace.md) — null when closed; see workspace.js for the shape
   ws: null,
-  undoAvailable: false, // « Annuler la dernière validation » (GET /api/workspace/undo)
+  undoAvailable: false, // « Undo last validation » (GET /api/workspace/undo)
   chatStatus: null, // { configured, model }
   // misc
   models: null, // { modelName: [fieldNames] }

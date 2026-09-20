@@ -89,7 +89,7 @@ class WorkspaceCard:
     anchor_ids: list[str] = field(default_factory=list)
     deleted: bool = False
     keep: bool = False
-    #: Deferred (« à revoir »): flag kept, `comment` written to `Back Extra` at validation.
+    #: Deferred (« to review »): flag kept, `comment` written to `Back Extra` at validation.
     defer: bool = False
     comment: str = ""
     move_to: str | None = None

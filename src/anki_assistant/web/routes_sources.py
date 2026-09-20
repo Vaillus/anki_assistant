@@ -171,8 +171,8 @@ def _to_view(store: SourceStore, source: Source) -> SourceView:
         n_pages = source.pdf_n_pages()
         if not source.pages and n_pages is not None:
             warning = (
-                f"PDF entier ({n_pages} pages) sans plage de pages : "
-                "pose une plage pour que Claude lise les bonnes pages."
+                f"Entire PDF ({n_pages} pages) with no page range: "
+                "set a range so Claude reads the right pages."
             )
     return SourceView(
         id=source.id,
@@ -335,9 +335,9 @@ def replace_source_text(source_id: str, body: ReplaceIn, request: Request) -> So
     store = _store(request)
     source = store.by_id(source_id)
     if source is None:
-        raise HTTPException(status_code=404, detail=f"source inconnue : {source_id}")
+        raise HTTPException(status_code=404, detail=f"unknown source: {source_id}")
     if source.kind != "obsidian":
-        raise HTTPException(status_code=400, detail="seule une note Obsidian peut être modifiée")
+        raise HTTPException(status_code=400, detail="only an Obsidian note can be edited")
     try:
         store.replace_in_note(source_id, body.old, body.new)
     except ValueError as exc:
@@ -355,12 +355,12 @@ def open_source_file(source_id: str, request: Request) -> dict[str, str]:
     store = _store(request)
     source = store.by_id(source_id)
     if source is None:
-        raise HTTPException(status_code=404, detail=f"source inconnue : {source_id}")
+        raise HTTPException(status_code=404, detail=f"unknown source: {source_id}")
     if source.kind != "pdf":
-        raise HTTPException(status_code=400, detail="seul un PDF peut être ouvert")
+        raise HTTPException(status_code=400, detail="only a PDF can be opened")
     path = Path(source.target).expanduser().resolve()
     if not path.exists():
-        raise HTTPException(status_code=404, detail="fichier introuvable")
+        raise HTTPException(status_code=404, detail="file not found")
     uri = zotero_open_uri(path, store.vault)
     if uri:
         subprocess.Popen(["open", uri])

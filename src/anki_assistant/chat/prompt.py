@@ -44,9 +44,8 @@ Règles :
 renseignement, **réponds sans proposer de modification**. Ne propose un changement que si \
 l'utilisateur le demande explicitement ou si ta réponse révèle une erreur factuelle manifeste \
 dans une carte — et dans ce cas, signale l'erreur d'abord.
-- Le message de l'utilisateur porte sur les cartes **actives**. Désigne une carte par son \
-identifiant d'espace (`target: "3"`) ; une note qui n'est pas encore dans l'espace se désigne \
-par son identifiant Anki (un grand nombre), elle y sera ajoutée.
+- Désigne une carte par son identifiant d'espace (`target: "3"`) ; une note qui n'est pas \
+encore dans l'espace se désigne par son identifiant Anki (un grand nombre), elle y sera ajoutée.
 - Quand tu proposes un changement concret, **appelle** les outils de proposition (propose_edit, \
 propose_split, propose_create, propose_move, propose_add_source, propose_create_source, \
 propose_edit_source) au lieu de le décrire en prose. Un même tour peut en contenir plusieurs ; \
@@ -124,7 +123,7 @@ def _fmt_card(card: WorkspaceCard, anchors: Sequence[CorpusEntry] = ()) -> str:
         head = f"### Carte {card.wid} — brouillon, pas encore dans Anki"
     else:
         head = f"### Carte {card.wid} — note {card.note_id}"
-    states = ["active" if card.active else "inactive"]
+    states: list[str] = []
     if card.deleted:
         states.append("marquée supprimée")
     if card.keep:
@@ -138,7 +137,9 @@ def _fmt_card(card: WorkspaceCard, anchors: Sequence[CorpusEntry] = ()) -> str:
         )
     if card.move_to:
         states.append(f"à déplacer vers {card.move_to}")
-    lines = [head, f"- état : {', '.join(states)}"]
+    lines = [head]
+    if states:
+        lines.append(f"- état : {', '.join(states)}")
     if card.parent_wid:
         lines.append(f"- fragment de la carte {card.parent_wid}")
     lines += [
@@ -308,25 +309,25 @@ def build_system(
     Block 3 carries `cache_control: ephemeral`: blocks 1–3 depend only on the deck and on what
     the user attached, so a change on the workspace (which only changes block 4) reuses the cache.
     """
-    note_ids = [card.note_id for card in cards if card.note_id is not None]
-    active = sum(1 for card in cards if card.active)
+    active_cards = [card for card in cards if card.active]
+    note_ids = [card.note_id for card in active_cards if card.note_id is not None]
 
     header = [f"# Deck en cours\n\n{deck}"]
     if flagged_count is not None:
         header.append(f"Notes signalées dans ce deck : {flagged_count}.")
-    header.append(f"Cartes dans l'espace de travail : {len(cards)}, dont {active} active(s).")
+    header.append(f"Cartes dans l'espace de travail : {len(active_cards)} active(s).")
 
     types_part = _note_types_block(note_types or {})
 
     notes_part = ["# Cartes de l'espace de travail", ""]
-    if cards:
+    if active_cards:
         notes_part.append(
             "La première est la note sur laquelle l'espace a été ouvert (la racine). Champs "
             "donnés bruts (HTML et marqueurs de cloze compris), tels que l'utilisateur les voit "
             "en ce moment — une version proposée ou retouchée, pas forcément ce qu'Anki "
             "contient. Produis les tiens dans la même syntaxe."
         )
-        for card in cards:
+        for card in active_cards:
             anchors = [entry for entry in corpus_index if entry.id in card.anchor_ids]
             notes_part += ["", _fmt_card(card, anchors)]
     else:

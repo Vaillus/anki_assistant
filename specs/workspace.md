@@ -66,7 +66,7 @@ Cards are listed root first, then in order of arrival. A [fragment](#split) is s
 
 One line, left to right:
 
-- **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity.
+- **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity and is excluded from the chat context sent to the LLM.
 - **Card number** — the card's workspace number, bold and accent-colored.
 - **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, the tags, and « fragment de 1 » on a fragment.
 - **⚑ flag toggle** — outlined when off; filled, reading « ⚑ à revoir », when on.

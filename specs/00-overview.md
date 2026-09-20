@@ -46,7 +46,7 @@ graph LR
 |---|---|---|
 | `src/anki_assistant/client.py` | Typed client over AnkiConnect | — |
 | `src/anki_assistant/models.py` | `Card`, `Note` dataclasses | — |
-| `src/anki_assistant/sources.py` | `SourceStore`: corpora, anchors, text extraction, vault writes | [sources.md](./sources.md) |
+| `src/anki_assistant/sources/` | `SourceStore`, corpora, anchors, text extraction, vault writes | [sources.md](./sources.md) |
 | `src/anki_assistant/pdf_cache.py` | Sidecar cache, structural index, Docling extraction | [sources.md](./sources.md) |
 | `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes | [review.md](./review.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |

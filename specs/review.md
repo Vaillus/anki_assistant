@@ -89,7 +89,7 @@ The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md
 
 ## Frontend
 
-Single page, vanilla JS, no framework or bundler. Scripts load in order: `state.js` (state and helpers), `api.js`, `render.js` (three-column layout), `workspace.js` (the overlay), `app.js` (events and boot). One in-memory state object; every state change triggers a full re-render.
+Single page, vanilla JS, no framework or bundler. Scripts load in order: `state.js` (state and selectors), `display.js` (field rendering, cloze hiding, Markdown + math), `api.js`, `render.js` (three-column layout), `ws-state.js` (workspace card data model), `ws-render.js` (workspace + chat HTML), `workspace.js` (chat stream, validation, events), `sources-tab.js` (source-tab data logic), `app.js` (top-level events and boot). One in-memory state object; every state change triggers a full re-render.
 
 ### Keyboard
 

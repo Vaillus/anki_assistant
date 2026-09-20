@@ -41,18 +41,14 @@ import logging
 import os
 import re
 import secrets
-import sqlite3
-import time
 import urllib.parse
 from collections.abc import Iterable, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal
 
-import httpx
-import pypdf
+from .web import _fetch_web_cached
 
 DEFAULT_VAULT = Path("~/Documents/Vault").expanduser()
 Kind = Literal["pdf", "obsidian", "web"]
@@ -62,14 +58,6 @@ DEFAULT_MAX_CHARS = 60_000
 ZOTERO_DB = Path("~/Zotero/zotero.sqlite").expanduser()
 
 log = logging.getLogger(__name__)
-
-#: Seconds allowed for fetching a web source.
-WEB_TIMEOUT = 15.0
-#: A failed fetch is remembered this long before it is tried again, so that an offline session
-#: does not wait for a timeout on every corpus load.
-WEB_RETRY_SECONDS = 60.0
-#: Some sites refuse the default `python-httpx/x.y` agent with a 403; a browser-like one is fine.
-WEB_USER_AGENT = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) anki-assistant"
 
 _PAGES_RE = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
 _URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
@@ -82,16 +70,11 @@ def new_source_id() -> str:
     return "".join(secrets.choice(_ID_ALPHABET) for _ in range(6))
 
 
-# In-memory cache of PDF text extraction, keyed by (path, mtime, pages). PDFs are slow to parse
-# and the same corpus is requested on every note under review.
-_PDF_TEXT_CACHE: dict[tuple[str, float, str], tuple[str, int]] = {}
-
-
 def default_store_path() -> Path:
     env = os.environ.get("ANKI_SOURCES")
     if env:
         return Path(env).expanduser()
-    return Path(__file__).resolve().parents[2] / "sources.json"
+    return Path(__file__).resolve().parents[3] / "sources.json"
 
 
 def is_url(target: str) -> bool:
@@ -129,200 +112,11 @@ def _page_numbers(pages: str, n_pages: int) -> list[int]:
     return list(seen)
 
 
-def _read_pdf_cached(path: Path, pages: str) -> tuple[str, int]:
-    """(text, n_pages) for the selected pages of `path`, cached on (path, mtime, pages)."""
-    mtime = path.stat().st_mtime
-    key = (str(path), mtime, pages)
-    cached = _PDF_TEXT_CACHE.get(key)
-    if cached is not None:
-        return cached
-    reader = pypdf.PdfReader(str(path))
-    n_pages = len(reader.pages)
-    page_numbers = _page_numbers(pages, n_pages) if pages else list(range(1, n_pages + 1))
-    blocks = [
-        f"--- page {p} ---\n\n{reader.pages[p - 1].extract_text() or ''}" for p in page_numbers
-    ]
-    result = ("\n\n".join(blocks), n_pages)
-    _PDF_TEXT_CACHE[key] = result
-    return result
-
-
 _FRONT_MATTER_RE = re.compile(r"\A---[ \t]*\n.*?\n---[ \t]*\n?", re.DOTALL)
 
 
 def _strip_front_matter(text: str) -> str:
     return _FRONT_MATTER_RE.sub("", text, count=1)
-
-
-# ------------------------------------------------------------------- web pages
-
-#: Elements whose content is not page text: code, styling, and the site's chrome.
-_SKIPPED_TAGS = frozenset(
-    {"script", "style", "noscript", "template", "svg", "head", "nav", "footer", "aside"}
-)
-#: When a page marks its content with one of these, only that content is kept.
-_MAIN_TAGS = frozenset({"main", "article"})
-#: Elements that start a new line (block-level, roughly).
-_BLOCK_TAGS = frozenset(
-    {
-        "address",
-        "article",
-        "aside",
-        "blockquote",
-        "br",
-        "dd",
-        "details",
-        "div",
-        "dl",
-        "dt",
-        "fieldset",
-        "figcaption",
-        "figure",
-        "footer",
-        "form",
-        "header",
-        "hr",
-        "main",
-        "nav",
-        "ol",
-        "p",
-        "pre",
-        "section",
-        "summary",
-        "table",
-        "tbody",
-        "thead",
-        "tr",
-        "ul",
-    }
-)
-_HEADING_TAGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
-
-
-class _TextExtractor(HTMLParser):
-    """Reduce an HTML document to readable plain text: block structure kept as line breaks,
-    headings as `#` marks, list items as `- `, everything else folded. Site chrome
-    (`nav`, `footer`, `aside`) is dropped, and when the page wraps its content in `<main>` or
-    `<article>` only that part is kept."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.title = ""
-        self._chunks: list[str] = []
-        #: The chunks that fell inside a `<main>` / `<article>`; preferred when non-empty.
-        self._main_chunks: list[str] = []
-        self._skip_depth = 0
-        self._main_depth = 0
-        self._in_title = False
-        self._in_pre = 0
-
-    def _emit(self, chunk: str) -> None:
-        self._chunks.append(chunk)
-        if self._main_depth:
-            self._main_chunks.append(chunk)
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "title":
-            self._in_title = True
-            return
-        if tag in _SKIPPED_TAGS:
-            self._skip_depth += 1
-            return
-        if self._skip_depth:
-            return
-        if tag in _MAIN_TAGS:
-            self._main_depth += 1
-        if tag in _HEADING_TAGS:
-            self._emit("\n\n" + "#" * _HEADING_TAGS[tag] + " ")
-        elif tag == "li":
-            self._emit("\n- ")
-        elif tag in ("td", "th"):
-            self._emit("\t")
-        elif tag in _BLOCK_TAGS:
-            self._emit("\n")
-            if tag == "pre":
-                self._in_pre += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "title":
-            self._in_title = False
-            return
-        if tag in _SKIPPED_TAGS:
-            if self._skip_depth:
-                self._skip_depth -= 1
-            return
-        if self._skip_depth:
-            return
-        if tag in _MAIN_TAGS and self._main_depth:
-            self._main_depth -= 1
-        # A closing `li` adds nothing: the next item or the list's end breaks the line.
-        if tag in _HEADING_TAGS or tag in _BLOCK_TAGS:
-            self._emit("\n")
-            if tag == "pre" and self._in_pre:
-                self._in_pre -= 1
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title:
-            self.title += data
-            return
-        if self._skip_depth:
-            return
-        self._emit(data if self._in_pre else re.sub(r"\s+", " ", data))
-
-    def text(self) -> str:
-        chunks = self._main_chunks if "".join(self._main_chunks).strip() else self._chunks
-        raw = "".join(chunks)
-        lines = [line.strip() for line in raw.split("\n")]
-        folded = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
-        title = " ".join(self.title.split())
-        return f"{title}\n\n{folded}" if title else folded
-
-
-def html_to_text(html: str) -> str:
-    """Plain text of an HTML page, the `<title>` as its first line (specs/sources.md)."""
-    parser = _TextExtractor()
-    parser.feed(html)
-    parser.close()
-    return parser.text()
-
-
-def _fetch_web(url: str) -> tuple[str, str]:
-    """`(text, warning)` of a page, uncached. Never raises: a failure is the warning."""
-    try:
-        response = httpx.get(
-            url,
-            follow_redirects=True,
-            timeout=WEB_TIMEOUT,
-            headers={"User-Agent": WEB_USER_AGENT},
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        return "", f"page inaccessible : HTTP {exc.response.status_code}"
-    except httpx.HTTPError as exc:
-        return "", f"page inaccessible : {exc.__class__.__name__}: {exc}"
-    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-    if content_type in ("text/html", "application/xhtml+xml", ""):
-        return html_to_text(response.text), ""
-    if content_type.startswith("text/"):
-        return response.text, ""
-    return "", f"contenu non textuel ({content_type})"
-
-
-#: url -> (fetched_at, text, warning). A success lives for the process; a failure is retried
-#: after WEB_RETRY_SECONDS.
-_WEB_TEXT_CACHE: dict[str, tuple[float, str, str]] = {}
-
-
-def _fetch_web_cached(url: str) -> tuple[str, str]:
-    cached = _WEB_TEXT_CACHE.get(url)
-    now = time.monotonic()
-    if cached is not None:
-        fetched_at, text, warning = cached
-        if not warning or now - fetched_at < WEB_RETRY_SECONDS:
-            return text, warning
-    text, warning = _fetch_web(url)
-    _WEB_TEXT_CACHE[url] = (now, text, warning)
-    return text, warning
 
 
 @dataclass
@@ -772,86 +566,3 @@ class SourceStore:
         if count > 1:
             raise ValueError(f"passage ambigu ({count} occurrences)")
         path.write_text(text.replace(old, new, 1), encoding="utf-8")
-
-
-def vault_notes(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
-    """Note names (relative to the vault root, ".md" stripped) containing `q`, case-insensitive.
-
-    Recursive, sorted, hidden directories (`.obsidian`, `.trash`, …) skipped.
-    """
-    root = vault.path
-    if not root.exists():
-        return []
-    q_lower = q.lower()
-    names = []
-    for path in root.rglob("*.md"):
-        rel = path.relative_to(root)
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        name = rel.with_suffix("").as_posix()
-        if q_lower in name.lower():
-            names.append(name)
-    names.sort(key=str.lower)
-    return names[:limit]
-
-
-def vault_pdfs(vault: Vault, q: str = "", limit: int = 50) -> list[str]:
-    """PDF paths under the vault's Zotero folder whose filename contains `q`, case-insensitive.
-
-    Paths under the user's home are returned with a `~/` prefix (what the user would type as a
-    PDF source target); others as absolute paths. Recursive, sorted, hidden directories skipped.
-    """
-    pdf_root = vault.path / "Zotero"
-    if not pdf_root.exists():
-        return []
-    home = Path.home()
-    q_lower = q.lower()
-    results: list[str] = []
-    for path in pdf_root.rglob("*.pdf"):
-        rel = path.relative_to(pdf_root)
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        if q_lower in rel.name.lower():
-            try:
-                results.append("~/" + str(path.relative_to(home)))
-            except ValueError:
-                results.append(str(path))
-    results.sort(key=str.lower)
-    return results[:limit]
-
-
-def zotero_open_uri(pdf_path: Path, vault: Vault) -> str | None:
-    """Return a ``zotero://open-pdf/…`` URI for *pdf_path*, or *None* if the lookup fails.
-
-    Queries the Zotero SQLite database for a linked attachment whose relative path (under the
-    vault's ``Zotero/`` folder) matches the file.  The match is case-insensitive because macOS
-    default filesystems (APFS) are case-insensitive and Zotero may store a different case than
-    the actual filename.
-    """
-    if not ZOTERO_DB.exists():
-        return None
-    zotero_root = vault.path / "Zotero"
-    resolved = pdf_path.expanduser().resolve()
-    try:
-        relative = resolved.relative_to(zotero_root.resolve())
-    except ValueError:
-        return None
-    db_path = f"attachments:{relative}"
-    try:
-        con = sqlite3.connect(f"file:{ZOTERO_DB}?mode=ro&immutable=1", uri=True)
-        try:
-            row = con.execute(
-                "SELECT i.key FROM itemAttachments ia"
-                " JOIN items i ON i.itemID = ia.itemID"
-                " WHERE ia.contentType = 'application/pdf'"
-                "   AND ia.path = ? COLLATE NOCASE",
-                (db_path,),
-            ).fetchone()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        log.warning("failed to query Zotero database", exc_info=True)
-        return None
-    if row is None:
-        return None
-    return f"zotero://open-pdf/library/items/{row[0]}"

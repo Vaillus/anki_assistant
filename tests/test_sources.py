@@ -12,6 +12,8 @@ import pypdf
 import pytest
 
 import anki_assistant.sources as sources_module
+import anki_assistant.sources.store as sources_store
+import anki_assistant.sources.web as sources_web
 from anki_assistant.sources import (
     Source,
     SourceStore,
@@ -375,7 +377,7 @@ def test_zotero_open_uri_finds_linked_attachment(
 
     db_path = tmp_path / "zotero.sqlite"
     _make_zotero_db(db_path, [("attachments:Author_2023_Title.pdf", "ABC12345")])
-    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+    monkeypatch.setattr(sources_store, "ZOTERO_DB", db_path)
 
     assert zotero_open_uri(pdf, vault) == "zotero://open-pdf/library/items/ABC12345"
 
@@ -391,7 +393,7 @@ def test_zotero_open_uri_returns_none_when_not_found(
 
     db_path = tmp_path / "zotero.sqlite"
     _make_zotero_db(db_path, [("attachments:Other.pdf", "XYZ00000")])
-    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+    monkeypatch.setattr(sources_store, "ZOTERO_DB", db_path)
 
     assert zotero_open_uri(pdf, vault) is None
 
@@ -400,7 +402,7 @@ def test_zotero_open_uri_returns_none_when_no_db(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     vault = Vault(name="V", path=tmp_path / "vault")
-    monkeypatch.setattr(sources_module, "ZOTERO_DB", tmp_path / "nope.sqlite")
+    monkeypatch.setattr(sources_store, "ZOTERO_DB", tmp_path / "nope.sqlite")
     assert zotero_open_uri(tmp_path / "any.pdf", vault) is None
 
 
@@ -413,19 +415,16 @@ def test_zotero_open_uri_subfolder(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
     db_path = tmp_path / "zotero.sqlite"
     _make_zotero_db(db_path, [("attachments:Lysk/Paper.pdf", "SUB99999")])
-    monkeypatch.setattr(sources_module, "ZOTERO_DB", db_path)
+    monkeypatch.setattr(sources_store, "ZOTERO_DB", db_path)
 
     assert zotero_open_uri(pdf, vault) == "zotero://open-pdf/library/items/SUB99999"
 
 
 @pytest.fixture(autouse=True)
 def _isolate_caches():
-    """The PDF and web text caches are process-global; keep test modules from leaking into
-    each other."""
-    sources_module._PDF_TEXT_CACHE.clear()
+    """The web text cache is process-global; keep test modules from leaking into each other."""
     sources_module._WEB_TEXT_CACHE.clear()
     yield
-    sources_module._PDF_TEXT_CACHE.clear()
     sources_module._WEB_TEXT_CACHE.clear()
 
 
@@ -481,7 +480,7 @@ def _mock_get(monkeypatch: pytest.MonkeyPatch, handler) -> list[str]:  # noqa: A
         response.request = request
         return response
 
-    monkeypatch.setattr(sources_module.httpx, "get", fake_get)
+    monkeypatch.setattr(sources_web.httpx, "get", fake_get)
     return calls
 
 
@@ -522,15 +521,15 @@ def test_web_source_failure_is_a_warning_and_retried_after_a_delay(
     )
     calls = _mock_get(monkeypatch, lambda req: next(responses))
     now = [0.0]
-    monkeypatch.setattr(sources_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(sources_web.time, "monotonic", lambda: now[0])
     source, vault = _web_source(), Vault()
 
     first = source.text(vault)
     assert first.text == "" and first.warning == "page inaccessible : HTTP 503"
-    now[0] = sources_module.WEB_RETRY_SECONDS - 1
+    now[0] = sources_web.WEB_RETRY_SECONDS - 1
     assert source.text(vault).warning == first.warning and len(calls) == 1, "failure cached"
 
-    now[0] = sources_module.WEB_RETRY_SECONDS + 1
+    now[0] = sources_web.WEB_RETRY_SECONDS + 1
     assert source.text(vault).text == "plain body"
     assert len(calls) == 2
 

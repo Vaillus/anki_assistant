@@ -177,7 +177,6 @@ function wsCardHtml(c, isFragment, depth, lines) {
       ? '<div class="ws-version">' +
         (v.by === "claude" ? "proposed by Claude" : "edited version") +
         (v.by === "claude" && v.edited ? " · edited" : "") +
-        (v.rationale ? " — " + esc(v.rationale) : "") +
         "</div>"
       : "";
   var connectorHtml = "";
@@ -496,7 +495,6 @@ function msgHtml(m, mi) {
       html +=
         '<div class="reading">' +
         (part.error ? "add refused: " + esc(part.error) : "adding: " + part.count + " note(s)") +
-        (part.rationale ? " — " + esc(part.rationale) : "") +
         "</div>";
     }
   });
@@ -569,7 +567,6 @@ function proposalHtml(p, mi, pi) {
     (p.kind === "add_source" ? "add source" : p.kind === "create_source" ? "new source" : "source") +
     "</span>" +
     '<span class="grow"></span>' + head + "</div>" +
-    (input.rationale ? '<div class="rationale">' + nl2br(input.rationale) + "</div>" : "") +
     '<div class="diff">' + diff + "</div>" +
     (p.error ? '<div class="banner">' + esc(p.error) + "</div>" : "") +
     "</div>"

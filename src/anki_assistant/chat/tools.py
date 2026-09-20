@@ -71,10 +71,6 @@ def _fields_schema(description: str = _FIELDS_DESC) -> dict[str, Any]:
     }
 
 
-_RATIONALE = {
-    "type": "string",
-    "description": "One sentence, in the user's language: why this change.",
-}
 _TAGS = {
     "type": "array",
     "items": {"type": "string"},
@@ -165,9 +161,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "changes). Complete raw values. " + _FIELDS_DESC
                     ),
                     "tags": _TAGS,
-                    "rationale": _RATIONALE,
                 },
-                required=["target", "fields", "rationale"],
+                required=["target", "fields"],
             ),
         },
         {
@@ -208,9 +203,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                             required=["model", "fields"],
                         ),
                     },
-                    "rationale": _RATIONALE,
                 },
-                required=["target", "original", "new_notes", "rationale"],
+                required=["target", "original", "new_notes"],
             ),
         },
         {
@@ -232,9 +226,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                             "anchors. Omit to carry over the root's."
                         ),
                     },
-                    "rationale": _RATIONALE,
                 },
-                required=["fields", "rationale"],
+                required=["fields"],
             ),
         },
         {
@@ -250,9 +243,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Destination deck, full name with `::`.",
                     },
-                    "rationale": _RATIONALE,
                 },
-                required=["target", "deck", "rationale"],
+                required=["target", "deck"],
             ),
         },
         {
@@ -295,9 +287,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "items": {"type": "integer"},
                         "description": "Anki notes to anchor to this source once added.",
                     },
-                    "rationale": _RATIONALE,
                 },
-                required=["target", "rationale"],
+                required=["target"],
             ),
         },
         {
@@ -327,9 +318,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                         "items": {"type": "integer"},
                         "description": "Anki notes to anchor to this source once created.",
                     },
-                    "rationale": _RATIONALE,
                 },
-                required=["name", "content", "rationale"],
+                required=["name", "content"],
             ),
         },
         {
@@ -347,9 +337,8 @@ def proposal_tools() -> list[dict[str, Any]]:
                     },
                     "old": {"type": "string", "description": "Current passage, verbatim."},
                     "new": {"type": "string", "description": "Replacement passage."},
-                    "rationale": _RATIONALE,
                 },
-                required=["source_id", "old", "new", "rationale"],
+                required=["source_id", "old", "new"],
             ),
         },
     ]
@@ -431,12 +420,8 @@ def read_tool_defs() -> list[dict[str, Any]]:
                         "minItems": 1,
                         "description": "Identifiers of the notes to add.",
                     },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One sentence, in the user's language: why these notes.",
-                    },
                 },
-                required=["note_ids", "rationale"],
+                required=["note_ids"],
             ),
         },
         {

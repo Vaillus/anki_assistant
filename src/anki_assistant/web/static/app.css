@@ -422,7 +422,6 @@ a { color: var(--accent); }
   color: var(--accent);
   text-transform: uppercase;
 }
-.rationale { font-size: 13px; margin-bottom: 6px; }
 .diff { border-top: 1px dashed var(--line); padding-top: 6px; }
 .diff .before { background: var(--dangerbg); border-left: 3px solid var(--dangerline); padding: 4px 8px; }
 .diff .after { background: var(--diffokbg); border-left: 3px solid var(--okline); padding: 4px 8px; margin-top: 4px; }

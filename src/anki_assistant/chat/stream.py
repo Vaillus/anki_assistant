@@ -404,7 +404,6 @@ async def stream_chat(
                         {
                             "id": block.id,
                             "note_ids": ids,
-                            "rationale": str(tool_input.get("rationale") or ""),
                         },
                     )
                     continue

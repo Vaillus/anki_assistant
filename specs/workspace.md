@@ -41,8 +41,6 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 │                                                      │
 │  Text:  There are {{c1::three}} conditions…          │
 │                                                      │
-│  rationale: « split c2 into its own note »           │
-│                                                      │
 │  ┌ user comment · flag reason · c2 ────────────────┐ │
 │  │ too vague, needs splitting                       │ │
 │  └─────────────────────────────────────────────────┘ │
@@ -84,8 +82,6 @@ The **user comment** sits at the bottom, under the fields, in every version — 
 
 When the **flag is on** the user comment becomes a `<textarea>` prefilled with `Back Extra` as plain text, so the user can complete or rewrite the reason. At validation its content — the **comment** — is written back to `Back Extra` (line breaks → `<br>`, markup escaped), but only if the user changed it. When the note type has no `Back Extra`, only the flag is set.
 
-Under a version proposed by Claude, its rationale in one muted line.
-
 ### States
 
 Applied at [validation](#validation); reversible until then.
@@ -99,7 +95,7 @@ Applied at [validation](#validation); reversible until then.
 
 Click on a field to edit: the field becomes a textarea holding the raw value, focused, with no preview; blur closes it and the field is rendered again. The other fields stay rendered meanwhile. Field names are not editable; fields cannot be added or removed by hand.
 
-Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « edited ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version keeps its rationale and gains the « edited » mark.
+Editing modifies the shown version in place, except **v0**: v0 is Anki's and never changes, so the first keystroke copies v0 into a new version (marked « edited ») that becomes the shown one. Any version other than v0 is editable, including Claude's; a hand-edited Claude version gains the « edited » mark.
 
 A `propose_edit` with a different note type replaces the entire field set with the new type's fields; the card head shows the version's [note type](./notes.md#note-type-across-versions) with a ⇄ indicator. The plan sends the shown version's note type, for a draft as for an existing note.
 

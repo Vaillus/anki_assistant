@@ -21,7 +21,7 @@ By default only decks with a rolled-up count above zero are shown; a toggle show
 
 Two entry points, same outcome:
 
-1. **Header button** — a `+` button in the deck tree header, next to the toggle. Clicking it opens an inline input at the top of the deck list where the user types the full deck name. An autocomplete dropdown suggests existing deck paths as the user types, so they can pick a parent prefix (e.g. selecting `Médecine::Cardio` and then typing `::Arythmies`).
+1. **Add-deck button** — a row at the top of the deck list (below the header), labelled "+ Add a deck". Clicking it opens an inline input where the user types the full deck name. An autocomplete dropdown suggests existing deck paths as the user types, so they can pick a parent prefix (e.g. selecting `Médecine::Cardio` and then typing `::Arythmies`).
 2. **Context menu** — right-clicking a deck row opens a context menu with two items: "Nouveau sous-paquet" (opens the inline input pre-filled with the right-clicked deck's name followed by `::`) and "Supprimer le paquet" (deletes the deck and its cards after a `confirm()` prompt).
 
 Pressing `Entrée` in the input submits; `Échap` cancels and closes the input. The input is dismissed after a successful creation or on cancel.

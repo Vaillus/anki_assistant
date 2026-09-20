@@ -10,7 +10,8 @@ function draw() {
   if (!root) return;
   const scroll = captureScroll(root);
   root.innerHTML =
-    '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>" + wsOverlay();
+    '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>" +
+    themePicker() + wsOverlay();
   restoreScroll(root, scroll);
   if (S.refocus) {
     const el = root.querySelector('[data-focus="' + S.refocus + '"]');
@@ -54,12 +55,11 @@ function deckColumn() {
     '<div class="col-head">' +
     '<img class="logo" src="/static/star.svg" alt="" width="20" height="20">' +
     "<h2>Decks</h2><span class=\"grow\"></span>" +
-    '<button class="ghost" data-act="new-deck" title="Nouveau paquet">+</button>' +
     '<button class="ghost" data-act="alldecks">' +
     (S.showAllDecks ? "flagged only" : "all") +
     "</button>" +
-    themePicker() +
     "</div>" +
+    '<button class="add-deck" data-act="new-deck">+ Add a deck</button>' +
     newDeckInput() +
     rows +
     "</div>"

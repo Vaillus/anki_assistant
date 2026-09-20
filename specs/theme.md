@@ -19,7 +19,7 @@ Two derivation rules govern the bindings:
 
 ## Picker
 
-The theme picker lives in the header of column 1. It lists every theme grouped by mode (dark / light) and repaints on change, so the list doubles as a way to try them on. The choice is stored in `localStorage` under `anki-theme` as a slug, degrading to session-only if `localStorage` throws.
+The theme picker is fixed in the top-right corner of the screen. It lists every theme grouped by mode (dark / light) and repaints on change, so the list doubles as a way to try them on. The choice is stored in `localStorage` under `anki-theme` as a slug, degrading to session-only if `localStorage` throws.
 
 With no stored choice, the OS preference (`prefers-color-scheme`) picks between two defaults — Tokyo Night (dark) and Catppuccin Latte (light) — and is followed live. The resolved theme is stamped on `<html>` as `data-theme` by an inline script in `index.html`, before the stylesheets, so a reload never flashes another theme.
 

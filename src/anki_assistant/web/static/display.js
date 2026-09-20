@@ -54,15 +54,6 @@ function hideClozes(html, ns) {
   });
 }
 
-/* True when the note has something to hide: flagged, and a flagged cloze exists in its fields. */
-function hasHiddenClozes(n) {
-  if (!n || !n.flagged) return false;
-  const ns = flaggedClozes(n);
-  if (!ns.length) return false;
-  const html = Object.values(n.fields_html || {}).join("");
-  return ns.some((k) => html.indexOf(`<span class="cloze" data-n="${k}"`) >= 0);
-}
-
 /* ---------- text helpers ---------- */
 
 /* Plain text (no markup at all), used for the reason callout and previews. */

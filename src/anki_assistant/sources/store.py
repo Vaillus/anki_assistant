@@ -289,14 +289,14 @@ class Source:
         n_pages = self.pdf_n_pages()
         if toc_entries:
             lines = [f"- p.{p} {h}" for p, h in toc_entries]
-            outline = "Structure du document :\n" + "\n".join(lines)
+            outline = "Document structure:\n" + "\n".join(lines)
         else:
-            outline = f"PDF de {n_pages} pages, pas de structure détectée."
+            outline = f"PDF of {n_pages} pages, no structure detected."
         return SourceText(
             text=outline,
             truncated=False,
             n_pages=n_pages,
-            warning="Utilise read_source avec le paramètre pages pour lire des pages précises.",
+            warning="Use read_source with the pages parameter to read specific pages.",
         )
 
 
@@ -530,11 +530,11 @@ class SourceStore:
         """
         clean = name.strip().strip("/")
         if not clean:
-            raise ValueError("nom de note vide")
+            raise ValueError("empty note name")
         target = clean[:-3] if clean.endswith(".md") else clean
         path = self.vault.path / f"{target}.md"
         if path.exists():
-            raise FileExistsError(f"{target}.md existe déjà dans le vault")
+            raise FileExistsError(f"{target}.md already exists in the vault")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return self.add_source(
@@ -551,18 +551,18 @@ class SourceStore:
         """
         source = self.by_id(source_id)
         if source is None:
-            raise KeyError(f"source inconnue : {source_id}")
+            raise KeyError(f"unknown source: {source_id}")
         if source.kind != "obsidian":
-            raise ValueError("seule une note Obsidian peut être modifiée")
+            raise ValueError("only an Obsidian note can be edited")
         if not old:
-            raise ValueError("passage à remplacer vide")
+            raise ValueError("empty passage to replace")
         path = source.note_path(self.vault)
         if path is None or not path.exists():
-            raise ValueError("fichier introuvable")
+            raise ValueError("file not found")
         text = path.read_text(encoding="utf-8")
         count = text.count(old)
         if count == 0:
-            raise ValueError("passage introuvable")
+            raise ValueError("passage not found")
         if count > 1:
-            raise ValueError(f"passage ambigu ({count} occurrences)")
+            raise ValueError(f"ambiguous passage ({count} occurrences)")
         path.write_text(text.replace(old, new, 1), encoding="utf-8")

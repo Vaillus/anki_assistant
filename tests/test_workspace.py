@@ -85,19 +85,19 @@ def test_validate_reports_every_shape_problem() -> None:
     errors = workspace.validate(plan)
     joined = "\n".join(errors)
     for needle in (
-        "carte sans identifiant",
-        "identifiant w1 en double",
-        "action inconnue",
-        "n'a pas de note_id",
-        "type de note manquant",
-        "champs manquants",
-        "ne se déplace pas",
-        "apparaît deux fois",
-        "note_id manquant",
-        "une note supprimée ne se déplace pas",
+        "card without an identifier",
+        "duplicate identifier w1",
+        "unknown action",
+        "has a note_id",
+        "missing note type",
+        "missing fields",
+        "cannot be moved",
+        "appears twice",
+        "missing note_id",
+        "a deleted note cannot be moved",
     ):
         assert needle in joined, needle
-    assert workspace.validate(ApplyPlan(deck="d")) == ["plan vide"]
+    assert workspace.validate(ApplyPlan(deck="d")) == ["empty plan"]
     assert workspace.validate(ApplyPlan(deck="d", cards=[edit("w1", 1, "x")])) == []
 
 
@@ -280,7 +280,7 @@ def test_failure_in_the_middle_rolls_back_creates_and_edits(anki: FailingAnki, s
     assert report.rolled_back is True
     assert report.created == {}, "the created note was deleted again"
     assert report.resolved == []
-    assert any(e.startswith(f"modification de #{b}") for e in report.errors)
+    assert any(e.startswith(f"editing #{b}") for e in report.errors)
     assert anki.notes[a]["fields"] == {"Text": "a0", "Back Extra": "r"}
     assert anki.notes[a]["tags"] == ["x"]
     assert anki.flags_of(a) == [2], "never unflagged: the failure came before"
@@ -329,8 +329,8 @@ def test_rollback_failure_is_reported_and_created_notes_keep_their_ids(
     assert report.ok is False
     assert report.rolled_back is False
     assert list(report.created) == ["w0"], "still in Anki: the client keeps its id"
-    assert any("annulation de la création" in e for e in report.errors)
-    assert any(e.startswith(f"déplacement de #{a}") for e in report.errors)
+    assert any("reverting creation of" in e for e in report.errors)
+    assert any(e.startswith(f"moving #{a}") for e in report.errors)
 
 
 # ------------------------------------------------------------------------------ undo
@@ -607,7 +607,7 @@ def test_model_change_decides_back_extra_from_the_new_type(anki: FailingAnki, st
     assert snap.written[cleared] == {"Front": "q", "Back": "a"}
     assert snap.written[deferred] == {"Front": "q2", "Back": "a2"}
     assert anki.notes[cleared]["fields"] == {"Front": "q", "Back": "a"}
-    assert report.errors == ["w2 : pas de champ Back Extra, commentaire non écrit"]
+    assert report.errors == ["w2: no Back Extra field, comment not written"]
     assert report.deferred == [deferred] and anki.flags_of(deferred) == [1]
     assert "modelFieldNames" in anki.calls
 
@@ -699,9 +699,9 @@ def test_an_unknown_field_or_an_empty_first_field_is_refused_before_writing(
     with pytest.raises(workspace.PlanError) as exc:
         workspace.apply(anki, store, bad)
     message = str(exc.value)
-    assert "w1 : champ « Recto » inconnu du type Basic (champs : Front, Back)" in message
-    assert "w2 : le premier champ (Front) est vide" in message
-    assert "w3 : champ « Extra » inconnu du type Cloze" in message
+    assert "w1: field « Recto » unknown for type Basic (fields: Front, Back)" in message
+    assert "w2: the first field (Front) is empty" in message
+    assert "w3: field « Extra » unknown for type Cloze" in message
     assert "addNote" not in anki.calls and "updateNote" not in anki.calls
     assert anki.notes[nid]["fields"] == {"Text": "old", "Back Extra": ""}
 
@@ -719,9 +719,9 @@ def test_validate_rejects_a_deferral_or_comment_in_the_wrong_place() -> None:
         ],
     )
     joined = "\n".join(workspace.validate(plan))
-    assert "w1 : seule une modification ou une création se diffère" in joined
-    assert "w2 : un commentaire accompagne une note différée" in joined
-    assert "w3 : note_id manquant" in joined
+    assert "w1: only an edit or a create can be deferred" in joined
+    assert "w2: a comment accompanies a non-deferred note" in joined
+    assert "w3: missing note_id" in joined
     fine = ApplyPlan(
         deck="d",
         cards=[
@@ -732,7 +732,7 @@ def test_validate_rejects_a_deferral_or_comment_in_the_wrong_place() -> None:
     )
     assert workspace.validate(fine) == []
     bad = ApplyPlan(deck="d", cards=[create("w1", "new", comment="x")])
-    assert workspace.validate(bad) == ["w1 : un commentaire accompagne une note différée"]
+    assert workspace.validate(bad) == ["w1: a comment accompanies a non-deferred note"]
 
 
 def test_a_deferred_draft_is_created_flagged_with_its_comment(
@@ -788,7 +788,7 @@ def test_a_deferred_draft_gets_its_comment_even_when_the_proposal_left_the_field
     assert report.ok
     assert anki.notes[report.created["w1"]]["fields"]["Back Extra"] == "à finir"
     assert anki.flags_of(report.created["w2"]) == [1]
-    assert report.errors == ["w2 : pas de champ Back Extra, commentaire non écrit"]
+    assert report.errors == ["w2: no Back Extra field, comment not written"]
 
 
 def test_a_failure_after_a_deferred_draft_deletes_it(anki: FailingAnki, store: SourceStore):
@@ -877,7 +877,7 @@ def test_defer_on_a_note_type_without_back_extra_flags_and_reports(
     assert report.ok
     assert anki.flags_of(nid) == [1]
     assert anki.notes[nid]["fields"] == {"Front": "f", "Back": "b"}
-    assert report.errors == ["w1 : pas de champ Back Extra, commentaire non écrit"]
+    assert report.errors == ["w1: no Back Extra field, comment not written"]
 
 
 def test_undo_reverts_a_deferral(anki: FailingAnki, store: SourceStore):

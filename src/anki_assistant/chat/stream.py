@@ -66,7 +66,7 @@ def _web_outcome(block: Any) -> tuple[list[Any], str]:
     content = _attr(block, "content")
     code = _field(content, "error_code")
     if code or _field(content, "type").endswith("_error"):
-        return [], code or "erreur inconnue"
+        return [], code or "unknown error"
     if isinstance(content, list):
         return content, ""
     return ([] if content is None else [content]), ""
@@ -77,17 +77,17 @@ def _web_summary(tool: str, call_input: Mapping[str, Any], results: Sequence[Any
     guarantee (specs/chat.md#web-tools) — the user must never learn of a page after the fact."""
     if tool == "web_fetch":
         url = str(call_input.get("url") or "") or (_field(results[0], "url") if results else "")
-        return f"erreur : {err}" if err else (url or "page")
+        return f"error: {err}" if err else (url or "page")
     query = str(call_input.get("query") or "")
-    head = f"« {query} »" if query else "recherche"
+    head = f"« {query} »" if query else "search"
     if err:
-        return f"{head} → erreur : {err}"
+        return f"{head} → error: {err}"
     if not results:
-        return f"{head} → aucun résultat"
+        return f"{head} → no results"
     urls = [url for url in (_field(r, "url") for r in results) if url]
     rest = len(urls) - WEB_URLS_SHOWN
     tail = f" (+{rest})" if rest > 0 else ""
-    return f"{head} → {len(results)} résultat(s) : {', '.join(urls[:WEB_URLS_SHOWN])}{tail}"
+    return f"{head} → {len(results)} result(s): {', '.join(urls[:WEB_URLS_SHOWN])}{tail}"
 
 
 def _web_events(content: Sequence[Any], calls: dict[str, dict[str, Any]]) -> list[ChatEvent]:
@@ -240,7 +240,7 @@ class _Roster:
         if text in self.wids:
             return None
         if not text.isdigit():
-            return f"cible inconnue : « {text} » (numéro de carte ou identifiant Anki)"
+            return f"unknown target: « {text} » (card number or Anki id)"
         nid = int(text)
         if nid in self.note_ids:
             return None
@@ -251,8 +251,7 @@ class _Roster:
 
 
 _FULL = (
-    f"espace de travail plein ({MAX_CARDS} cartes) : resserre la sélection ou demande à "
-    "l'utilisateur d'écarter des cartes."
+    f"workspace full ({MAX_CARDS} cards): narrow the selection or ask the user to drop some cards."
 )
 
 
@@ -371,8 +370,8 @@ async def stream_chat(
                     if kind in NEW_SOURCE_KINDS:
                         data["source_id"] = new_source_id()
                         answer = (
-                            f"ok — une fois appliquée, la source aura l'identifiant "
-                            f"{data['source_id']} (utilisable dans source_ids de propose_create)."
+                            f"ok — once applied, the source will carry the identifier "
+                            f"{data['source_id']} (usable in propose_create's source_ids)."
                         )
                     yield ChatEvent("proposal", data)
                     results.append(_tool_result(block.id, answer))
@@ -415,7 +414,7 @@ async def stream_chat(
                         "id": block.id,
                         "tool": block.name,
                         "input": tool_input,
-                        "summary": ("erreur : " if failed else "") + _summary(text),
+                        "summary": ("error: " if failed else "") + _summary(text),
                     },
                 )
             convo.append({"role": "assistant", "content": final.content})

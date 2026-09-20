@@ -44,7 +44,7 @@ async function saveNewSource() {
   if (!f) return;
   const target = String(f.target || "").trim();
   if (!target) {
-    f.error = "Indique une cible.";
+    f.error = "Provide a target.";
     draw();
     return;
   }

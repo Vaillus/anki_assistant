@@ -26,17 +26,17 @@ function wsHeadHtml() {
   const root = wsRoot();
   const ch = wsChanges();
   const parts = [];
-  if (ch.edited) parts.push(ch.edited + " modifiée(s)");
-  if (ch.created) parts.push(ch.created + " créée(s)");
-  if (ch.deleted) parts.push(ch.deleted + " supprimée(s)");
-  if (ch.kept) parts.push(ch.kept + " gardée(s)");
-  if (ch.deferred) parts.push(ch.deferred + " à revoir");
-  if (ch.moved) parts.push(ch.moved + " déplacée(s)");
+  if (ch.edited) parts.push(ch.edited + " edited");
+  if (ch.created) parts.push(ch.created + " created");
+  if (ch.deleted) parts.push(ch.deleted + " deleted");
+  if (ch.kept) parts.push(ch.kept + " kept");
+  if (ch.deferred) parts.push(ch.deferred + " deferred");
+  if (ch.moved) parts.push(ch.moved + " moved");
   const disabled = !ch.total || ws.applying || ws.chatBusy ? " disabled" : "";
   return (
     '<div class="ws-head">' +
     "<b>" +
-    (root && root.noteId ? esc(short(root.noteId)) : "espace de travail") +
+    (root && root.noteId ? esc(short(root.noteId)) : "workspace") +
     "</b>" +
     '<span class="tag">' +
     esc(ws.deck) +
@@ -44,13 +44,13 @@ function wsHeadHtml() {
     '<span class="grow"></span>' +
     '<label class="check small"><input type="checkbox" data-input="ws-clear-reason"' +
     (ws.clearReason ? " checked" : "") +
-    "> vider Back Extra</label>" +
+    "> clear Back Extra</label>" +
     '<button class="primary" data-act="ws-validate"' +
     disabled +
     ">" +
-    (ws.applying ? "Validation…" : "Valider" + (parts.length ? " · " + parts.join(" · ") : "")) +
+    (ws.applying ? "Applying…" : "Apply" + (parts.length ? " · " + parts.join(" · ") : "")) +
     "</button>" +
-    '<button class="ghost icon" data-act="ws-close" title="Fermer (Esc)" aria-label="Fermer">×</button>' +
+    '<button class="ghost icon" data-act="ws-close" title="Close (Esc)" aria-label="Close">×</button>' +
     "</div>"
   );
 }
@@ -60,12 +60,12 @@ function wsReportHtml() {
   if (!r) return "";
   return (
     '<div class="banner"><div class="grow">' +
-    "<b>Validation échouée.</b> " +
+    "<b>Validation failed.</b> " +
     (r.nothing_written
-      ? "Rien n'a été écrit."
+      ? "Nothing was written."
       : r.rolled_back
-        ? "Tout a été remis en place."
-        : "Certaines écritures n'ont pas pu être annulées.") +
+        ? "Everything was rolled back."
+        : "Some writes could not be rolled back.") +
     (r.errors || []).map((x) => "<br>" + esc(x)).join("") +
     '</div><button class="ghost" data-act="ws-dismiss-report">×</button></div>'
   );
@@ -132,8 +132,8 @@ function wsCardHtml(c, isFragment, depth, lines) {
   const plan = planCard(c);
   const badges =
     (c.deleted ? "" : flagToggleHtml(c)) +
-    (c.deleted ? '<span class="badge state">supprimée</span>' : "") +
-    (plan && plan.action === "keep" ? '<span class="badge state ok">gardée</span>' : "") +
+    (c.deleted ? '<span class="badge state">deleted</span>' : "") +
+    (plan && plan.action === "keep" ? '<span class="badge state ok">kept</span>' : "") +
     (c.moveTo ? '<span class="badge state">→ ' + esc(c.moveTo) + "</span>" : "");
   const versions =
     n > 1
@@ -145,29 +145,29 @@ function wsCardHtml(c, isFragment, depth, lines) {
       : "";
   const canInvalidate = !(c.noteId && c.vi === 0);
   const splitBtn = !c.deleted
-    ? '<button class="ghost small" data-act="ws-split" data-wid="' + c.wid + '" title="demander à Claude de scinder cette carte">✂</button>'
+    ? '<button class="ghost small" data-act="ws-split" data-wid="' + c.wid + '" title="ask Claude to split this card">✂</button>'
     : "";
   const actions =
     (canInvalidate
-      ? '<button class="ghost small" data-act="ws-invalidate" data-wid="' + c.wid + '" title="retirer cette version">invalider</button>'
+      ? '<button class="ghost small" data-act="ws-invalidate" data-wid="' + c.wid + '" title="discard this version">discard</button>'
       : "") +
     (c.noteId
       ? '<button class="ghost small' + (c.deleted ? "" : " dangerish") + '" data-act="ws-delete" data-wid="' + c.wid + '">' +
-        (c.deleted ? "restaurer" : "supprimer") +
+        (c.deleted ? "restore" : "delete") +
         "</button>"
       : "") +
     (c.noteId && !c.deleted ? movePickerHtml(c) : "") +
-    '<button class="ghost small" data-act="ws-remove" data-wid="' + c.wid + '" title="retirer cette carte de l\'espace de travail">retirer</button>' +
+    '<button class="ghost small" data-act="ws-remove" data-wid="' + c.wid + '" title="remove this card from the workspace">remove</button>' +
     splitBtn;
   const effectiveModel = shownModel(c);
   const modelChanged = c.noteId && effectiveModel !== c.model;
-  const parentLabel = isFragment && c.parentWid ? " · fragment de " + c.parentWid : "";
+  const parentLabel = isFragment && c.parentWid ? " · fragment of " + c.parentWid : "";
   const identity =
     '<span class="tag">' +
-    (c.noteId ? esc(short(c.noteId)) : "brouillon") +
+    (c.noteId ? esc(short(c.noteId)) : "draft") +
     " · " +
     esc(effectiveModel || "") +
-    (modelChanged ? ' <b title="type changé (était ' + esc(c.model) + ')">⇄</b>' : "") +
+    (modelChanged ? ' <b title="type changed (was ' + esc(c.model) + ')">⇄</b>' : "") +
     (c.deck && c.deck !== S.ws.deck ? " · " + esc(c.deck) : "") +
     (c.tags.length ? " · " + esc(c.tags.join(" ")) : "") +
     esc(parentLabel) +
@@ -175,8 +175,8 @@ function wsCardHtml(c, isFragment, depth, lines) {
   const meta =
     v.by === "claude" || v.by === "user" || v.edited
       ? '<div class="ws-version">' +
-        (v.by === "claude" ? "proposée par Claude" : "version éditée") +
-        (v.by === "claude" && v.edited ? " · éditée" : "") +
+        (v.by === "claude" ? "proposed by Claude" : "edited version") +
+        (v.by === "claude" && v.edited ? " · edited" : "") +
         (v.rationale ? " — " + esc(v.rationale) : "") +
         "</div>"
       : "";
@@ -196,7 +196,7 @@ function wsCardHtml(c, isFragment, depth, lines) {
     '<div class="' + cls + '" data-wid="' + c.wid + '"' + (indentPx ? ' style="margin-left:' + indentPx + 'px"' : "") + ">" +
     connectorHtml +
     '<div class="ws-card-head" data-act="ws-toggle" data-wid="' + c.wid + '" title="' +
-    (c.active ? "active — cliquer pour exclure du prochain message" : "inactive — cliquer pour inclure") +
+    (c.active ? "active — click to exclude from next message" : "inactive — click to include") +
     '">' +
     '<span class="ws-dot' + (c.active ? " on" : "") + '"></span>' +
     '<span class="ws-wid">' + esc(c.wid) + "</span>" +
@@ -211,7 +211,7 @@ function wsCardHtml(c, isFragment, depth, lines) {
     (c.flag.on && !c.deleted
       ? wsCommentHtml(c)
       : c.noteId && c.reason
-        ? '<div class="reason"><span class="reason-label">raison du flag' + clozeLabels(c) + "</span>" + nl2br(c.reason) + "</div>"
+        ? '<div class="reason"><span class="reason-label">flag reason' + clozeLabels(c) + "</span>" + nl2br(c.reason) + "</div>"
         : !c.noteId && plainText(shownFields(c)[REASON_FIELD] || "")
           ? '<div class="reason"><span class="reason-label">' + esc(REASON_FIELD) + "</span>" + nl2br(plainText(shownFields(c)[REASON_FIELD])) + "</div>"
           : "") +
@@ -228,13 +228,13 @@ function clozeLabels(c) {
 /* The ⚑ toggle of the card head (specs/workspace.md#card-head). */
 function flagToggleHtml(c) {
   let title;
-  if (c.flag.on) title = "restera flaguée à la validation — cliquer pour la résoudre";
-  else if (c.ankiFlagged) title = "le flag sera levé à la validation — cliquer pour le garder";
-  else title = "sans flag — cliquer pour la flaguer, à revoir plus tard";
+  if (c.flag.on) title = "will stay flagged on apply — click to resolve";
+  else if (c.ankiFlagged) title = "flag will be cleared on apply — click to keep it";
+  else title = "not flagged — click to flag for later review";
   return (
     '<button class="badge flag-toggle' + (c.flag.on ? " on" : "") + '" data-act="ws-flag" data-wid="' + c.wid +
     '" title="' + title + '" aria-pressed="' + (c.flag.on ? "true" : "false") + '">⚑' +
-    (c.flag.on ? " à revoir" : "") +
+    (c.flag.on ? " to review" : "") +
     "</button>"
   );
 }
@@ -244,22 +244,22 @@ function flagToggleHtml(c) {
 function wsCommentHtml(c) {
   if (!hasReasonField(c)) {
     return (
-      '<div class="reason flagged"><span class="reason-label">à revoir' + clozeLabels(c) + "</span>" +
-      "pas de champ " + esc(REASON_FIELD) + " : le flag sera posé sans commentaire</div>"
+      '<div class="reason flagged"><span class="reason-label">to review' + clozeLabels(c) + "</span>" +
+      "no " + esc(REASON_FIELD) + " field: the flag will be set without a comment</div>"
     );
   }
   return (
-    '<div class="reason flagged"><span class="reason-label">raison du flag' + clozeLabels(c) + " · sera écrite</span>" +
+    '<div class="reason flagged"><span class="reason-label">flag reason' + clozeLabels(c) + " · will be written</span>" +
     '<textarea data-input="ws-comment" data-wid="' + c.wid + '" data-focus="ws-comment-' + c.wid + '" rows="2"' +
-    ' placeholder="pourquoi cette note reste à revoir">' + esc(c.flag.comment) + "</textarea></div>"
+    ' placeholder="why this note needs further review">' + esc(c.flag.comment) + "</textarea></div>"
   );
 }
 
 function movePickerHtml(c) {
   const decks = (S.decks || []).map((d) => d.name);
   return (
-    '<select class="ws-move small" data-input="ws-move" data-wid="' + c.wid + '" title="déplacer vers un autre deck">' +
-    '<option value=""' + (c.moveTo ? "" : " selected") + ">" + (c.moveTo ? "ne pas déplacer" : "déplacer…") + "</option>" +
+    '<select class="ws-move small" data-input="ws-move" data-wid="' + c.wid + '" title="move to another deck">' +
+    '<option value=""' + (c.moveTo ? "" : " selected") + ">" + (c.moveTo ? "don't move" : "move…") + "</option>" +
     decks
       .filter((d) => d !== c.deck)
       .map((d) => '<option value="' + esc(d) + '"' + (c.moveTo === d ? " selected" : "") + ">" + esc(d) + "</option>")
@@ -293,8 +293,8 @@ function wsFieldsHtml(c) {
         let html = renderField(raw);
         if (hidden) html = hideClozes(html, c.flaggedClozes);
         body =
-          '<div class="field-val' + (c.deleted ? "" : " editable") + '" data-act="ws-edit" data-wid="' + c.wid + '" data-field="' + esc(name) + '" title="cliquer pour éditer la valeur brute">' +
-          (html || '<span class="muted">(vide)</span>') +
+          '<div class="field-val' + (c.deleted ? "" : " editable") + '" data-act="ws-edit" data-wid="' + c.wid + '" data-field="' + esc(name) + '" title="click to edit raw value">' +
+          (html || '<span class="muted">(empty)</span>') +
           "</div>";
       }
       return '<div class="field-name">' + esc(name) + "</div>" + body;
@@ -308,9 +308,9 @@ function wsRevealHtml(c) {
   if (!c.flaggedClozes.some((k) => html.indexOf('<span class="cloze" data-n="' + k + '"') >= 0)) return "";
   return (
     '<div class="reveal"><button class="ghost" data-act="ws-reveal" data-wid="' + c.wid + '">' +
-    (c.revealed ? "Masquer à nouveau" : "Révéler la réponse") +
+    (c.revealed ? "Hide again" : "Reveal answer") +
     "</button>" +
-    (c.revealed ? "" : '<span class="muted small">la note telle que vue au moment du flag</span>') +
+    (c.revealed ? "" : '<span class="muted small">the note as seen when flagged</span>') +
     "</div>"
   );
 }
@@ -324,7 +324,7 @@ function chatPane() {
     ? '<div class="chips">' +
       sourceChipsHtml() +
       "</div>" +
-      '<textarea data-input="chat" data-focus="chat" placeholder="Demande une reformulation, un split, une vérification… (Entrée pour envoyer, Shift+Entrée pour un saut de ligne)"' +
+      '<textarea data-input="chat" data-focus="chat" placeholder="Ask for a rewrite, a split, a fact-check… (Enter to send, Shift+Enter for a line break)"' +
       (ws.chatBusy ? " disabled" : "") +
       ">" +
       esc(ws.chatDraft) +
@@ -335,9 +335,9 @@ function chatPane() {
         : '<span class="grow"></span>') +
       '<button class="primary" data-act="ws-send"' +
       (ws.chatBusy ? " disabled" : "") +
-      ">Envoyer</button></div>"
-    : '<div class="banner">Ajoute ANTHROPIC_API_KEY dans .env puis relance anki-web</div>' +
-      '<textarea disabled placeholder="chat indisponible"></textarea>';
+      ">Send</button></div>"
+    : '<div class="banner">Add ANTHROPIC_API_KEY to .env and restart anki-web</div>' +
+      '<textarea disabled placeholder="chat unavailable"></textarea>';
   return (
     '<div class="chat">' +
     '<div class="log" id="chat-log" data-scroll="chat">' +
@@ -353,14 +353,14 @@ function chatPane() {
    corpus under « + source » (specs/chat.md#how-source-text-enters-context). */
 function sourceChipsHtml() {
   const sources = ((S.corpus || {}).sources) || [];
-  if (!sources.length) return '<span class="muted small">aucune source dans le corpus</span>';
+  if (!sources.length) return '<span class="muted small">no sources in the corpus</span>';
   const attached = S.ws.chatSources.filter((id) => sourceById(id));
   const root = wsRoot();
   const anchored = (root && root.anchors) || [];
   const attachedHtml = attached
     .map(
       (id) =>
-        '<span class="chip src" title="source jointe au contexte">' +
+        '<span class="chip src" title="source attached to context">' +
         esc(sourceById(id).target) +
         ' <b data-act="detach-src" data-src="' + esc(id) + '">×</b></span>',
     )
@@ -369,14 +369,14 @@ function sourceChipsHtml() {
     .filter((id) => sourceById(id) && attached.indexOf(id) < 0)
     .map(
       (id) =>
-        '<button class="chip anchor" data-act="attach-src" data-src="' + esc(id) + '" title="ancrée à la racine — joindre son texte au contexte">⚓ joindre ' +
+        '<button class="chip anchor" data-act="attach-src" data-src="' + esc(id) + '" title="anchored to root — attach its text to context">⚓ attach ' +
         esc(sourceById(id).target) +
         "</button>",
     )
     .join("");
   const rest = sources.filter((s) => attached.indexOf(s.id) < 0 && anchored.indexOf(s.id) < 0);
   const menu = rest.length
-    ? '<select class="chip menu" data-input="attach-src-menu" title="joindre une source du corpus">' +
+    ? '<select class="chip menu" data-input="attach-src-menu" title="attach a corpus source">' +
       '<option value="">+ source</option>' +
       rest
         .map((s) => '<option value="' + esc(s.id) + '">' + esc(s.target) + (s.exists === false ? " ⚠" : "") + "</option>")
@@ -390,11 +390,11 @@ function chatLogHtml() {
   if (!S.ws) return "";
   if (!S.ws.chat.length) {
     const hint = wsRoot()
-      ? "Pose ta question sur cette note."
-      : "Demande à Claude de créer des cartes depuis les sources du corpus.";
+      ? "Ask your question about this note."
+      : "Ask Claude to create cards from the corpus sources.";
     return (
       '<div class="empty">' + hint + "<br>" +
-      "Les propositions de Claude apparaissent comme versions et cartes à gauche ; rien n'est écrit avant « Valider ».</div>"
+      "Claude's proposals appear as versions and cards on the left; nothing is written until you click Apply.</div>"
     );
   }
   return S.ws.chat.map(msgHtml).join("");
@@ -463,7 +463,7 @@ function sourcesHtml(m) {
           esc(s.title || "") +
           '">+ corpus</button>'
         : inCorpus
-          ? ' <span class="muted small">dans le corpus</span>'
+          ? ' <span class="muted small">in corpus</span>'
           : "";
     return (
       '<li><span class="n">[' + s.n + "]</span> " +
@@ -477,7 +477,7 @@ function sourcesHtml(m) {
 }
 
 function msgHtml(m, mi) {
-  const who = m.who === "user" ? "toi" : "claude";
+  const who = m.who === "user" ? "you" : "claude";
   if (!m.parts) {
     const body = bodyHtml(m) + (m.streaming ? '<span class="cursor">▍</span>' : "") + sourcesHtml(m);
     return '<div class="msg ' + (m.who === "user" ? "user" : "assistant") + '"><div class="who">' + who + "</div>" + body + "</div>";
@@ -491,11 +491,11 @@ function msgHtml(m, mi) {
     if (part.type === "text") {
       html += textSegmentHtml(part.text || "", part.cites || [], byN);
     } else if (part.type === "reading") {
-      html += '<div class="reading">lit : ' + esc(part.tool || "?") + (part.summary ? " → " + linkify(part.summary) : "") + "</div>";
+      html += '<div class="reading">reading: ' + esc(part.tool || "?") + (part.summary ? " → " + linkify(part.summary) : "") + "</div>";
     } else if (part.type === "added") {
       html +=
         '<div class="reading">' +
-        (part.error ? "ajout refusé : " + esc(part.error) : "ajoute : " + part.count + " note(s)") +
+        (part.error ? "add refused: " + esc(part.error) : "adding: " + part.count + " note(s)") +
         (part.rationale ? " — " + esc(part.rationale) : "") +
         "</div>";
     }
@@ -514,7 +514,7 @@ function proposalHtml(p, mi, pi) {
   if (!isSourceProposal(p.kind)) {
     return (
       '<div class="ws-pointer">' +
-      (p.error ? "proposition " + esc(p.kind) + " refusée : " + esc(p.error) : p.landed ? esc(p.kind) + " " + p.landed : esc(p.kind) + " …") +
+      (p.error ? "proposal " + esc(p.kind) + " refused: " + esc(p.error) : p.landed ? esc(p.kind) + " " + p.landed : esc(p.kind) + " …") +
       "</div>"
     );
   }
@@ -528,28 +528,28 @@ function proposalHtml(p, mi, pi) {
     if (input.note) meta.push(esc(input.note));
     diff =
       '<div class="muted small"><span class="kind ' + esc(kind) + '">' + esc(kind) + "</span> " +
-      (kind === "web" ? "page web" : kind === "pdf" ? "PDF" : "note du vault") +
-      " à ajouter au corpus de " + esc(S.ws.deck) +
+      (kind === "web" ? "web page" : kind === "pdf" ? "PDF" : "vault note") +
+      " to add to corpus of " + esc(S.ws.deck) +
       (meta.length ? " · " + meta.join(" · ") : "") + "</div>" +
       '<input class="mono src-name" data-input="psrc-target" data-mi="' + mi + '" data-pi="' + pi + '" value="' +
       esc(target) +
-      '" placeholder="https://… · note du vault · ~/doc.pdf"' +
+      '" placeholder="https://… · vault note · ~/doc.pdf"' +
       (p.applied ? " disabled" : "") +
       ">" +
       (kind === "web" && target
-        ? '<div class="small"><a href="' + esc(target) + '" target="_blank" rel="noopener">ouvrir ↗</a></div>'
+        ? '<div class="small"><a href="' + esc(target) + '" target="_blank" rel="noopener">open ↗</a></div>'
         : "") +
-      (anchors.length ? '<div class="muted small">ancre : ' + anchors.map(short).join(" ") + "</div>" : "");
+      (anchors.length ? '<div class="muted small">anchor: ' + anchors.map(short).join(" ") + "</div>" : "");
   } else if (p.kind === "create_source") {
     const anchors = input.anchor_note_ids || [];
     diff =
-      '<div class="muted small">note Obsidian à créer dans le vault, ajoutée au corpus de ' + esc(S.ws.deck) + "</div>" +
+      '<div class="muted small">Obsidian note to create in the vault, added to corpus of ' + esc(S.ws.deck) + "</div>" +
       '<input class="mono src-name" data-input="psrc-name" data-mi="' + mi + '" data-pi="' + pi + '" value="' +
       esc(p.name != null ? p.name : input.name || "") +
-      '" placeholder="dossier/nom de la note"' +
+      '" placeholder="folder/note name"' +
       (p.applied ? " disabled" : "") +
       ">" +
-      (anchors.length ? '<div class="muted small">ancre : ' + anchors.map(short).join(" ") + "</div>" : "") +
+      (anchors.length ? '<div class="muted small">anchor: ' + anchors.map(short).join(" ") + "</div>" : "") +
       '<pre class="excerpt">' + esc(input.content || "") + "</pre>";
   } else {
     const src = sourceById(input.source_id);
@@ -560,13 +560,13 @@ function proposalHtml(p, mi, pi) {
   const disabled = S.busy ? " disabled" : "";
   const at = ' data-mi="' + mi + '" data-pi="' + pi + '"';
   const head = p.applied
-    ? '<span class="applied-mark">appliqué ✓</span>' +
-      (p.kind === "edit_source" ? '<button class="revert" data-act="ws-revert-src"' + at + disabled + ">Annuler</button>" : "")
-    : '<button class="primary" data-act="ws-apply-src"' + at + disabled + ">Appliquer</button>";
+    ? '<span class="applied-mark">applied ✓</span>' +
+      (p.kind === "edit_source" ? '<button class="revert" data-act="ws-revert-src"' + at + disabled + ">Revert</button>" : "")
+    : '<button class="primary" data-act="ws-apply-src"' + at + disabled + ">Apply</button>";
   return (
     '<div class="proposal' + (p.applied ? " applied" : "") + '">' +
     '<div class="proposal-head"><span class="pkind">' +
-    (p.kind === "add_source" ? "ajout de source" : p.kind === "create_source" ? "nouvelle source" : "source") +
+    (p.kind === "add_source" ? "add source" : p.kind === "create_source" ? "new source" : "source") +
     "</span>" +
     '<span class="grow"></span>' + head + "</div>" +
     (input.rationale ? '<div class="rationale">' + nl2br(input.rationale) + "</div>" : "") +

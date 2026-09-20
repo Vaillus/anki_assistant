@@ -65,36 +65,36 @@ Each anchor is qualified against the note's current deck:
 
 Anchors follow the note through the writes of the workspace ([workspace.md § Validation](./workspace.md#validation)):
 
-- **Note deleted** → its anchors become orphan. They are not removed eagerly (a delete must not fail on a `sources.json` write); « nettoyer » in the Source tab removes them.
-- **Source removed from a corpus** → every anchor to it is removed. The UI warns first: « 3 notes sont ancrées à cette source ».
+- **Note deleted** → its anchors become orphan. They are not removed eagerly (a delete must not fail on a `sources.json` write); « clean up » in the Source tab removes them.
+- **Source removed from a corpus** → every anchor to it is removed. The UI warns first: « 3 notes are anchored to this source ».
 - **Note moved to another deck** → each anchor is kept if its source is in the destination's effective corpus, removed otherwise.
 - **Split** → the kept original and the new fragments inherit the original's anchors.
 - **Create** → the new note gets the anchors chosen in the workspace, by default those of the note the workspace was opened on ([workspace.md § Opening and closing](./workspace.md#opening-and-closing)).
 
 ## Writing to the vault
 
-The vault is the user's own notes. The app writes into it in exactly two ways, on vault notes only, and only behind a user click — a form, or « Appliquer » on a chat proposal ([chat.md § Proposal tools](./chat.md#proposal-tools)). Claude never writes on its own.
+The vault is the user's own notes. The app writes into it in exactly two ways, on vault notes only, and only behind a user click — a form, or « Apply » on a chat proposal ([chat.md § Proposal tools](./chat.md#proposal-tools)). Claude never writes on its own.
 
 - **Create a vault note.** Writes `<vault>/<name>.md` with the given content as is (front matter included if the caller supplies it), creating parent folders when the name contains a `/`. Refused if the file already exists. The new file is appended to the deck's own corpus as an obsidian source. There is no default folder: the name is what the user typed or accepted.
-- **Replace a passage.** Replaces one passage of a vault note with another. The passage to replace must occur **exactly once** in the file: refused as « passage introuvable » when it is absent, « passage ambigu » when it is repeated. There is no whole-file rewrite. A source edit is always a bounded, reviewable replacement, and undoing it is the same replacement with the two texts swapped.
+- **Replace a passage.** Replaces one passage of a vault note with another. The passage to replace must occur **exactly once** in the file: refused as « passage not found » when it is absent, « ambiguous passage » when it is repeated. There is no whole-file rewrite. A source edit is always a bounded, reviewable replacement, and undoing it is the same replacement with the two texts swapped.
 
 These two constraints are the whole safety story and are not to be relaxed for convenience.
 
 ## Source tab
 
-The Source tab shows the effective corpus of the deck selected in column 1 ([review.md](./review.md)). When the corpus is inherited, a banner names the deck it comes from. Sources the selected note is anchored to come first, in anchor order, expanded; the others are collapsed to their header. A deck with no effective corpus shows « Aucune source pour ce deck. »
+The Source tab shows the effective corpus of the deck selected in column 1 ([review.md](./review.md)). When the corpus is inherited, a banner names the deck it comes from. Sources the selected note is anchored to come first, in anchor order, expanded; the others are collapsed to their header. A deck with no effective corpus shows « No sources for this deck. »
 
 Each source is a row:
 
-- **Header** — kind chip, target, page range and annotation in muted text, an « ouvrir ↗ » link, « retirer ». Under it, when they apply: « héritée de … », « ⚠ fichier introuvable » for a missing source, a warning for PDFs without a page range, and « ancrée à cette note » in accent colour when the selected note is anchored to the source.
+- **Header** — kind chip, target, page range and annotation in muted text, an « open ↗ » link, « remove ». Under it, when they apply: « inherited from … », « ⚠ file not found » for a missing source, a warning for PDFs without a page range, and « anchored to this note » in accent colour when the selected note is anchored to the source.
 
-**Adding a source.** « + ajouter une source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Appliquer ».
+**Adding a source.** « + add a source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Apply ».
 
-**Removing a source.** « retirer » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
+**Removing a source.** « remove » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
 
-**Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ différentiabilité », × removes it) and « ⚓ ancrer… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source hors corpus ».
+**Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ differentiability », × removes it) and « ⚓ anchor… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source outside corpus ».
 
-**Orphans.** The tab's footer shows « n notes ancrées disparues · nettoyer » when anchored notes no longer exist in Anki; clicking removes their anchors. Hidden when there are none.
+**Orphans.** The tab's footer shows « n anchored notes missing · clean up » when anchored notes no longer exist in Anki; clicking removes their anchors. Hidden when there are none.
 
 ## API
 

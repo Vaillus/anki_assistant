@@ -87,7 +87,7 @@ class CardPlan:
     source_ids: list[str] | None = None
     move_to: str | None = None
     parent_wid: str | None = None
-    #: Deferred (« à revoir »): the flag stays (or is set), `Back Extra` becomes `comment`.
+    #: Deferred (« to review »): the flag stays (or is set), `Back Extra` becomes `comment`.
     #: Implied by the action `defer`; a modifier on `edit` and `create`.
     defer: bool = False
     #: Plain text for `Back Extra`, only with a deferral. None leaves the field alone.
@@ -191,48 +191,48 @@ class ApplyReport:
 
 
 def validate(plan: ApplyPlan) -> list[str]:
-    """Shape errors of a plan, in French since they are shown as-is. Empty when the plan is fine."""
+    """Shape errors of a plan, shown as-is. Empty when the plan is fine."""
     errors: list[str] = []
     if not plan.cards:
-        errors.append("plan vide")
+        errors.append("empty plan")
     seen_wids: set[str] = set()
     seen_notes: set[int] = set()
     for card in plan.cards:
         who = card.wid or "?"
         if not card.wid:
-            errors.append("carte sans identifiant")
+            errors.append("card without an identifier")
         elif card.wid in seen_wids:
-            errors.append(f"identifiant {card.wid} en double")
+            errors.append(f"duplicate identifier {card.wid}")
         seen_wids.add(card.wid)
         if card.action not in ACTIONS:
-            errors.append(f"{who} : action inconnue « {card.action} »")
+            errors.append(f"{who}: unknown action « {card.action} »")
             continue
         if card.action == "create":
             if card.note_id is not None:
-                errors.append(f"{who} : une note à créer n'a pas de note_id")
+                errors.append(f"{who}: a note to create has a note_id")
             if not card.model:
-                errors.append(f"{who} : type de note manquant")
+                errors.append(f"{who}: missing note type")
             if not card.fields:
-                errors.append(f"{who} : champs manquants")
+                errors.append(f"{who}: missing fields")
             if card.move_to:
-                errors.append(f"{who} : une note à créer ne se déplace pas")
+                errors.append(f"{who}: a note to create cannot be moved")
             if card.comment is not None and not card.defer:
-                errors.append(f"{who} : un commentaire accompagne une note différée")
+                errors.append(f"{who}: a comment accompanies a non-deferred note")
             continue
         if card.note_id is None:
-            errors.append(f"{who} : note_id manquant")
+            errors.append(f"{who}: missing note_id")
         elif card.note_id in seen_notes:
-            errors.append(f"{who} : la note #{card.note_id} apparaît deux fois")
+            errors.append(f"{who}: note #{card.note_id} appears twice")
         else:
             seen_notes.add(card.note_id)
         if card.action == "edit" and not card.fields:
-            errors.append(f"{who} : champs manquants")
+            errors.append(f"{who}: missing fields")
         if card.action == "delete" and card.move_to:
-            errors.append(f"{who} : une note supprimée ne se déplace pas")
+            errors.append(f"{who}: a deleted note cannot be moved")
         if card.defer and card.action not in ("edit", "create"):
-            errors.append(f"{who} : seule une modification ou une création se diffère")
+            errors.append(f"{who}: only an edit or a create can be deferred")
         if card.comment is not None and not card.deferred:
-            errors.append(f"{who} : un commentaire accompagne une note différée")
+            errors.append(f"{who}: a comment accompanies a non-deferred note")
     return errors
 
 
@@ -248,7 +248,7 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
     notes = {note.note_id: note for note in client.notes_info(ids)}
     missing = [nid for nid in ids if nid not in notes]
     if missing:
-        raise NoteNotFound("note(s) introuvable(s) : " + ", ".join(f"#{n}" for n in missing))
+        raise NoteNotFound("note(s) not found: " + ", ".join(f"#{n}" for n in missing))
     cards_by_note: dict[int, list] = defaultdict(list)
     for card in client.cards_info([cid for note in notes.values() for cid in note.card_ids]):
         cards_by_note[card.note_id].append(card)
@@ -312,7 +312,7 @@ def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> dict[st
         try:
             fields_of[model] = list(client.model_field_names(model))
         except AnkiConnectError as exc:
-            errors.append(f"type de note « {model} » : {exc}")
+            errors.append(f"note type « {model} »: {exc}")
     for card in plan.cards:
         model = targets.get(card.wid)
         if model is None or model not in fields_of:
@@ -324,14 +324,14 @@ def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> dict[st
             real = name if name in names else by_lower.get(name.lower())
             if real is None:
                 errors.append(
-                    f"{card.wid} : champ « {name} » inconnu du type {model}"
-                    f" (champs : {', '.join(names)})"
+                    f"{card.wid}: field « {name} » unknown for type {model}"
+                    f" (fields: {', '.join(names)})"
                 )
                 continue
             fixed[real] = value
         if card.action == "create" and names and not strip_html(fixed.get(names[0], "")).strip():
             errors.append(
-                f"{card.wid} : le premier champ ({names[0]}) est vide, Anki refuse la note"
+                f"{card.wid}: the first field ({names[0]}) is empty, Anki refuses the note"
             )
         card.fields = fixed
     if errors:
@@ -401,7 +401,7 @@ def _comment_for(card: CardPlan, field_names: list[str], report: ApplyReport) ->
         return None
     if REASON_FIELD not in field_names:
         if card.comment.strip():
-            report.errors.append(f"{card.wid} : pas de champ {REASON_FIELD}, commentaire non écrit")
+            report.errors.append(f"{card.wid}: no {REASON_FIELD} field, comment not written")
         return None
     return comment_html(card.comment)
 
@@ -430,7 +430,7 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
     step = ""
     try:
         for card in creates:
-            step = f"création de {card.wid}"
+            step = f"creating {card.wid}"
             fields = dict(card.fields or {})
             # A proposal may have left the field out: the note type says, not the proposal.
             comment = _comment_for(card, fields_of.get(str(card.model), []), report)
@@ -456,7 +456,7 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
 
         for card in edits:
             nid = int(card.note_id or 0)
-            step = f"modification de #{nid}"
+            step = f"editing #{nid}"
             fields = dict(card.fields or {})
             new_model = target_model(card, snap)
             old_model = snap.notes[nid].model
@@ -491,7 +491,7 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
 
         for card in moves:
             nid = int(card.note_id or 0)
-            step = f"déplacement de #{nid}"
+            step = f"moving #{nid}"
             snap.anchors_before[nid] = store.anchors(nid)
             client.change_deck(snap.notes[nid].card_ids, str(card.move_to))
             snap.moved.append(nid)
@@ -502,7 +502,7 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
             if card.deferred:
                 continue
             nid = int(card.note_id or 0)
-            step = f"levée du flag de #{nid}"
+            step = f"clearing flag of #{nid}"
             flagged = snap.notes[nid].flagged_card_ids
             if flagged:
                 client.clear_flag(flagged)
@@ -520,17 +520,17 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
 
         if deletes:
             ids = [int(c.note_id or 0) for c in deletes]
-            step = "suppression"
+            step = "deleting"
             client.delete_notes(ids)
             snap.deleted = ids
             report.deleted = ids
             try:
                 store.remove_anchors(ids)
             except Exception as exc:  # noqa: BLE001 — sources.json is not Anki; report, keep ok
-                report.errors.append(f"ancres des notes supprimées : {exc}")
+                report.errors.append(f"anchors of deleted notes: {exc}")
     except Exception as exc:  # noqa: BLE001 — every failure is reported, never raised
         report.ok = False
-        report.errors.append(f"{step} : {exc}")
+        report.errors.append(f"{step}: {exc}")
         rollback_errors = _restore(client, store, snap, report)
         report.errors.extend(rollback_errors)
         report.rolled_back = not rollback_errors
@@ -560,7 +560,7 @@ def _restore(
             client.delete_notes([nid])
             store.remove_anchors([nid])
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"annulation de la création de #{nid} : {exc}")
+            errors.append(f"reverting creation of #{nid}: {exc}")
         else:
             for wid, created_id in list(report.created.items()):
                 if created_id == nid:
@@ -577,14 +577,14 @@ def _restore(
             for flag, cids in by_flag.items():
                 client.set_flag(cids, flag)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"annulation de la levée du flag de #{nid} : {exc}")
+            errors.append(f"reverting flag clear of #{nid}: {exc}")
     snap.unflagged = []
 
     for nid in snap.flagged:
         try:
             client.clear_flag(snap.notes[nid].card_ids)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"annulation du flag de #{nid} : {exc}")
+            errors.append(f"reverting flag of #{nid}: {exc}")
     snap.flagged = []
 
     for nid in snap.moved:
@@ -593,7 +593,7 @@ def _restore(
             client.change_deck(note.card_ids, note.deck)
             store.set_anchors(nid, snap.anchors_before.get(nid, []))
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"annulation du déplacement de #{nid} : {exc}")
+            errors.append(f"reverting move of #{nid}: {exc}")
     snap.moved = []
     snap.anchors_before = {}
 
@@ -607,7 +607,7 @@ def _restore(
             else:
                 client.update_note(nid, fields=dict(note.fields), tags=list(note.tags))
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"annulation de la modification de #{nid} : {exc}")
+            errors.append(f"reverting edit of #{nid}: {exc}")
     snap.written = {}
     snap.model_changed = []
     return errors
@@ -621,9 +621,9 @@ def undo(client: AnkiClient, store: SourceStore, snap: Snapshot | None) -> Apply
     nothing is written at all.
     """
     if snap is None:
-        raise NothingToUndo("aucune validation à annuler")
+        raise NothingToUndo("no validation to undo")
     if snap.deleted:
-        raise NothingToUndo("la dernière validation a supprimé des notes : annulation impossible")
+        raise NothingToUndo("the last validation deleted notes: cannot undo")
     if snap.written:
         current = {note.note_id: note for note in client.notes_info(list(snap.written))}
         changed = [
@@ -634,7 +634,7 @@ def undo(client: AnkiClient, store: SourceStore, snap: Snapshot | None) -> Apply
         ]
         if changed:
             raise ModifiedSince(
-                ", ".join(f"#{n}" for n in changed) + " modifiée(s) depuis, annulation impossible"
+                ", ".join(f"#{n}" for n in changed) + " modified since, cannot undo"
             )
     report = ApplyReport(created={f"#{nid}": nid for nid in snap.created})
     errors = _restore(client, store, snap, report)

@@ -48,14 +48,14 @@ function deckColumn() {
   const decks = visibleDecks();
   const rows = decks.length
     ? decks.map(deckRow).join("")
-    : '<div class="empty">Aucun deck flagué 🎉</div>';
+    : '<div class="empty">No flagged decks 🎉</div>';
   return (
     '<div class="col" data-scroll="decks">' +
     '<div class="col-head">' +
     '<img class="logo" src="/static/star.svg" alt="" width="20" height="20">' +
     "<h2>Decks</h2><span class=\"grow\"></span>" +
     '<button class="ghost" data-act="alldecks">' +
-    (S.showAllDecks ? "flagués seuls" : "tous") +
+    (S.showAllDecks ? "flagged only" : "all") +
     "</button>" +
     themePicker() +
     "</div>" +
@@ -86,9 +86,9 @@ function themePicker() {
       .join("") +
     "</optgroup>";
   return (
-    '<select class="chip theme" data-input="theme" title="Thème" aria-label="Thème">' +
-    group("dark", "sombre") +
-    group("light", "clair") +
+    '<select class="chip theme" data-input="theme" title="Theme" aria-label="Theme">' +
+    group("dark", "dark") +
+    group("light", "light") +
     "</select>"
   );
 }
@@ -125,33 +125,33 @@ function deckRow(d) {
 function queueColumn() {
   const head =
     '<div class="col-head"><h2>' +
-    (S.deck ? esc(String(S.deck).split("::").pop()) : "File") +
+    (S.deck ? esc(String(S.deck).split("::").pop()) : "Queue") +
     "</h2>" +
     (S.notes
       ? '<span class="grow"></span><span class="muted small">' +
         (S.notes.flagged || 0) +
-        " flaguée(s) / " +
+        " flagged / " +
         (S.notes.total || 0) +
         '</span><button class="ghost" data-act="onlyflagged">' +
-        (S.onlyFlagged ? "voir toutes" : "flaguées seules") +
+        (S.onlyFlagged ? "show all" : "flagged only") +
         "</button>"
       : "") +
     (S.undoAvailable
-      ? '<button class="ghost small" data-act="undo" title="remettre la dernière validation en place"' +
+      ? '<button class="ghost small" data-act="undo" title="undo the last validation"' +
         (S.busy ? " disabled" : "") +
-        ">Annuler la dernière validation</button>"
+        ">Undo last validation</button>"
       : "") +
     "</div>";
 
   let body;
-  if (!S.deck) body = '<div class="empty">← choisis un deck</div>';
-  else if (!S.notes) body = '<div class="empty">chargement…</div>';
+  if (!S.deck) body = '<div class="empty">← pick a deck</div>';
+  else if (!S.notes) body = '<div class="empty">loading…</div>';
   else {
     const vis = visibleNotes();
     body = vis.length
       ? vis.map(noteCard).join("")
-      : '<div class="empty">Rien à revoir ici 🎉' +
-        '<br><button class="primary" data-act="open-ws" style="margin-top:12px">Ouvrir l\'espace de travail</button>' +
+      : '<div class="empty">Nothing to review here 🎉' +
+        '<br><button class="primary" data-act="open-ws" style="margin-top:12px">Open workspace</button>' +
         "</div>";
   }
   return (
@@ -188,21 +188,21 @@ function noteCard(n) {
     esc(n.model) +
     " · " +
     nCards(n) +
-    " carte(s)" +
+    " card(s)" +
     ((n.tags || []).length ? " · " + esc((n.tags || []).join(" ")) : "") +
     "</span><span class=\"grow\"></span>" +
     (n.flagged
       ? '<button class="ghost" data-act="keep" data-note="' +
         n.note_id +
-        '" title="lever le flag sans rien changer (g)"' +
+        '" title="unflag without changes (g)"' +
         (S.busy ? " disabled" : "") +
-        ">garder</button>"
+        ">keep</button>"
       : "") +
     "</div>" +
     fieldsHtml(n) +
     reasonHtml(n) +
     revealHtml(n) +
-    '<div class="open-hint muted small">cliquer ou Entrée : ouvrir l\'espace de travail</div>' +
+    '<div class="open-hint muted small">click or Enter: open workspace</div>' +
     "</div>"
   );
 }
@@ -222,10 +222,10 @@ function revealHtml(n) {
     '<div class="reveal"><button class="ghost" data-act="reveal" data-note="' +
     n.note_id +
     '" title="Espace">' +
-    (hidden ? "Révéler la réponse" : "Masquer à nouveau") +
+    (hidden ? "Reveal answer" : "Hide again") +
     "</button>" +
     (hidden
-      ? '<span class="muted small">la note telle que vue au moment du flag</span>'
+      ? '<span class="muted small">the note as seen when flagged</span>'
       : "") +
     "</div>"
   );
@@ -235,7 +235,7 @@ function revealHtml(n) {
 function reasonHtml(n) {
   if (!n.flagged || !n.reason) return "";
   return (
-    '<div class="reason"><span class="reason-label">raison du flag</span>' +
+    '<div class="reason"><span class="reason-label">flag reason</span>' +
     nl2br(n.reason) +
     "</div>"
   );
@@ -268,22 +268,22 @@ function rightColumn() {
 /* ---------- Source tab ---------- */
 
 function sourcePane() {
-  if (!S.deck) return '<div class="pane"><div class="empty">Choisis un deck</div></div>';
+  if (!S.deck) return '<div class="pane"><div class="empty">Pick a deck</div></div>';
   if (S.corpusLoading && !S.corpus)
-    return '<div class="pane"><div class="empty">chargement…</div></div>';
+    return '<div class="pane"><div class="empty">loading…</div></div>';
   const c = S.corpus;
   const sources = (c && c.sources) || [];
   let body = "";
   if (c && c.inherited_from) {
     body +=
-      '<div class="banner info">Corpus hérité de <b>' +
+      '<div class="banner info">Corpus inherited from <b>' +
       esc(c.inherited_from) +
       "</b></div>";
   }
   body += sources.length
     ? sources.map(sourceRow).join("")
-    : '<div class="empty">Aucune source pour ce deck.</div>';
-  body += S.srcForm ? sourceForm() : '<button data-act="add-src">+ ajouter une source</button>';
+    : '<div class="empty">No sources for this deck.</div>';
+  body += S.srcForm ? sourceForm() : '<button data-act="add-src">+ add a source</button>';
   return '<div class="pane" data-scroll="source">' + body + "</div>";
 }
 
@@ -308,21 +308,21 @@ function sourceRow(s, i) {
     (s.kind === "pdf" && s.exists
       ? '<button class="ghost small" data-act="open-pdf" data-id="' +
         esc(s.id) +
-        '">ouvrir ↗</button> '
+        '">open ↗</button> '
       : s.uri
         ? '<a href="' +
           esc(s.uri) +
           '" class="small"' +
           (s.kind === "web" ? ' target="_blank" rel="noopener"' : "") +
-          ">ouvrir ↗</a> "
+          ">open ↗</a> "
         : "") +
     (inherited ? "" :
       '<button class="ghost small" data-act="remove-src" data-i="' +
       i +
-      '">retirer</button>') +
+      '">remove</button>') +
     "</div>" +
-    (inherited ? '<div class="muted small">héritée de ' + esc(s.on_deck) + "</div>" : "") +
-    (s.exists === false ? '<div class="warn">⚠ fichier introuvable</div>' : "") +
+    (inherited ? '<div class="muted small">inherited from ' + esc(s.on_deck) + "</div>" : "") +
+    (s.exists === false ? '<div class="warn">⚠ file not found</div>' : "") +
     (s.warning ? '<div class="warn">⚠ ' + esc(s.warning) + "</div>" : "") +
     "</div>"
   );
@@ -336,14 +336,14 @@ function sourceForm() {
   ).join("");
   return (
     '<div class="src-form">' +
-    "<b>Nouvelle source</b>" +
+    "<b>New source</b>" +
     (S.srcForm.error ? '<div class="banner">' + esc(S.srcForm.error) + "</div>" : "") +
-    "<label>cible (note du vault, chemin de PDF ou URL)</label>" +
+    "<label>target (vault note, PDF path or URL)</label>" +
     '<input data-input="src-target" data-focus="src-target" list="' +
     (kind === "pdf" ? "vault-pdfs" : "vault-notes") +
     '" value="' +
     esc(f.target || "") +
-    '" placeholder="Allocation sur des angles disjoints · ~/doc.pdf · https://…">' +
+    '" placeholder="My vault note · ~/doc.pdf · https://…">' +
     '<datalist id="vault-notes"></datalist>' +
     '<datalist id="vault-pdfs"></datalist>' +
     "<label>type</label>" +
@@ -351,7 +351,7 @@ function sourceForm() {
     options +
     "</select>" +
     (kind === "pdf"
-      ? "<label>pages (ex. 12-19)</label>" +
+      ? "<label>pages (e.g. 12-19)</label>" +
         '<input data-input="src-pages" value="' +
         esc(f.pages || "") +
         '">'
@@ -361,10 +361,10 @@ function sourceForm() {
     esc(f.note || "") +
     '">' +
     '<div class="row" style="margin-top:10px;justify-content:flex-end">' +
-    '<button data-act="src-cancel">Annuler</button>' +
+    '<button data-act="src-cancel">Cancel</button>' +
     '<button class="primary" data-act="src-save"' +
     (f.saving ? " disabled" : "") +
-    ">Enregistrer</button>" +
+    ">Save</button>" +
     "</div></div>"
   );
 }

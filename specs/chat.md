@@ -2,7 +2,7 @@
 
 > The right half of the [workspace](./workspace.md) overlay: a scrolling log, a row of source chips, and a message box — a conversation with Claude that reads the deck's notes and sources on demand and answers with [proposals](#proposal-tools) that land on the workspace as versions and cards.
 
-Three parts: a scrolling **log** of messages and tool-call lines (reading summaries, pointer lines, source-proposal cards), a **chips row** for attaching sources to the context, and a **message box** with the model id and « Envoyer ». The **client** is the browser; the **server** is the local FastAPI process — "server" never means Anthropic's side.
+Three parts: a scrolling **log** of messages and tool-call lines (reading summaries, pointer lines, source-proposal cards), a **chips row** for attaching sources to the context, and a **message box** with the model id and « Send ». The **client** is the browser; the **server** is the local FastAPI process — "server" never means Anthropic's side.
 
 A **conversation** is the message log plus the sources attached to it. It belongs to one workspace: it starts empty when the workspace opens and is dropped when the workspace closes. The conversation serves the [workspace](./workspace.md).
 
@@ -12,13 +12,13 @@ When no `ANTHROPIC_API_KEY` is configured, the pane shows a banner and disables 
 
 The server keeps nothing between requests. On every **turn** — one user message and the reply to it — the client sends the whole conversation and the current state of every card, and the server rebuilds the **system prompt** from four blocks:
 
-1. **Standing instructions** — reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; **call** the proposal tools rather than describing changes in prose; the bracket markers that appear in the conversation history (`[proposition: …]`, `[lecture: …]`, `[ajout: …]`) are system-generated — never write them as text, only a tool call makes a proposal effective; target [active](./workspace.md#card-head) cards by [workspace number](./workspace.md#cards); only call `read_source` when genuinely needed (to verify a doubtful fact, correct an error, or fill in missing information); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also lists every [note type](./notes.md#note-card-note-type) of the collection with its field names (so Claude can propose type conversions without a tool call), and states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
+1. **Standing instructions** — reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; **call** the proposal tools rather than describing changes in prose; the bracket markers that appear in the conversation history (`[proposal: …]`, `[read: …]`, `[added: …]`) are system-generated — never write them as text, only a tool call makes a proposal effective; target [active](./workspace.md#card-head) cards by [workspace number](./workspace.md#cards); only call `read_source` when genuinely needed (to verify a doubtful fact, correct an error, or fill in missing information); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also lists every [note type](./notes.md#note-card-note-type) of the collection with its field names (so Claude can propose type conversions without a tool call), and states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
 
 2. **Corpus index** — one line per source of the deck's [corpus](./sources.md): id, kind, target, page range, and a ⚠ marker when the file is missing. Sources [anchored](./sources.md#anchors) to a card of the workspace are marked. PDF sources include a compact **structural index** (from the PDF's bookmarks or heuristic headings) so Claude knows which pages to target with `read_source`. No source text — that is what attaching and `read_source` are for.
 
 3. **Attached sources** — the full text of each source the user has attached (see [How source text enters context](#how-source-text-enters-context)). An attached source stays in every turn's prompt until the user removes it. Total attached text is capped at 150 000 characters; the cap is stated in the prompt.
 
-4. **Cards of the workspace** — every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace number, note id or « brouillon », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
+4. **Cards of the workspace** — every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace number, note id or « draft », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
 
 Blocks 1–3 are stable for the life of the workspace; block 3 (attached sources) is marked for the API's prompt cache (`cache_control: ephemeral`). A change on the workspace re-processes only block 4. Attaching or detaching a source invalidates the cache.
 
@@ -26,13 +26,13 @@ Blocks 1–3 are stable for the life of the workspace; block 3 (attached sources
 
 Source text enters the prompt in two ways, both visible to the user:
 
-- **The user attaches it.** The chips row lists the corpus. Sources anchored to the root appear as individual chips (« ⚓ joindre … »); the rest are under a « + source » menu. Clicking attaches that source to block 3; the × detaches it. Attaching is per source, never the whole corpus at once.
+- **The user attaches it.** The chips row lists the corpus. Sources anchored to the root appear as individual chips (« ⚓ attach … »); the rest are under a « + source » menu. Clicking attaches that source to block 3; the × detaches it. Attaching is per source, never the whole corpus at once.
 
 - **Claude reads it.** The `read_source` tool returns a source's text into the current turn, and the log shows a reading summary so the user knows what was loaded. Reads are not carried to later turns; attaching is the way to keep a source in front of Claude.
 
 ### What Claude remembers between turns
 
-Only message text is re-sent across turns. Tool results — reads, proposals, additions — are not replayed. The client summarises them into the assistant text as bracketed notes (« [lecture: search_notes → 6 notes] », « [proposition: edit → carte 1] », « [version rejetée : 3 v2] ») so Claude knows what happened. Web citations survive the same way: the markers stay in the text and a bracket line lists the pages (« [sources : [1] https://…, [2] https://…] »); the numbering restarts at 1 on each turn. If Claude needs a read's content again, it reads again.
+Only message text is re-sent across turns. Tool results — reads, proposals, additions — are not replayed. The client summarises them into the assistant text as bracketed notes (« [read: search_notes → 6 notes] », « [proposal: edit → card 1] », « [rejected version: 3 v2] ») so Claude knows what happened. Web citations survive the same way: the markers stay in the text and a bracket line lists the pages (« [sources: [1] https://…, [2] https://…] »); the numbering restarts at 1 on each turn. If Claude needs a read's content again, it reads again.
 
 ## Read tools
 
@@ -65,7 +65,7 @@ Each read is displayed in the log as a **reading summary**: a muted line naming 
 
 `fields` restricts `full` results to named fields. A `full` result exceeding 100 000 characters is not returned: the tool responds with the count and asks to narrow the query.
 
-**`add_notes`** is how notes found by a search become cards the user can see and Claude can target. The server checks the workspace cap of 50 cards ([workspace.md § How notes enter](./workspace.md#how-notes-enter)) and refuses with an error when it would be exceeded. The log shows « ajoute : n notes ».
+**`add_notes`** is how notes found by a search become cards the user can see and Claude can target. The server checks the workspace cap of 50 cards ([workspace.md § How notes enter](./workspace.md#how-notes-enter)) and refuses with an error when it would be exceeded. The log shows « adding: n notes ».
 
 ### Web tools
 
@@ -78,7 +78,7 @@ Two Anthropic server tools put the open web behind the same conversation as the 
 
 Search returns extracts — enough to check a card's statement but too thin to become a source. `web_fetch` is how Claude reads a page in full before proposing it: as a [web source](./sources.md#text) by `propose_add_source`, or as a vault note by `propose_create_source` when the content should be kept as it stands today.
 
-**What the user sees.** Each call is streamed as a reading event, and the summary carries the URLs: « lit : web\_search → « KKT conditions » → 5 résultats : en.wikipedia.org/…, … ». URLs — in reading lines and in the reply — are rendered as links that open in a new tab.
+**What the user sees.** Each call is streamed as a reading event, and the summary carries the URLs: « reading: web\_search → « KKT conditions » → 5 results: en.wikipedia.org/…, … ». URLs — in reading lines and in the reply — are rendered as links that open in a new tab.
 
 #### Citations
 
@@ -100,7 +100,7 @@ Within a single assistant message, text segments, reading summaries and added-no
 
 ## Proposal tools
 
-A **proposal** is a structured description of a change — which card, which fields, why — that lands on the workspace as a [version](./workspace.md#versions), a [fragment](./workspace.md#split), a new [draft card](./workspace.md#how-notes-enter) or a [move badge](./workspace.md#card-head). Nothing is written to Anki until « Valider » ([workspace.md § Validation](./workspace.md#validation)).
+A **proposal** is a structured description of a change — which card, which fields, why — that lands on the workspace as a [version](./workspace.md#versions), a [fragment](./workspace.md#split), a new [draft card](./workspace.md#how-notes-enter) or a [move badge](./workspace.md#card-head). Nothing is written to Anki until « Apply » ([workspace.md § Validation](./workspace.md#validation)).
 
 | Tool                    | Lands as                                                                                                                     |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -122,13 +122,13 @@ In the log, a proposal that landed on the workspace shows as a muted pointer lin
 
 ### Source proposals
 
-Source proposals change the [corpus](./sources.md) or the [vault](./sources.md#writing-to-the-vault) on click, not at validation, and closing the workspace does not undo them. They stay in the log as **proposal cards** with « Appliquer ».
+Source proposals change the [corpus](./sources.md) or the [vault](./sources.md#writing-to-the-vault) on click, not at validation, and closing the workspace does not undo them. They stay in the log as **proposal cards** with « Apply ».
 
 `propose_add_source` renders the kind chip and an editable target (a URL, a vault note name or a PDF path) with the optional pages and annotation, so the user can correct the target before applying. Applying appends the entry to the deck's corpus and (with `anchor_note_ids`) to those notes' anchors.
 
-`propose_create_source` renders the Markdown content and an editable name (vault-relative path). Applying creates the file, adds it to the deck's corpus, and anchors the named notes to it. Draft cards anchored to an unapplied source are flagged at « Valider ».
+`propose_create_source` renders the Markdown content and an editable name (vault-relative path). Applying creates the file, adds it to the deck's corpus, and anchors the named notes to it. Draft cards anchored to an unapplied source are flagged at « Apply ».
 
-`propose_edit_source` shows old → new as a diff. Applying performs the [exact-match replacement](./sources.md#writing-to-the-vault); a refusal (passage not found or ambiguous) is shown on the card. An applied edit shows « Annuler »: the same replacement with old and new swapped, refused if the passage changed since.
+`propose_edit_source` shows old → new as a diff. Applying performs the [exact-match replacement](./sources.md#writing-to-the-vault); a refusal (passage not found or ambiguous) is shown on the card. An applied edit shows « Revert »: the same replacement with old and new swapped, refused if the passage changed since.
 
 For `propose_add_source` and `propose_create_source`, the server generates the source id when it streams the call and returns it to Claude, so Claude can anchor notes it proposes next to that source.
 

@@ -157,6 +157,7 @@ function wsCardHtml(c, isFragment, depth, lines) {
         "</button>"
       : "") +
     (c.noteId && !c.deleted ? movePickerHtml(c) : "") +
+    '<button class="ghost small" data-act="ws-remove" data-wid="' + c.wid + '" title="retirer cette carte de l\'espace de travail">retirer</button>' +
     splitBtn;
   const effectiveModel = shownModel(c);
   const modelChanged = c.noteId && effectiveModel !== c.model;

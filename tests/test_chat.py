@@ -272,19 +272,15 @@ def test_build_system_has_four_blocks_and_caches_through_the_attached_sources() 
     context = blocks[3]["text"]
     assert "courant::00-Thèse" in context
     assert "Notes signalées dans ce deck : 3." in context
-    assert "Cartes dans l'espace de travail : 2, dont 1 active(s)." in context
+    assert "Cartes dans l'espace de travail : 1 active(s)." in context
     assert f"### Carte w1 — note {NOTE_ID}" in context
-    assert "- état : active" in context
     assert "{{c1::disjoint}}" in context  # raw fields, cloze markers kept
     assert "champs bruts (version affichée)" in context
     assert "version d'origine (Anki) :\n  - Text : avant" in context
     assert "raison du flag : For a given sensor ?" in context
     assert "carte(s) flaguée(s) : c2" in context
     assert "ancres : [k7q2vd] Allocation sur des angles disjoints" in context
-    assert "### Carte w2 — brouillon, pas encore dans Anki" in context
-    assert "- état : inactive" in context
-    assert "fragment de la carte w1" in context
-    assert context.index("Carte w1") < context.index("Carte w2")
+    assert "Carte w2" not in context  # inactive card excluded from prompt
 
 
 def test_card_context_says_when_a_card_is_deferred_and_with_which_comment() -> None:
@@ -312,7 +308,6 @@ def test_standing_instructions_say_only_what_the_spec_lists() -> None:
         "propose_create_source",
         "propose_edit_source",
         "cloze",
-        "actives",
     ):
         assert needle in text
     assert 'class="context"' in text  # conventions of the collection, stated as facts

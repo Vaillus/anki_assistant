@@ -65,6 +65,10 @@ class CreateBody(BaseModel):
     source_ids: list[str] | None = None
 
 
+class CreateDeckBody(BaseModel):
+    name: str
+
+
 class MoveBody(BaseModel):
     deck: str
 
@@ -80,6 +84,23 @@ class LookupBody(BaseModel):
 def get_decks(request: Request) -> list[DeckSummary]:
     with _anki_errors():
         return review.list_decks(_anki(request), _store(request))
+
+
+@router.post("/decks", status_code=201)
+def create_deck(request: Request, body: CreateDeckBody) -> dict[str, str]:
+    with _anki_errors():
+        try:
+            name = review.create_deck(_anki(request), body.name)
+        except review.DeckAlreadyExists as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"name": name}
+
+
+@router.delete("/decks", status_code=204)
+def delete_deck(request: Request, name: str = Query(...)) -> Response:
+    with _anki_errors():
+        review.delete_deck(_anki(request), name)
+    return Response(status_code=204)
 
 
 @router.get("/notes")

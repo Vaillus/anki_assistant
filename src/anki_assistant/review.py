@@ -30,6 +30,7 @@ __all__ = [
     "NoteView",
     "SplitResult",
     "create",
+    "create_deck",
     "delete",
     "edit",
     "get_note",
@@ -148,7 +149,25 @@ def _fetch_note(client: AnkiClient, note_id: int) -> Note:
     return notes[0]
 
 
+class DeckAlreadyExists(ValueError):
+    """The requested deck name already exists in the collection."""
+
+
 # ----------------------------------------------------------------------- reading
+
+
+def create_deck(client: AnkiClient, name: str) -> str:
+    """Create a deck (and intermediate parents). Raises if the name already exists."""
+    existing = set(client.deck_names())
+    if name in existing:
+        raise DeckAlreadyExists(f"Deck already exists: {name}")
+    client.create_deck(name)
+    return name
+
+
+def delete_deck(client: AnkiClient, name: str) -> None:
+    """Delete a deck and its cards."""
+    client.delete_deck(name, cards_too=True)
 
 
 def list_decks(client: AnkiClient, store: SourceStore) -> list[DeckSummary]:

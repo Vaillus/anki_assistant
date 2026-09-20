@@ -130,6 +130,22 @@ class FakeAnkiClient(AnkiClient):
     def _do_deckNames(self) -> list[str]:
         return list(self.decks)
 
+    def _do_createDeck(self, deck: str) -> int:
+        self._register(deck)
+        return hash(deck)
+
+    def _do_deleteDecks(self, decks: list[str], cardsToo: bool = False) -> None:
+        for name in decks:
+            self.decks = [d for d in self.decks if d != name and not d.startswith(name + "::")]
+            if cardsToo:
+                for cid, card in list(self.cards.items()):
+                    if card["deckName"] == name or card["deckName"].startswith(name + "::"):
+                        del self.cards[cid]
+            else:
+                for card in self.cards.values():
+                    if card["deckName"] == name or card["deckName"].startswith(name + "::"):
+                        card["deckName"] = "Default"
+
     def _do_findCards(self, query: str) -> list[int]:
         return [cid for cid, card in self.cards.items() if _matches(card, query)]
 
@@ -322,6 +338,28 @@ def test_deck_source_kinds_are_deduplicated_in_corpus_order(anki: FakeAnkiClient
     )
 
     assert review.list_decks(anki, store)[0].source_kinds == ["obsidian", "pdf"]
+
+
+# ------------------------------------------------------------------- create_deck
+
+
+def test_create_deck(anki: FakeAnkiClient):
+    review.create_deck(anki, "x::y")
+    assert "x" in anki.decks
+    assert "x::y" in anki.decks
+
+
+def test_create_deck_rejects_duplicate(anki: FakeAnkiClient):
+    anki.add("d")
+    with pytest.raises(review.DeckAlreadyExists):
+        review.create_deck(anki, "d")
+
+
+def test_delete_deck(anki: FakeAnkiClient):
+    anki.add("a::b", flags=(1,))
+    review.delete_deck(anki, "a::b")
+    assert "a::b" not in anki.decks
+    assert len(anki.cards) == 0
 
 
 # ------------------------------------------------------------------- list_notes
@@ -623,6 +661,23 @@ def test_api_decisions(api: TestClient, anki: FakeAnkiClient):
     assert api.post(f"/api/notes/{note_id}/move", json={"deck": "other"}).json()["deck"] == "other"
     assert api.delete(f"/api/notes/{note_id}").status_code == 204
     assert api.get(f"/api/notes/{note_id}").status_code == 404
+
+
+def test_api_create_deck(api: TestClient, anki: FakeAnkiClient):
+    resp = api.post("/api/decks", json={"name": "new::child"})
+    assert resp.status_code == 201
+    assert resp.json() == {"name": "new::child"}
+    assert "new::child" in anki.decks
+
+    dup = api.post("/api/decks", json={"name": "new::child"})
+    assert dup.status_code == 409
+
+
+def test_api_delete_deck(api: TestClient, anki: FakeAnkiClient):
+    anki.add("tmp")
+    resp = api.delete("/api/decks", params={"name": "tmp"})
+    assert resp.status_code == 204
+    assert "tmp" not in anki.decks
 
 
 def test_api_models(api: TestClient):

@@ -10,7 +10,8 @@ function draw() {
   if (!root) return;
   const scroll = captureScroll(root);
   root.innerHTML =
-    '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>" + wsOverlay();
+    '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>" +
+    themePicker() + wsOverlay();
   restoreScroll(root, scroll);
   if (S.refocus) {
     const el = root.querySelector('[data-focus="' + S.refocus + '"]');
@@ -57,8 +58,9 @@ function deckColumn() {
     '<button class="ghost" data-act="alldecks">' +
     (S.showAllDecks ? "flagged only" : "all") +
     "</button>" +
-    themePicker() +
     "</div>" +
+    '<button class="add-deck" data-act="new-deck">+ Add a deck</button>' +
+    newDeckInput() +
     rows +
     "</div>"
   );
@@ -90,6 +92,23 @@ function themePicker() {
     group("dark", "dark") +
     group("light", "light") +
     "</select>"
+  );
+}
+
+function newDeckInput() {
+  if (!S.newDeck) return "";
+  var opts = (S.decks || []).map(function (d) {
+    return '<option value="' + esc(d.name) + '">';
+  }).join("");
+  return (
+    '<div class="new-deck-form">' +
+    '<input data-input="new-deck" data-focus="new-deck" list="deck-parents" ' +
+    'placeholder="Parent::Nouveau paquet" value="' + esc(S.newDeck.value || "") + '">' +
+    '<datalist id="deck-parents">' + opts + '</datalist>' +
+    (S.newDeck.error
+      ? '<div class="new-deck-error">' + esc(S.newDeck.error) + '</div>'
+      : '') +
+    '</div>'
   );
 }
 

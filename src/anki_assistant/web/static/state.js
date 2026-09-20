@@ -66,6 +66,7 @@ const S = {
   decks: [],
   deck: null,
   showAllDecks: false,
+  newDeck: null, // { value, error } while the create-deck input is open
   // column 2
   notes: null, // { deck, total, flagged, notes: Note[] }
   onlyFlagged: true,

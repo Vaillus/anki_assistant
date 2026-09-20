@@ -199,6 +199,7 @@ function wsCardHtml(c, isFragment, depth, lines) {
     (c.active ? "active — cliquer pour exclure du prochain message" : "inactive — cliquer pour inclure") +
     '">' +
     '<span class="ws-dot' + (c.active ? " on" : "") + '"></span>' +
+    '<span class="ws-wid">' + esc(c.wid) + "</span>" +
     identity +
     badges +
     '<span class="grow"></span>' +

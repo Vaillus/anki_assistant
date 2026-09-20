@@ -29,12 +29,12 @@ While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while
 
 ## Cards
 
-A **card** holds one note and the [versions](#versions) of its fields being prepared for validation. A card is either an **existing note** (it has a `note_id`) or a **draft note** (a split fragment or a created note, not in Anki yet). Every card has a **workspace id** (`w1`, `w2`…), unique within the workspace, which is how Claude and the UI name it.
+A **card** holds one note and the [versions](#versions) of its fields being prepared for validation. A card is either an **existing note** (it has a `note_id`) or a **draft note** (a split fragment or a created note, not in Anki yet). Every card has a **workspace number** (`1`, `2`…), unique within the workspace, displayed on the card header and used to name it in chat.
 
 ```
-┌ w1 ─────────────────────────────────────────────────┐
+┌ 1 ──────────────────────────────────────────────────┐
 │ card head                                            │
-│  ● #5262 Cloze  ⚑ à revoir    ← v1 / 2 →  [invalider]│
+│  ● 1 #5262 Cloze  ⚑ à revoir  ← v1 / 2 →  [invalider]│
 │  tags: phd                      [supprimer] [→ …] [✂]│
 ├──────────────────────────────────────────────────────┤
 │ card body                                            │
@@ -48,9 +48,9 @@ A **card** holds one note and the [versions](#versions) of its fields being prep
 │  └─────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────┘
   ┊ fragment link
-┌ w2 (fragment of w1) ────────────────────────────────┐
+┌ 2 (fragment of 1) ──────────────────────────────────┐
 │ card head                                            │
-│  ● brouillon Cloze                                   │
+│  ● 2 brouillon Cloze                                 │
 │ card body                                            │
 │  Text:  {{c1::KKT}} is the special case when…       │
 └──────────────────────────────────────────────────────┘
@@ -67,11 +67,12 @@ Cards are listed root first, then in order of arrival. A [fragment](#split) is s
 One line, left to right:
 
 - **Activation toggle** — clicking the head (outside a control) toggles the card between **active** and inactive. A card is active when the next message is about it; every card starts active. An inactive card is drawn at 55 % opacity.
-- **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, the tags, and « fragment de w1 » on a fragment.
+- **Card number** — the card's workspace number, bold and accent-colored.
+- **Identity** — « #5262 » for an existing note, « brouillon » for a draft, plus the note type, the deck when it differs from the current deck, the tags, and « fragment de 1 » on a fragment.
 - **⚑ flag toggle** — outlined when off; filled, reading « ⚑ à revoir », when on.
 - **State badges** — « supprimée », « gardée », « → deck ».
 - **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
-- **Actions** — « invalider »; « retirer », which removes the card from the workspace (and its fragments, when it has any) without touching Anki — a card that was never in the plan stays that way, and a card that was in the plan leaves it; on an existing note, « supprimer » / « restaurer » and « déplacer… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « scinde w1 : » is put in the message box, focused.
+- **Actions** — « invalider »; « retirer », which removes the card from the workspace (and its fragments, when it has any) without touching Anki — a card that was never in the plan stays that way, and a card that was in the plan leaves it; on an existing note, « supprimer » / « restaurer » and « déplacer… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « scinde 1 : » is put in the message box, focused.
 
 The flag toggle is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head — the card is drawn as the note will be, resolved — but stay in the user comment's label (« raison du flag · c2 ») and keep driving the question state of v0.
 
@@ -129,7 +130,7 @@ Notes cannot be added by hand in v1.
 
 ## Conversation
 
-The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. Two differences in what is rendered: a proposal that lands on the workspace shows as a muted pointer line in the log (« → carte w3 »), not as a card; source proposals (`create_source`, `edit_source`) stay in the log with their « Appliquer » since they write into the vault on click, not at validation.
+The right pane is the chat of [chat.md](./chat.md), unchanged in its mechanics. Two differences in what is rendered: a proposal that lands on the workspace shows as a muted pointer line in the log (« → carte 3 »), not as a card; source proposals (`create_source`, `edit_source`) stay in the log with their « Appliquer » since they write into the vault on click, not at validation.
 
 ## Validation
 

@@ -12,7 +12,7 @@ const MAX_CARDS = 50; // same cap as chat.py (specs/workspace.md#how-notes-enter
 function cardFromNote(n, parentWid) {
   const isRoot = S.ws.cards.length === 0;
   return {
-    wid: "w" + S.ws.nextWid++,
+    wid: String(S.ws.nextWid++),
     noteId: n.note_id,
     parentWid: parentWid || null,
     model: n.model,
@@ -38,7 +38,7 @@ function cardFromNote(n, parentWid) {
 
 function draftCard(spec) {
   return {
-    wid: "w" + S.ws.nextWid++,
+    wid: String(S.ws.nextWid++),
     noteId: null,
     parentWid: spec.parentWid || null,
     model: spec.model,
@@ -192,7 +192,7 @@ function openWorkspace(noteId) {
   if (!noteId && !S.deck) return;
   if (noteId) S.selNote = noteId;
   S.ws = {
-    rootWid: n ? "w1" : null,
+    rootWid: n ? "1" : null,
     deck: (n && n.deck) || S.deck,
     nextWid: 1,
     cards: [],
@@ -203,7 +203,7 @@ function openWorkspace(noteId) {
     chatBusy: false,
     applying: false,
     report: null,
-    rejected: [], // « w3 v2 » per dropped version, told to Claude in the history
+    rejected: [], // « 3 v2 » per dropped version, told to Claude in the history
   };
   if (n) addNoteCard(n);
   S.refocus = "chat";

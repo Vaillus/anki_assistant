@@ -240,7 +240,7 @@ class _Roster:
         if text in self.wids:
             return None
         if not text.isdigit():
-            return f"cible inconnue : « {text} » (identifiant d'espace w… ou identifiant Anki)"
+            return f"cible inconnue : « {text} » (numéro de carte ou identifiant Anki)"
         nid = int(text)
         if nid in self.note_ids:
             return None

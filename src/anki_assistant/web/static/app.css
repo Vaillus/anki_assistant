@@ -493,6 +493,7 @@ select.chip.theme:hover { border-color: var(--line-strong); color: var(--ink); }
 .ws-card-head .tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
 .ws-dot { width: 10px; height: 10px; border: 2px solid var(--accent); flex: none; }
 .ws-dot.on { background: var(--accent); }
+.ws-wid { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); flex: none; min-width: 14px; text-align: center; }
 .ws-versions { display: inline-flex; align-items: center; gap: 2px; }
 .ws-versions button { padding: 0 6px; }
 .ws-version { font-size: 12px; color: var(--muted); margin: 0 0 6px; }

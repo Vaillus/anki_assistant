@@ -71,7 +71,7 @@ One line, left to right:
 - **⚑ flag toggle** — outlined when off; filled, reading « ⚑ à revoir », when on.
 - **State badges** — « supprimée », « gardée », « → deck ».
 - **Version controls** — « ← v2 / 3 → », shown when the card has more than one version.
-- **Actions** — « invalider »; on an existing note, « supprimer » / « restaurer » and « déplacer… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « scinde w1 : » is put in the message box, focused.
+- **Actions** — « invalider »; « retirer », which removes the card from the workspace (and its fragments, when it has any) without touching Anki — a card that was never in the plan stays that way, and a card that was in the plan leaves it; on an existing note, « supprimer » / « restaurer » and « déplacer… » (a deck picker); on any card not deleted, **✂**, which starts a split request for the user to complete: « scinde w1 : » is put in the message box, focused.
 
 The flag toggle is hidden on a deleted card. The clozes that carried the flag in Anki are not shown in the head — the card is drawn as the note will be, resolved — but stay in the user comment's label (« raison du flag · c2 ») and keep driving the question state of v0.
 

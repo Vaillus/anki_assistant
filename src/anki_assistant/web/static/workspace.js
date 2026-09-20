@@ -289,6 +289,19 @@ function showVersion(card, delta) {
   card.editing = null;
 }
 
+/* « retirer »: remove the card and its descendant fragments from the workspace. */
+function removeCard(card) {
+  const toRemove = new Set();
+  function collect(wid) {
+    toRemove.add(wid);
+    S.ws.cards.forEach((c) => {
+      if (c.parentWid === wid) collect(c.wid);
+    });
+  }
+  collect(card.wid);
+  S.ws.cards = S.ws.cards.filter((c) => !toRemove.has(c.wid));
+}
+
 /* « invalider »: drop the shown version. v0 stays; a draft with no version left disappears. */
 function invalidateVersion(card) {
   if (card.noteId && card.vi === 0) return;
@@ -917,6 +930,10 @@ function wsClick(act, el, e) {
     S.refocus = "chat";
     return draw();
   }
+  if (act === "ws-remove" && card) {
+    removeCard(card);
+    return draw();
+  }
   if (!card) return undefined;
   if (act === "ws-toggle") {
     // The head toggles activation, unless the click landed on one of its controls.
@@ -1132,6 +1149,7 @@ function wsCardHtml(c, isFragment, depth, lines) {
         "</button>"
       : "") +
     (c.noteId && !c.deleted ? movePickerHtml(c) : "") +
+    '<button class="ghost small" data-act="ws-remove" data-wid="' + c.wid + '" title="retirer cette carte de l\'espace de travail">retirer</button>' +
     splitBtn;
   const effectiveModel = shownModel(c);
   const modelChanged = c.noteId && effectiveModel !== c.model;

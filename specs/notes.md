@@ -25,7 +25,7 @@ The app does not hardcode note type names — it iterates whatever fields Anki d
 | Note type | Fields | Cards produced |
 |---|---|---|
 | **Cloze** | `Text`, `Back Extra` | One card per cloze deletion in `Text`. Card ordinal (`ord`) 0 hides `c1`, ord 1 hides `c2`, etc. |
-| **Basic** | `Front`, `Back` | One card: `Front` on the question side, `Back` on the answer side. |
+| **Basic** | `Front`, `Back`, `Back Extra` | One card: `Front` on the question side, `Back` on the answer side. |
 
 Other types work — the app iterates whatever fields the type declares — but the review queue, the workspace and the chat prompt are designed around these two.
 

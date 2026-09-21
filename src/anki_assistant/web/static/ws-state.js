@@ -23,7 +23,7 @@ function cardFromNote(n, parentWid) {
     ankiFlagged: !!n.flagged,
     reason: n.reason || "",
     anchors: null, // [source id] once fetched
-    versions: [{ fields: Object.assign({}, n.fields || {}), by: "anki", rationale: "" }],
+    versions: [{ fields: Object.assign({}, n.fields || {}), by: "anki" }],
     vi: 0,
     active: true,
     deleted: false,
@@ -49,7 +49,7 @@ function draftCard(spec) {
     ankiFlagged: false,
     reason: "",
     anchors: (spec.anchors || []).slice(),
-    versions: [{ fields: Object.assign({}, spec.fields || {}), by: "claude", rationale: spec.rationale || "" }],
+    versions: [{ fields: Object.assign({}, spec.fields || {}), by: "claude" }],
     vi: 0,
     active: true,
     deleted: false,
@@ -245,9 +245,9 @@ function hasReasonField(card) {
 /* `model` is the note type the version is written for; omitted, the version keeps the shown
    version's type. A type differing from the card's original sticks to the version, so that a
    later retouch never sends Basic fields under the Cloze type (specs/workspace.md#editing). */
-function pushVersion(card, fields, by, rationale, model) {
+function pushVersion(card, fields, by, model) {
   var effective = model || shownModel(card);
-  var v = { fields: Object.assign({}, fields), by: by, rationale: rationale || "" };
+  var v = { fields: Object.assign({}, fields), by: by };
   if (effective !== card.model) v.model = effective;
   card.versions.push(v);
   card.vi = card.versions.length - 1;
@@ -322,7 +322,7 @@ function versionNumber(card, i) {
 function editField(card, name, value) {
   let v = shownVersion(card);
   if (v.by === "anki") {
-    v = { fields: Object.assign({}, v.fields), by: "user", rationale: "" };
+    v = { fields: Object.assign({}, v.fields), by: "user" };
     if (shownModel(card) !== card.model) v.model = shownModel(card);
     card.versions.push(v);
     card.vi = card.versions.length - 1;
@@ -377,7 +377,7 @@ async function landProposal(input, kind) {
     const fields = modelChanged
       ? Object.assign({}, inp.fields || {})
       : Object.assign({}, shownFields(card), inp.fields || {});
-    pushVersion(card, fields, "claude", inp.rationale, newModel);
+    pushVersion(card, fields, "claude", newModel);
     if (Array.isArray(inp.tags)) card.tags = inp.tags.slice();
     return "→ card " + card.wid;
   }
@@ -408,7 +408,6 @@ async function landProposal(input, kind) {
         tags: card.tags,
         deck: card.deck,
         anchors: card.anchors || [],
-        rationale: inp.rationale,
       }),
     );
     return "→ " + made.length + " cartes";
@@ -422,7 +421,6 @@ async function landProposal(input, kind) {
       tags: root ? root.tags : [],
       deck: S.ws.deck,
       anchors: inp.source_ids || (root && root.anchors) || [],
-      rationale: inp.rationale,
     });
     return "→ card " + card.wid;
   }

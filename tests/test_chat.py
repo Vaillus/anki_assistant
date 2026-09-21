@@ -398,7 +398,8 @@ def test_tools_are_the_proposals_then_the_read_tools_then_the_web_tools() -> Non
         assert set(schema["required"]) <= set(schema["properties"])
         assert tool["description"]
     for tool in chat.proposal_tools():
-        assert "rationale" in tool["input_schema"]["required"]
+        assert "rationale" not in tool["input_schema"].get("required", [])
+        assert "rationale" not in tool["input_schema"].get("properties", {})
 
 
 def test_tool_schemas_match_the_spec_tables() -> None:
@@ -408,22 +409,22 @@ def test_tool_schemas_match_the_spec_tables() -> None:
     assert by_name["propose_edit"]["properties"]["fields"]["additionalProperties"] == {
         "type": "string"
     }
-    assert by_name["propose_edit"]["required"] == ["target", "fields", "rationale"]
+    assert by_name["propose_edit"]["required"] == ["target", "fields"]
     assert by_name["propose_edit"]["properties"]["target"]["type"] == "string"
-    assert by_name["propose_move"]["required"] == ["target", "deck", "rationale"]
+    assert by_name["propose_move"]["required"] == ["target", "deck"]
     assert "propose_bulk_edit" not in by_name
     assert "source_ids" in by_name["propose_create"]["properties"]
     split_new = by_name["propose_split"]["properties"]["new_notes"]
     assert split_new["items"]["required"] == ["model", "fields"]
     split_orig = by_name["propose_split"]["properties"]["original"]["anyOf"][0]
     assert split_orig["required"] == ["model", "fields"]
-    assert by_name["propose_create_source"]["required"] == ["name", "content", "rationale"]
+    assert by_name["propose_create_source"]["required"] == ["name", "content"]
     assert "anchor_note_ids" in by_name["propose_create_source"]["properties"]
     add = by_name["propose_add_source"]
-    assert add["required"] == ["target", "rationale"]
+    assert add["required"] == ["target"]
     assert add["properties"]["kind"]["enum"] == ["web", "obsidian", "pdf"]
     assert {"pages", "note", "anchor_note_ids"} <= set(add["properties"])
-    assert by_name["propose_edit_source"]["required"] == ["source_id", "old", "new", "rationale"]
+    assert by_name["propose_edit_source"]["required"] == ["source_id", "old", "new"]
 
     search = by_name["search_notes"]
     assert search["required"] == ["query"]
@@ -432,7 +433,7 @@ def test_tool_schemas_match_the_spec_tables() -> None:
     assert "limit" not in search["properties"]
     assert by_name["read_source"]["required"] == ["source_id"]
     assert by_name["get_notes"]["required"] == ["note_ids"]
-    assert by_name["add_notes"]["required"] == ["note_ids", "rationale"]
+    assert by_name["add_notes"]["required"] == ["note_ids"]
     assert str(chat.MAX_CARDS) in next(
         tool["description"] for tool in chat.tools() if tool["name"] == "add_notes"
     )
@@ -687,7 +688,7 @@ def test_absent_target_is_refused_when_the_workspace_is_full() -> None:
 
 def test_add_notes_runs_get_notes_and_emits_an_added_event() -> None:
     block = tool_use_block(
-        "toolu_add", "add_notes", {"note_ids": [7, 8], "rationale": "même défaut"}
+        "toolu_add", "add_notes", {"note_ids": [7, 8]}
     )
     client = _one_tool_turn(block)
     seen: list[dict[str, Any]] = []
@@ -698,8 +699,8 @@ def test_add_notes_runs_get_notes_and_emits_an_added_event() -> None:
 
     events = run_chat(client, read_tools={"get_notes": get_notes})
     assert [event.type for event in events] == ["added", "done"]
-    assert events[0].data == {"id": "toolu_add", "note_ids": [7, 8], "rationale": "même défaut"}
-    assert seen == [{"note_ids": [7, 8], "rationale": "même défaut"}]
+    assert events[0].data == {"id": "toolu_add", "note_ids": [7, 8]}
+    assert seen == [{"note_ids": [7, 8]}]
     assert _first_result(client)["content"] == "# 2 notes\n…"
 
 

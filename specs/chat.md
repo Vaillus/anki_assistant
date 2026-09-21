@@ -118,7 +118,7 @@ Each invocation returns « ok » to Claude immediately — accepting, editing or
 
 **Fields.** Field values in proposals are [raw](./notes.md#fields-are-raw-anki-html). On `propose_edit` they are the changed fields only, as complete raw values; the client merges them into the shown version. When `model` names a different [note type](./notes.md#note-type-across-versions), `fields` are the complete set of the target type. On `propose_split`, `original` and each `new_notes` entry carry `model` (the fragment's note type); when it differs from the parent's, `fields` are the complete set of that type (no merge with the parent's fields). The client infers the note type from the fields as a fallback when Claude omits `model`. On `propose_create` every field is given.
 
-In the log, a proposal that landed on the workspace shows as a muted pointer line naming the kind and the target card. The rationale appears under the version on the card, not in the log.
+In the log, a proposal that landed on the workspace shows as a muted pointer line naming the kind and the target card.
 
 ### Source proposals
 

@@ -99,7 +99,7 @@ async function sendChat() {
         reply.parts.push({ type: "reading", tool: d.tool || "?", input: d.input || {}, summary: d.summary || "" });
         scheduleLogRefresh();
       } else if (name === "added") {
-        const entry = { type: "added", count: 0, rationale: d.rationale || "", error: "" };
+        const entry = { type: "added", count: 0, error: "" };
         reply.parts.push(entry);
         later(async () => {
           if (S.ws !== ws) return;

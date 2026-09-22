@@ -7,7 +7,9 @@
 
 async function loadDecks() {
   try {
-    S.decks = (await API.decks()) || [];
+    const res = await API.decks();
+    S.decks = (res && res.decks) || [];
+    S.priorityCount = (res && res.priority_count) || 0;
   } catch (e) {
     S.error = e.message;
   }
@@ -28,6 +30,36 @@ async function loadNotes() {
     S.notes = { deck, total: 0, flagged: 0, notes: [] };
   }
   draw();
+}
+
+async function loadPriorityNotes() {
+  try {
+    const res = await API.priorityNotes();
+    if (S.deck !== PRIORITY_DECK) return;
+    const notes = (res && res.notes) || [];
+    S.notes = { deck: PRIORITY_DECK, total: notes.length, flagged: notes.length, notes };
+    S.priorityCount = notes.length;
+    S.error = "";
+    selectFirstFlagged();
+  } catch (e) {
+    if (S.deck !== PRIORITY_DECK) return;
+    S.error = e.message;
+    S.notes = { deck: PRIORITY_DECK, total: 0, flagged: 0, notes: [] };
+  }
+  draw();
+}
+
+async function selectPriority() {
+  if (S.deck === PRIORITY_DECK || S.ws) return;
+  S.deck = PRIORITY_DECK;
+  S.notes = null;
+  S.selNote = null;
+  S.revealed = {};
+  S.corpus = null;
+  S.srcForm = null;
+  S.error = "";
+  draw();
+  await loadPriorityNotes();
 }
 
 async function loadCorpus() {
@@ -116,9 +148,18 @@ async function afterDecision(opts) {
   S.busy = true;
   draw();
   try {
-    const res = await Promise.all([API.notes(S.deck), API.decks()]);
-    S.notes = res[0] || S.notes;
-    S.decks = res[1] || S.decks;
+    const isPriority = S.deck === PRIORITY_DECK;
+    const notesFetch = isPriority ? API.priorityNotes() : API.notes(S.deck);
+    const res = await Promise.all([notesFetch, API.decks()]);
+    if (isPriority) {
+      const notes = (res[0] && res[0].notes) || [];
+      S.notes = { deck: PRIORITY_DECK, total: notes.length, flagged: notes.length, notes };
+    } else {
+      S.notes = res[0] || S.notes;
+    }
+    const decksRes = res[1];
+    S.decks = (decksRes && decksRes.decks) || S.decks;
+    S.priorityCount = (decksRes && decksRes.priority_count) || 0;
     S.revealed = {};
     S.error = "";
   } catch (e) {
@@ -205,7 +246,9 @@ document.addEventListener("click", (e) => {
   }
   if (S.ws) return; // the page behind the overlay is inert
 
-  if (act === "deck") {
+  if (act === "priority") {
+    selectPriority();
+  } else if (act === "deck") {
     selectDeck(el.getAttribute("data-deck"));
   } else if (act === "alldecks") {
     S.showAllDecks = !S.showAllDecks;

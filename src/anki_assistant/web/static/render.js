@@ -59,9 +59,22 @@ function deckColumn() {
     (S.showAllDecks ? "flagged only" : "all") +
     "</button>" +
     "</div>" +
+    priorityRow() +
     '<button class="add-deck" data-act="new-deck">+ Add a deck</button>' +
     newDeckInput() +
     rows +
+    "</div>"
+  );
+}
+
+function priorityRow() {
+  if (!S.priorityCount) return "";
+  return (
+    '<div class="deck priority' +
+    (S.deck === PRIORITY_DECK ? " sel" : "") +
+    '" data-act="priority">' +
+    '<span class="name">Priority</span>' +
+    '<span class="badge">' + S.priorityCount + "</span>" +
     "</div>"
   );
 }
@@ -142,18 +155,20 @@ function deckRow(d) {
 /* ---------------- column 2 — queue ---------------- */
 
 function queueColumn() {
+  const isPriority = S.deck === PRIORITY_DECK;
+  const title = isPriority ? "Priority" : (S.deck ? esc(String(S.deck).split("::").pop()) : "Queue");
   const head =
-    '<div class="col-head"><h2>' +
-    (S.deck ? esc(String(S.deck).split("::").pop()) : "Queue") +
-    "</h2>" +
+    '<div class="col-head"><h2>' + title + "</h2>" +
     (S.notes
       ? '<span class="grow"></span><span class="muted small">' +
         (S.notes.flagged || 0) +
         " flagged / " +
         (S.notes.total || 0) +
-        '</span><button class="ghost" data-act="onlyflagged">' +
-        (S.onlyFlagged ? "show all" : "flagged only") +
-        "</button>"
+        '</span>' +
+        (isPriority ? "" :
+          '<button class="ghost" data-act="onlyflagged">' +
+          (S.onlyFlagged ? "show all" : "flagged only") +
+          "</button>")
       : "") +
     (S.undoAvailable
       ? '<button class="ghost small" data-act="undo" title="undo the last validation"' +
@@ -169,8 +184,9 @@ function queueColumn() {
     const vis = visibleNotes();
     body = vis.length
       ? vis.map(noteCard).join("")
-      : '<div class="empty">Nothing to review here 🎉' +
-        '<br><button class="primary" data-act="open-ws" style="margin-top:12px">Open workspace</button>' +
+      : '<div class="empty">' +
+        (isPriority ? "No priority cards 🎉" : 'Nothing to review here 🎉' +
+        '<br><button class="primary" data-act="open-ws" style="margin-top:12px">Open workspace</button>') +
         "</div>";
   }
   return (
@@ -209,6 +225,7 @@ function noteCard(n) {
     nCards(n) +
     " card(s)" +
     ((n.tags || []).length ? " · " + esc((n.tags || []).join(" ")) : "") +
+    (S.deck === PRIORITY_DECK && n.deck ? " · " + esc(n.deck) : "") +
     "</span><span class=\"grow\"></span>" +
     (n.flagged
       ? '<button class="ghost" data-act="keep" data-note="' +
@@ -288,6 +305,7 @@ function rightColumn() {
 
 function sourcePane() {
   if (!S.deck) return '<div class="pane"><div class="empty">Pick a deck</div></div>';
+  if (S.deck === PRIORITY_DECK) return '<div class="pane"><div class="empty">Sources shown per deck</div></div>';
   if (S.corpusLoading && !S.corpus)
     return '<div class="pane"><div class="empty">loading…</div></div>';
   const c = S.corpus;

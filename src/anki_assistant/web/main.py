@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="anki-assistant")
     app.state.anki = AnkiClient(url=os.environ.get("ANKI_CONNECT_URL") or "http://localhost:8765")
     app.state.store = SourceStore()
+    app.state.study_deck = os.environ.get("STUDY_DECK") or None
     app.state.last_validation = None  # snapshot of the last workspace validation (undo)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")

@@ -6,36 +6,7 @@ The page at `/` is a single screen split into three columns — the deck tree on
 
 The goal is to show, for one deck, the notes that need attention (flagged) with the rest of the deck one click away, and let the user resolve each note with a single decision. A resolved note leaves the list immediately.
 
-## Priority queue
-
-A synthetic entry at the top of the deck tree, above all real decks. It aggregates flagged notes across every deck that match **urgency criteria** — cards the user keeps deferring during Anki reviews and that pile up instead of being resolved.
-
-### Criteria
-
-A flagged note is "priority" when at least one of its flagged cards matches any of:
-
-| Criterion | Anki state | Why it's urgent |
-|---|---|---|
-| **Buried** | `is:buried` (queue −2 or −3) | The user saw the card and deferred it — it will come back tomorrow unchanged |
-| **Due within budget** | `is:due`, within the deck's remaining review count | A deferred card that came back AND that Anki will present today — resolve it before the review session |
-| **New** | `is:new` | A new card flagged as not fit for learning; it blocks the new-card queue |
-
-Buried and new flagged cards are always included. Due flagged cards are included only when they fall within the study deck's remaining review budget. The **study deck** — the single root deck the user launches Anki reviews from — is set via the `STUDY_DECK` env var (e.g. `courant`). The server fetches that deck's `review_count` from `getDeckStats`, sorts all due cards under it by `(deck_name, due)` — deck alphabetical first (matching Anki's deck-order presentation), then most overdue first within each deck — and keeps only flagged cards whose position is within the budget. Without `STUDY_DECK`, all flagged due cards are included (no budget filtering).
-
-### Deck tree row
-
-The priority row appears at the top of the deck tree, visually separated from real decks. It shows:
-
-- A fixed label — **"Priority"**.
-- A count — the number of distinct flagged notes matching the criteria.
-
-The row is hidden when the count is zero (nothing urgent). It is always visible otherwise, regardless of the "show all decks" toggle.
-
-### Queue behaviour
-
-When the priority row is selected, the queue (column 2) loads the matching notes as a flat list. Each note carries its `deck` field as usual, and the queue renders the deck name on each note's identity line so the user knows where it lives.
-
-Sort order: flagged first (they all are), then by note id ascending. The same decisions apply (Keep, Skip, Open); after a decision the queue refreshes with the same priority query. The Source tab is inactive in priority mode (no corpus to show across decks).
+The [priority queue](./priority.md) appears at the top of the deck tree, above all real decks.
 
 ## Deck tree (column 1)
 
@@ -117,10 +88,10 @@ All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note �
 
 | Route | Purpose |
 |---|---|
-| `GET /api/decks` | `{ decks, priority_count }` — all decks with flagged counts and source kinds, plus the priority queue note count |
+| `GET /api/decks` | `{ decks, priority_count }` — all decks with flagged counts and source kinds, plus the [priority](./priority.md) note count |
 | `POST /api/decks` | Create a new deck |
 | `DELETE /api/decks` | Delete a deck (cards move to Default) |
-| `GET /api/notes/priority` | Flagged notes matching the priority criteria (cross-deck) |
+| `GET /api/notes/priority` | Flagged notes matching the [priority](./priority.md) criteria (cross-deck) |
 | `GET /api/notes?deck=` | Notes for a deck and its sub-decks |
 | `GET /api/notes/{id}` | One note |
 | `POST /api/notes/lookup` | Several notes by id |

@@ -39,6 +39,7 @@ class FakeAnkiClient(AnkiClient):
             "Basic": ["Front", "Back"],
         }
         self.calls: list[str] = []  # action names, in the order they were invoked
+        self.review_budgets: dict[str, int] = {}  # deck name → max reviews/day
         self._ids = count(1000)
 
     # -- fixture building -------------------------------------------------
@@ -126,6 +127,24 @@ class FakeAnkiClient(AnkiClient):
             else:
                 out.append({"result": result, "error": None})
         return out
+
+    def _do_getDeckStats(self, decks: list[str]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for i, name in enumerate(decks):
+            due_count = sum(
+                1
+                for card in self.cards.values()
+                if card["deckName"] == name and card["queue"] in (2, 3) and card["type"] != 0
+            )
+            budget = self.review_budgets.get(name, 9999)
+            result[str(i)] = {
+                "deck_id": i,
+                "name": name,
+                "new_count": 0,
+                "learn_count": 0,
+                "review_count": min(due_count, budget),
+            }
+        return result
 
     def _do_deckNames(self) -> list[str]:
         return list(self.decks)
@@ -255,21 +274,51 @@ def _api_fields(fields: dict[str, str]) -> dict[str, dict[str, Any]]:
     return {name: {"value": value, "order": i} for i, (name, value) in enumerate(fields.items())}
 
 
-def _matches(card: dict[str, Any], query: str) -> bool:
-    """Support the search syntax review.py actually uses: deck:, flag:, nid:, and negation."""
-    for token in _TOKENS.findall(query):
-        negated = token.startswith("-")
-        key, _, value = (token[1:] if negated else token).partition(":")
-        value = value.strip('"')
-        if key == "deck":
-            ok = card["deckName"] == value or card["deckName"].startswith(f"{value}::")
-        elif key == "flag":
-            ok = card["flags"] == int(value)
-        elif key == "nid":
-            ok = card["note"] == int(value)
+def _match_token(card: dict[str, Any], token: str) -> bool:
+    """Evaluate a single search token (possibly negated) against a card."""
+    negated = token.startswith("-")
+    raw = token[1:] if negated else token
+    key, _, value = raw.partition(":")
+    value = value.strip('"')
+    if key == "deck":
+        ok = card["deckName"] == value or card["deckName"].startswith(f"{value}::")
+    elif key == "flag":
+        ok = card["flags"] == int(value)
+    elif key == "nid":
+        ok = card["note"] == int(value)
+    elif key == "is":
+        if value == "buried":
+            ok = card.get("queue", 0) in (-2, -3)
+        elif value == "new":
+            ok = card.get("type", 0) == 0
+        elif value == "due":
+            ok = card.get("queue", 0) in (2, 3)
         else:
-            raise AnkiConnectError(f"unsupported search token {token!r}")
-        if ok == negated:
+            raise AnkiConnectError(f"unsupported is:{value}")
+    else:
+        raise AnkiConnectError(f"unsupported search token {token!r}")
+    return ok != negated
+
+
+def _matches(card: dict[str, Any], query: str) -> bool:
+    """Support the search syntax review.py actually uses.
+
+    Handles simple AND tokens, negation, and one parenthesised OR group:
+    ``-flag:0 (is:buried OR is:new OR is:due)``
+    """
+    import re as _re
+
+    paren = _re.search(r"\(([^)]+)\)", query)
+    outside = query
+    if paren:
+        outside = query[: paren.start()] + query[paren.end() :]
+        alternatives = [t.strip() for t in paren.group(1).split("OR") if t.strip()]
+        if not any(_match_token(card, alt) for alt in alternatives):
+            return False
+    for token in _TOKENS.findall(outside):
+        if token in ("OR", "(", ")"):
+            continue
+        if not _match_token(card, token):
             return False
     return True
 
@@ -617,14 +666,17 @@ def api(anki: FakeAnkiClient, store: FakeStore) -> TestClient:
     app.include_router(router, prefix="/api")
     app.state.anki = anki
     app.state.store = store
+    app.state.study_deck = None
     return TestClient(app, raise_server_exceptions=False)
 
 
 def test_api_decks_and_notes(api: TestClient, anki: FakeAnkiClient):
     note_id = anki.add("d", fields={"Text": "a{{c1::b}}", "Back Extra": "why"}, flags=(2,))
 
-    decks = api.get("/api/decks").json()
+    resp = api.get("/api/decks").json()
+    decks = resp["decks"]
     assert {"name": "d", "flagged_total": 1}.items() <= decks[0].items()
+    assert resp["priority_count"] >= 0
 
     payload = api.get("/api/notes", params={"deck": "d"}).json()
     assert payload["flagged"] == 1
@@ -701,6 +753,94 @@ def test_api_maps_anki_failures(api: TestClient, anki: FakeAnkiClient, monkeypat
     response = api.get("/api/decks")
     assert response.status_code == 502
     assert "collection is not available" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------- priority queue
+
+
+def test_priority_notes_includes_new_flagged(anki: FakeAnkiClient):
+    nid = anki.add("d", flags=(1,), card_type=0)  # new card, flagged
+    anki.add("d", flags=(0,), card_type=0)  # new card, not flagged — excluded
+    result = review.priority_notes(anki)
+    assert result.count == 1
+    assert result.notes[0].note_id == nid
+
+
+def test_priority_notes_includes_buried_flagged(anki: FakeAnkiClient):
+    nid = anki.add("d", flags=(2,), queue=-2, card_type=2)  # user-buried, flagged
+    result = review.priority_notes(anki)
+    assert result.count == 1
+    assert result.notes[0].note_id == nid
+
+
+def test_priority_notes_includes_due_flagged(anki: FakeAnkiClient):
+    nid = anki.add("d", flags=(1,), queue=2, card_type=2)  # review queue, flagged
+    result = review.priority_notes(anki)
+    assert result.count == 1
+    assert result.notes[0].note_id == nid
+
+
+def test_priority_notes_empty_when_nothing_matches(anki: FakeAnkiClient):
+    anki.add("d", flags=(0,), card_type=0)  # new but not flagged
+    result = review.priority_notes(anki)
+    assert result.count == 0
+    assert result.notes == []
+
+
+def test_priority_notes_cross_deck(anki: FakeAnkiClient):
+    a = anki.add("deck_a", flags=(1,), card_type=0)
+    b = anki.add("deck_b", flags=(3,), queue=-2, card_type=2)
+    result = review.priority_notes(anki)
+    assert result.count == 2
+    ids = {n.note_id for n in result.notes}
+    assert ids == {a, b}
+
+
+def test_priority_due_excluded_when_over_budget(anki: FakeAnkiClient):
+    """A flagged due card beyond the study deck's review budget is excluded."""
+    anki.add("d", flags=(1,), queue=2, card_type=2, due=10)  # flagged, most overdue
+    anki.add("d", flags=(0,), queue=2, card_type=2, due=20)  # unflagged, 2nd
+    excluded = anki.add("d", flags=(1,), queue=2, card_type=2, due=30)  # flagged, 3rd — over budget
+    anki.review_budgets["d"] = 2
+    result = review.priority_notes(anki, study_deck="d")
+    assert result.count == 1
+    assert result.notes[0].note_id != excluded
+
+
+def test_priority_due_included_when_within_budget(anki: FakeAnkiClient):
+    """When total due <= budget, all flagged due cards are included."""
+    a = anki.add("d", flags=(1,), queue=2, card_type=2, due=10)
+    b = anki.add("d", flags=(1,), queue=2, card_type=2, due=20)
+    anki.review_budgets["d"] = 100
+    result = review.priority_notes(anki, study_deck="d")
+    assert result.count == 2
+    ids = {n.note_id for n in result.notes}
+    assert ids == {a, b}
+
+
+def test_priority_due_excluded_when_budget_zero(anki: FakeAnkiClient):
+    """A deck with no remaining reviews today excludes all its due cards."""
+    anki.add("d", flags=(1,), queue=2, card_type=2, due=10)
+    anki.review_budgets["d"] = 0
+    result = review.priority_notes(anki, study_deck="d")
+    assert result.count == 0
+
+
+def test_priority_due_no_filtering_without_study_deck(anki: FakeAnkiClient):
+    """Without a study deck, all flagged due cards are included regardless of budget."""
+    anki.add("d", flags=(1,), queue=2, card_type=2, due=10)
+    anki.review_budgets["d"] = 0
+    result = review.priority_notes(anki)
+    assert result.count == 1
+
+
+def test_api_priority_endpoint(api: TestClient, anki: FakeAnkiClient):
+    nid = anki.add("d", flags=(1,), card_type=0)
+    resp = api.get("/api/notes/priority")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["notes"][0]["note_id"] == nid
 
 
 # ------------------------------------------------------------- reading for the chat

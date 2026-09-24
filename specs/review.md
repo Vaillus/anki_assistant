@@ -6,6 +6,8 @@ The page at `/` is a single screen split into three columns — the deck tree on
 
 The goal is to show, for one deck, the notes that need attention (flagged) with the rest of the deck one click away, and let the user resolve each note with a single decision. A resolved note leaves the list immediately.
 
+The [priority queue](./priority.md) appears at the top of the deck tree, above all real decks.
+
 ## Deck tree (column 1)
 
 Column 1 lists every deck as a row indented by its depth in the `::` hierarchy. Each row shows:
@@ -86,9 +88,10 @@ All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note �
 
 | Route | Purpose |
 |---|---|
-| `GET /api/decks` | All decks with flagged counts and source kinds |
+| `GET /api/decks` | `{ decks, priority_count }` — all decks with flagged counts and source kinds, plus the [priority](./priority.md) note count |
 | `POST /api/decks` | Create a new deck |
 | `DELETE /api/decks` | Delete a deck (cards move to Default) |
+| `GET /api/notes/priority` | Flagged notes matching the [priority](./priority.md) criteria (cross-deck) |
 | `GET /api/notes?deck=` | Notes for a deck and its sub-decks |
 | `GET /api/notes/{id}` | One note |
 | `POST /api/notes/lookup` | Several notes by id |

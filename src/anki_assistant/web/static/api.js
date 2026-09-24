@@ -41,6 +41,7 @@ const API = {
   createDeck: (name) => jfetch("/api/decks", jsonBody("POST", { name })),
   deleteDeck: (name) => jfetch("/api/decks?name=" + q(name), { method: "DELETE" }),
   notes: (deck) => jfetch("/api/notes?deck=" + q(deck)),
+  priorityNotes: () => jfetch("/api/notes/priority"),
   note: (id) => jfetch("/api/notes/" + id),
   models: () => jfetch("/api/models"),
   keep: (id) => jfetch("/api/notes/" + id + "/keep", { method: "POST" }),

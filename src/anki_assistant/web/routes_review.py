@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from anki_assistant import review
 from anki_assistant.client import AnkiClient
-from anki_assistant.review import DeckNotes, DeckSummary, NoteView, SplitResult
+from anki_assistant.review import DeckNotes, DeckSummary, NoteView, PriorityResult, SplitResult
 from anki_assistant.sources import SourceStore
 from anki_assistant.web.errors import anki_errors
 from anki_assistant.workspace import anchors_after_move
@@ -24,6 +24,10 @@ def _anki(request: Request) -> AnkiClient:
 
 def _store(request: Request) -> SourceStore:
     return request.app.state.store
+
+
+def _study_deck(request: Request) -> str | None:
+    return request.app.state.study_deck
 
 
 _anki_errors = anki_errors
@@ -80,10 +84,17 @@ class LookupBody(BaseModel):
 # ---------------------------------------------------------------------- routes
 
 
+class DecksResponse(BaseModel):
+    decks: list[DeckSummary]
+    priority_count: int
+
+
 @router.get("/decks")
-def get_decks(request: Request) -> list[DeckSummary]:
+def get_decks(request: Request) -> DecksResponse:
     with _anki_errors():
-        return review.list_decks(_anki(request), _store(request))
+        decks = review.list_decks(_anki(request), _store(request))
+        pcount = review.priority_count(_anki(request), study_deck=_study_deck(request))
+    return DecksResponse(decks=decks, priority_count=pcount)
 
 
 @router.post("/decks", status_code=201)
@@ -101,6 +112,12 @@ def delete_deck(request: Request, name: str = Query(...)) -> Response:
     with _anki_errors():
         review.delete_deck(_anki(request), name)
     return Response(status_code=204)
+
+
+@router.get("/notes/priority")
+def get_priority_notes(request: Request) -> PriorityResult:
+    with _anki_errors():
+        return review.priority_notes(_anki(request), study_deck=_study_deck(request))
 
 
 @router.get("/notes")

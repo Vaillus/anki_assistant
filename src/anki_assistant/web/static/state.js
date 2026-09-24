@@ -61,10 +61,13 @@ if (window.matchMedia) {
   else if (mq.addListener) mq.addListener(onChange);
 }
 
+const PRIORITY_DECK = "__priority__";
+
 const S = {
   // column 1
   decks: [],
   deck: null,
+  priorityCount: 0,
   showAllDecks: false,
   newDeck: null, // { value, error } while the create-deck input is open
   // column 2

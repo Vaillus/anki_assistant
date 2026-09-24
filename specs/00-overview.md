@@ -14,6 +14,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 |---|---|
 | [notes.md](./notes.md) | Note, card, note type, field, reason, field syntax |
 | [review.md](./review.md) | The three-column page: deck tree, queue, decisions, rendering, keyboard |
+| [priority.md](./priority.md) | Priority queue: urgency criteria, study-deck budget filtering, deck tree row |
 | [sources.md](./sources.md) | Corpus, source, anchors, extracted text, vault writes, Source tab |
 | [workspace.md](./workspace.md) | The overlay: cards, versions, split, flag toggle, validation, undo |
 | [chat.md](./chat.md) | The conversation: system prompt, read tools, proposal tools, source proposals |
@@ -48,12 +49,12 @@ graph LR
 | `src/anki_assistant/models.py` | `Card`, `Note` dataclasses | — |
 | `src/anki_assistant/sources/` | `SourceStore`, corpora, anchors, text extraction, vault writes | [sources.md](./sources.md) |
 | `src/anki_assistant/pdf_cache.py` | Sidecar cache, structural index, Docling extraction | [sources.md](./sources.md) |
-| `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes | [review.md](./review.md) |
+| `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes, priority queue | [review.md](./review.md), [priority.md](./priority.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
 | `src/anki_assistant/web/main.py` | FastAPI app factory, static mount, router includes | — |
-| `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…` | [review.md](./review.md#api) |
+| `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…`, `/api/notes/priority` | [review.md](./review.md#api), [priority.md](./priority.md#api) |
 | `src/anki_assistant/web/routes_workspace.py` | `/api/workspace/apply`, `/api/workspace/undo` | [workspace.md](./workspace.md#api) |
 | `src/anki_assistant/web/routes_sources.py` | `/api/sources…`, `/api/vault/notes` | [sources.md](./sources.md#api) |
 | `src/anki_assistant/web/routes_chat.py` | `/api/chat` (SSE) | [chat.md](./chat.md#api) |

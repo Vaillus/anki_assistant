@@ -272,6 +272,8 @@ a { color: var(--accent); }
 .deck.sel { background: var(--accentbg); }
 .deck.dim { color: var(--dim); }
 .deck .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.deck.priority { border-bottom: 1px solid var(--border); padding: 6px 12px; margin-bottom: 2px; }
+.deck.priority .name { font-weight: 700; }
 
 .add-deck {
   display: block;

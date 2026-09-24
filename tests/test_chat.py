@@ -687,9 +687,7 @@ def test_absent_target_is_refused_when_the_workspace_is_full() -> None:
 
 
 def test_add_notes_runs_get_notes_and_emits_an_added_event() -> None:
-    block = tool_use_block(
-        "toolu_add", "add_notes", {"note_ids": [7, 8]}
-    )
+    block = tool_use_block("toolu_add", "add_notes", {"note_ids": [7, 8]})
     client = _one_tool_turn(block)
     seen: list[dict[str, Any]] = []
 

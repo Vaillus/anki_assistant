@@ -28,6 +28,7 @@ __all__ = [
     "FlaggedCard",
     "NoteNotFound",
     "NoteView",
+    "PriorityResult",
     "SplitResult",
     "create",
     "create_deck",
@@ -39,6 +40,7 @@ __all__ = [
     "list_decks",
     "list_notes",
     "move",
+    "priority_notes",
     "search_notes",
     "split",
 ]
@@ -96,6 +98,14 @@ class DeckNotes:
     deck: str
     total: int
     flagged: int
+    notes: list[NoteView]
+
+
+@dataclass
+class PriorityResult:
+    """Cross-deck list of flagged notes matching urgency criteria."""
+
+    count: int
     notes: list[NoteView]
 
 
@@ -236,6 +246,95 @@ def search_notes(client: AnkiClient, query: str, limit: int = 50) -> list[NoteVi
     views = get_notes(client, ids)
     views.sort(key=lambda v: (not v.flagged, v.note_id))
     return views
+
+
+PRIORITY_QUERY = "-flag:0 (is:buried OR is:new OR is:due)"
+
+
+def _quote(value: str) -> str:
+    return '"' + value.replace('"', '\\"') + '"'
+
+
+def _due_within_budget(
+    client: AnkiClient,
+    flagged_due_cards: list[Card],
+    study_deck: str,
+) -> set[int]:
+    """Return card ids of flagged due cards within the study deck's review budget.
+
+    The user studies from one root deck (e.g. ``courant``); its ``review_count``
+    from ``getDeckStats`` is the total remaining reviews for today across all
+    sub-decks. Anki presents review cards grouped by sub-deck in tree order
+    (alphabetical), so the sort key is ``(deck_name, due)`` — all of one sub-deck's
+    cards before the next, most overdue first within each.
+    """
+    if not flagged_due_cards:
+        return set()
+
+    stats_raw = client.deck_stats(study_deck)
+    budget = 0
+    for stat in stats_raw.values():
+        budget = int(stat.get("review_count", 0))
+
+    if budget == 0:
+        return set()
+
+    all_due_ids = client.find_card_ids(f"deck:{_quote(study_deck)} is:due -is:new -is:buried")
+    if len(all_due_ids) <= budget:
+        return {c.card_id for c in flagged_due_cards}
+
+    all_due = client.cards_info(all_due_ids)
+    all_due.sort(key=lambda c: (c.deck_name, c.due))
+    within = {c.card_id for c in all_due[:budget]}
+    return {c.card_id for c in flagged_due_cards if c.card_id in within}
+
+
+def priority_notes(client: AnkiClient, *, study_deck: str | None = None) -> PriorityResult:
+    """Flagged notes matching urgency criteria: buried, new, or due within budget."""
+    buried_ids = client.find_card_ids("-flag:0 is:buried")
+    new_ids = client.find_card_ids("-flag:0 is:new")
+    due_flagged_ids = client.find_card_ids("-flag:0 is:due -is:new -is:buried")
+
+    always_priority = set(buried_ids) | set(new_ids)
+    if not always_priority and not due_flagged_ids:
+        return PriorityResult(count=0, notes=[])
+
+    # Budget filtering: only when a study deck is configured.
+    if study_deck and due_flagged_ids:
+        due_cards = client.cards_info(due_flagged_ids)
+        budgeted = _due_within_budget(client, due_cards, study_deck)
+    elif due_flagged_ids:
+        budgeted = set(due_flagged_ids)
+    else:
+        budgeted = set()
+
+    priority_card_ids = list(always_priority | budgeted)
+    if not priority_card_ids:
+        return PriorityResult(count=0, notes=[])
+
+    cards = client.cards_info(priority_card_ids)
+    cards_by_note: dict[int, list[Card]] = defaultdict(list)
+    for card in cards:
+        cards_by_note[card.note_id].append(card)
+
+    notes = client.notes_info(list(cards_by_note))
+
+    # Fetch remaining cards of each note for complete flag state.
+    all_card_ids = {cid for note in notes for cid in note.card_ids}
+    fetched = {c.card_id for c in cards}
+    missing = list(all_card_ids - fetched)
+    if missing:
+        for card in client.cards_info(missing):
+            cards_by_note[card.note_id].append(card)
+
+    views = [_build_view(note, cards_by_note[note.note_id]) for note in notes]
+    views.sort(key=lambda v: v.note_id)
+    return PriorityResult(count=len(views), notes=views)
+
+
+def priority_count(client: AnkiClient, *, study_deck: str | None = None) -> int:
+    """Exact count for the deck tree badge (same logic as priority_notes)."""
+    return priority_notes(client, study_deck=study_deck).count
 
 
 # --------------------------------------------------------------------- decisions

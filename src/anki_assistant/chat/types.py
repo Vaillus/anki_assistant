@@ -13,7 +13,7 @@ from typing import Any, Protocol
 
 # --------------------------------------------------------------------------- config
 
-DEFAULT_MODEL = "claude-opus-4-6"
+DEFAULT_MODEL = "claude-opus-5-5"
 MAX_TOKENS = 8192
 #: Total budget for the attached sources block (block 3 of the system prompt).
 MAX_ATTACHED_CHARS = 150_000

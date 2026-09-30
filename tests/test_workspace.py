@@ -514,6 +514,56 @@ def test_apply_changes_note_type_via_update_note_model(anki: FailingAnki, store:
     assert report.undo_available is True
 
 
+def _to_basic(nid: int) -> ApplyPlan:
+    return ApplyPlan(
+        deck="d",
+        cards=[
+            CardPlan(
+                wid="w1",
+                action="edit",
+                note_id=nid,
+                model="Basic",
+                fields={"Front": "q", "Back": "a"},
+            )
+        ],
+    )
+
+
+def test_model_change_deletes_orphan_cards(anki: FailingAnki, store: SourceStore):
+    """A Cloze with three cards turned Basic keeps only ord 0: Check Database deletes the rest,
+    and the snapshot forgets them so that an undo does not write to them."""
+    nid = anki.add("d", model="Cloze", fields={"Text": "{{c1::a}} {{c2::b}}"}, flags=(0, 1, 0))
+    first = anki.notes[nid]["cards"][0]
+    report, snap = workspace.apply(anki, store, _to_basic(nid))
+    assert report.ok and not report.errors
+    assert "guiCheckDatabase" in anki.calls
+    assert anki.notes[nid]["cards"] == [first]
+    assert snap.notes[nid].card_ids == [first]
+    assert list(snap.notes[nid].flags) == [first]
+
+    undone = workspace.undo(anki, store, snap)
+    assert undone.ok, undone.errors
+    assert anki.notes[nid]["modelName"] == "Cloze"
+
+
+def test_model_change_without_orphans_skips_check_database(anki: FailingAnki, store: SourceStore):
+    """One card, one template: nothing to clean up."""
+    nid = anki.add("d", model="Cloze", fields={"Text": "{{c1::a}}"}, flags=(1,))
+    report, _ = workspace.apply(anki, store, _to_basic(nid))
+    assert report.ok
+    assert "guiCheckDatabase" not in anki.calls
+
+
+def test_failed_orphan_cleanup_is_reported_not_rolled_back(anki: FailingAnki, store: SourceStore):
+    nid = anki.add("d", model="Cloze", fields={"Text": "{{c1::a}} {{c2::b}}"}, flags=(1, 0))
+    anki.fail_on["guiCheckDatabase"] = 1
+    report, snap = workspace.apply(anki, store, _to_basic(nid))
+    assert report.ok and report.undo_available
+    assert any("Check Database" in e for e in report.errors)
+    assert anki.notes[nid]["modelName"] == "Basic"
+    assert len(snap.notes[nid].card_ids) == 2
+
+
 def test_apply_model_change_rollback_restores_old_type(anki: FailingAnki, store: SourceStore):
     """On failure after a model change, rollback swaps back to the old type."""
     a = anki.add("d", model="Cloze", fields={"Text": "x", "Back Extra": ""}, flags=(1,))

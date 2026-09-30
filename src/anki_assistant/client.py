@@ -21,6 +21,10 @@ class AnkiConnectError(RuntimeError):
     """Raised when AnkiConnect is unreachable or returns an error."""
 
 
+class AnkiActionError(AnkiConnectError):
+    """Raised when AnkiConnect answered but the action itself failed."""
+
+
 def _quote(value: str) -> str:
     """Quote a value for use inside an Anki search query."""
     return '"' + value.replace('"', '\\"') + '"'
@@ -49,14 +53,17 @@ class AnkiClient:
         if not isinstance(body, dict) or "error" not in body or "result" not in body:
             raise AnkiConnectError(f"Unexpected response for {action!r}: {body!r}")
         if body["error"] is not None:
-            raise AnkiConnectError(f"{action}: {body['error']}")
+            raise AnkiActionError(f"{action}: {body['error']}")
         return body["result"]
 
-    def invoke_multi(self, calls: Sequence[tuple[str, dict[str, Any]]]) -> list[Any]:
+    def invoke_multi(
+        self, calls: Sequence[tuple[str, dict[str, Any]]], *, skip_errors: bool = False
+    ) -> list[Any]:
         """Run several actions in one HTTP round trip and return their results, in order.
 
         Uses AnkiConnect's `multi`. Each sub-action carries its own version so that failures
-        come back as `{"result": ..., "error": ...}` instead of a silent `None`.
+        come back as `{"result": ..., "error": ...}` instead of a silent `None`. A failed
+        sub-action raises, or yields `None` in its place when *skip_errors* is set.
         """
         if not calls:
             return []
@@ -69,9 +76,12 @@ class AnkiClient:
         results: list[Any] = []
         for (action, _), item in zip(calls, raw, strict=True):
             if isinstance(item, dict) and "error" in item and "result" in item:
-                if item["error"] is not None:
-                    raise AnkiConnectError(f"{action}: {item['error']}")
-                results.append(item["result"])
+                if item["error"] is None:
+                    results.append(item["result"])
+                elif skip_errors:
+                    results.append(None)
+                else:
+                    raise AnkiActionError(f"{action}: {item['error']}")
             else:  # older AnkiConnect: bare result, no envelope
                 results.append(item)
         return results
@@ -81,6 +91,13 @@ class AnkiClient:
 
     def sync(self) -> None:
         self.invoke("sync")
+
+    def check_database(self) -> None:
+        """Start Anki's Check Database, the only way to delete orphan cards.
+
+        It runs in Anki's window over the whole collection; the call returns before it ends.
+        """
+        self.invoke("guiCheckDatabase")
 
     # ----------------------------------------------------------------- decks
 
@@ -111,10 +128,21 @@ class AnkiClient:
         return self.invoke("findNotes", query=query)
 
     def cards_info(self, card_ids: list[int]) -> list[Card]:
-        """Cards by id. AnkiConnect returns `{}` for an unknown id; those are dropped."""
+        """Cards by id. AnkiConnect returns `{}` for an unknown id; those are dropped.
+
+        An orphan card (no template for its ordinal) makes AnkiConnect refuse the whole batch;
+        the cards are then read one by one and the failing ones dropped (specs/notes.md).
+        """
         if not card_ids:
             return []
-        return [Card.from_api(c) for c in self.invoke("cardsInfo", cards=card_ids) if c]
+        try:
+            raw = self.invoke("cardsInfo", cards=card_ids)
+        except AnkiActionError:
+            singles = self.invoke_multi(
+                [("cardsInfo", {"cards": [cid]}) for cid in card_ids], skip_errors=True
+            )
+            raw = [c for single in singles for c in single or []]
+        return [Card.from_api(c) for c in raw if c]
 
     def notes_info(self, note_ids: list[int]) -> list[Note]:
         """Notes by id. AnkiConnect returns `{}` for an unknown id; those are dropped."""

@@ -103,6 +103,13 @@ class AnkiClient:
         """Per-deck counts (new/learn/review/total). Keyed by deck id as a string."""
         return self.invoke("getDeckStats", decks=list(deck_names))
 
+    def deck_config(self, deck: str) -> dict[str, Any]:
+        """The options group of a deck (`new.perDay`, `rev.perDay`, `lapse.delays`…).
+
+        Per-deck "This deck" limit overrides are not part of it: AnkiConnect cannot see them.
+        """
+        return self.invoke("getDeckConfig", deck=deck)
+
     # ---------------------------------------------------------------- search
 
     def find_card_ids(self, query: str) -> list[int]:
@@ -234,6 +241,23 @@ class AnkiClient:
     def unflag_note(self, note_id: int) -> None:
         """Clear the flag on every card of a note (the review unit is the note)."""
         self.clear_flag(self.note_card_ids(note_id))
+
+    def answer_cards(self, answers: Sequence[tuple[int, int]]) -> list[bool]:
+        """Answer cards as if reviewed now: (card id, ease 1 again .. 4 easy) pairs, in order.
+
+        Anki's scheduler updates each card and logs a review. Returns, per answer, whether the
+        card was found.
+        """
+        if not answers:
+            return []
+        payload = [{"cardId": cid, "ease": ease} for cid, ease in answers]
+        return [bool(r) for r in self.invoke("answerCards", answers=payload)]
+
+    def set_due_date(self, card_ids: list[int], days: str) -> None:
+        """Anki's "Set due date": `days` is relative to today ("0" today, "3" in three days,
+        "1-7" a random day in range). A trailing `!` also resets the interval to that delay;
+        without it Anki keeps the interval."""
+        self.invoke("setDueDate", cards=card_ids, days=days)
 
     def suspend(self, card_ids: list[int]) -> None:
         self.invoke("suspend", cards=card_ids)

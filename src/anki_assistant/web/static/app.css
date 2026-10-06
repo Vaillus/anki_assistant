@@ -49,6 +49,9 @@
   --okline: color-mix(in srgb, var(--om-green) 40%, var(--bg));
   --okbg: color-mix(in srgb, var(--om-green) 12%, var(--bg));
   --diffokbg: color-mix(in srgb, var(--om-green) 14%, var(--bg));
+  --count-new: var(--om-blue);            /* Anki's today counts: new, learning, review */
+  --count-learn: var(--om-red);
+  --count-review: var(--om-green);
   --neutralbg: var(--om-selection);       /* `kind` pill and friends */
   --neutralink: var(--om-light-foreground);
   --zerobg: var(--om-dark-background);

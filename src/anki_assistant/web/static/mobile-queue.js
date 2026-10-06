@@ -101,11 +101,15 @@
        queue    cards to show, in order (queue[0] is the current card)
        later    same-day returns not due yet: [{ card, at }], soonest first
        leftToday  queue + the `later` returns due before the next rollover
+       counts   leftToday split like Anki: { new, learn, review }, summing to leftToday
        expired  today is past the window's last day
      `head` (optional card id) is put first when it is in the queue (undo). */
   function buildQueue(state, now, head) {
     const batch = state.batch;
-    if (!batch) return { queue: [], later: [], leftToday: 0, expired: false, today: null };
+    if (!batch) {
+      const counts = { new: 0, learn: 0, review: 0 };
+      return { queue: [], later: [], leftToday: 0, counts, expired: false, today: null };
+    }
     const t = today(state, now);
     const days = batch.days || [];
     const expired = days.length > 0 && t > days[days.length - 1];
@@ -135,8 +139,17 @@
       if (i > 0) queue = [queue[i]].concat(queue.slice(0, i), queue.slice(i + 1));
     }
     const cutoff = nextRollover(now, rollover(state));
-    const leftToday = queue.length + later.filter((l) => l.at < cutoff).length;
-    return { queue, later, leftToday, expired, today: t };
+    const laterToday = later.filter((l) => l.at < cutoff).length;
+    const leftToday = queue.length + laterToday;
+    /* specs/mobile.md#phone-queue § Left today: same-day returns are learning, returns on a
+       later day are reviews, the unanswered share counts by its batch kind. */
+    const counts = { new: 0, learn: soon.length + laterToday, review: returning.length };
+    for (const c of share) {
+      if (c.kind === "new") counts.new += 1;
+      else if (c.kind === "learn") counts.learn += 1;
+      else counts.review += 1;
+    }
+    return { queue, later, leftToday, counts, expired, today: t };
   }
 
   /* ---------- phone actions: each mutates `state` and returns what the caller needs ---------- */

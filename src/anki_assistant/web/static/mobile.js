@@ -210,7 +210,13 @@ function renderHead(q) {
   const batch = STATE.batch;
   const parts = [];
   parts.push(`<span class="m-deck">${escText(batch ? batch.deck : "anki")}</span>`);
-  if (batch) parts.push(`${q.leftToday} left today`);
+  if (batch) {
+    const c = q.counts;
+    parts[0] +=
+      ` <span class="m-counts" title="new · learning · review">` +
+        `<span class="m-new">${c.new}</span> <span class="m-learn">${c.learn}</span> ` +
+        `<span class="m-review">${c.review}</span></span>`;
+  }
   if (STATE.pending.length) parts.push(`<span class="m-pending">${STATE.pending.length} pending</span>`);
   let sync;
   let cls = "";

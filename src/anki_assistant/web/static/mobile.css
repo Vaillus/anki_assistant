@@ -36,6 +36,9 @@ body.mobile button {
 }
 .m-head .m-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-head .m-deck { color: var(--accent); font-weight: 600; }
+.m-head .m-new { color: var(--count-new); }
+.m-head .m-learn { color: var(--count-learn); }
+.m-head .m-review { color: var(--count-review); }
 .m-head .m-pending { color: var(--flag); }
 .m-head button.m-sync { min-width: 96px; color: var(--muted); font-size: 13px; }
 .m-head button.m-sync.offline { color: var(--danger); border-color: var(--dangerline); }

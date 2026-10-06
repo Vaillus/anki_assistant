@@ -19,6 +19,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 | [workspace.md](./workspace.md) | The overlay: cards, versions, split, flag toggle, validation, undo |
 | [chat.md](./chat.md) | The conversation: system prompt, guidelines, read tools, proposal tools, source proposals |
 | [theme.md](./theme.md) | Visual identity: terminal look, Omarchy palettes, two-layer colour architecture, picker, logo |
+| [mobile.md](./mobile.md) | Phone app: batch, Anki day, precomputed outcomes, phone queue, pending actions, sync, review log, tailnet gate |
 
 ## Architecture
 
@@ -31,15 +32,17 @@ graph LR
     Sources --> PDF["PDF files · Docling / pypdf"]
     Sources -- fetch --> Web["Web pages · httpx"]
     API --> Chat["chat/ · Anthropic API"]
+    Phone["iPhone · /m (offline)"] -- tailscale serve · HTTPS --> Gate["phone app · port 5071 · tailnet gate"]
+    Gate --> Client
 ```
 
-**Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; `guidelines.md` is the store for the chat's [guidelines](./chat.md#guidelines); the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
+**Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; `guidelines.md` is the store for the chat's [guidelines](./chat.md#guidelines); `review_log.jsonl` and `mobile_actions.jsonl` hold the phone's [review log](./mobile.md#review-log) and the action ids already synced; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
 
-**Who writes to Anki.** Two paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)). The server keeps one snapshot for « Undo last validation ».
+**Who writes to Anki.** Three paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)); a phone [sync](./mobile.md#sync) replays answers, sets or clears the orange flag, suspends, and re-dates replayed cards. The server keeps one snapshot for « Undo last validation ».
 
 **Who writes to the vault.** Two operations only, both behind a user click: create a file, replace a passage ([sources.md § Writing to the vault](./sources.md#writing-to-the-vault)).
 
-**Single user, local only.** No auth. Bound to `127.0.0.1`.
+**Single user, Mac plus phone.** No login. One process listens on two ports, both bound to `127.0.0.1`: the main app on `5070`, the phone app alone on the [phone port](./mobile.md#tailnet-gate) `5071`. Only the phone port is exposed on the tailnet, through `tailscale serve`, and its tailnet gate refuses every request that does not carry the owner's Tailscale login.
 
 ## Module map
 
@@ -52,16 +55,20 @@ graph LR
 | `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes, priority queue | [review.md](./review.md), [priority.md](./priority.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
+| `src/anki_assistant/mobile.py` | Anki day, batch building, outcome parsing, sync (replay, re-dating, dropped actions, review log) | [mobile.md](./mobile.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
-| `src/anki_assistant/web/main.py` | FastAPI app factory, static mount, router includes | — |
+| `src/anki_assistant/web/main.py` | App factories (main app, phone app), static mount, router includes, port dispatch, entry point serving both ports | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…`, `/api/notes/priority` | [review.md](./review.md#api), [priority.md](./priority.md#api) |
 | `src/anki_assistant/web/routes_workspace.py` | `/api/workspace/apply`, `/api/workspace/undo` | [workspace.md](./workspace.md#api) |
 | `src/anki_assistant/web/routes_sources.py` | `/api/sources…`, `/api/vault/notes` | [sources.md](./sources.md#api) |
 | `src/anki_assistant/web/routes_chat.py` | `/api/chat` (SSE) | [chat.md](./chat.md#api) |
+| `src/anki_assistant/web/routes_mobile.py` | `/api/mobile/batch`, `/api/mobile/sync`, `/api/mobile/media/{filename}`, the page under `/m`, the phone port's shell files | [mobile.md](./mobile.md#api) |
+| `src/anki_assistant/web/gate.py` | Tailnet gate middleware (phone app only) | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/render.py` | Field display transform | [review.md](./review.md#rendering) |
 | `src/anki_assistant/web/errors.py` | Shared error handlers | — |
-| `src/anki_assistant/web/templates/index.html` | The single page | — |
-| `src/anki_assistant/web/static/` | Frontend: vanilla JS, no framework, no bundler | [review.md](./review.md#frontend), [theme.md](./theme.md) |
+| `src/anki_assistant/web/templates/index.html` | The main app's page | — |
+| `src/anki_assistant/web/templates/mobile.html`, `mobile-sw.js` | The phone page and its service worker | [mobile.md](./mobile.md#phone-page) |
+| `src/anki_assistant/web/static/` | Frontend: vanilla JS, no framework, no bundler; `mobile*.js`, `mobile.css` are the phone page's | [review.md](./review.md#frontend), [theme.md](./theme.md), [mobile.md](./mobile.md#phone-page) |
 | `tests/` | pytest, AnkiConnect mocked | — |
 
 ## Conventions

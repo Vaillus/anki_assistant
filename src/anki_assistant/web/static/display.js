@@ -5,9 +5,30 @@
 
 /* JS port of render.py::render_field — display only, never sent back to Anki. */
 const _CTX_RE = /^\s*<div\s+class\s*=\s*"context"\s*>([\s\S]*?)<\/div\s*>/i;
+/* A pasted picture is held out of the flatten/escape steps as this marker (NUL is stripped from
+   the input, so a note cannot forge it), then swapped for an <img> written here. */
+const _PIC_RE = /\u0000(\d+)\u0000/g;
+
+function _imgAttr(tag, name) {
+  const re = new RegExp("\\b" + name + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\">]+))", "i");
+  const m = re.exec(tag);
+  if (!m) return "";
+  return m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3];
+}
+
+/* `src` when it is a bare file name in Anki's media folder, else null. */
+function _mediaName(src) {
+  const s = unescapeHtml(src).trim();
+  if (!s || s.includes("/") || s.includes("\\") || s === "." || s === "..") return null;
+  return s;
+}
+
+function _pictureTag(name) {
+  return '<img src="/api/media/' + esc(encodeURIComponent(name)) + '" alt="" class="field-img">';
+}
 
 function renderField(raw) {
-  let t = String(raw === null || raw === undefined ? "" : raw);
+  let t = String(raw === null || raw === undefined ? "" : raw).replace(/\u0000/g, "");
   // Extract context header before stripping tags so we can re-wrap it.
   let ctx = "";
   const cm = _CTX_RE.exec(t);
@@ -17,18 +38,24 @@ function renderField(raw) {
   }
   t = t.replace(/<br\s*\/?>/gi, "\n");
   t = t.replace(/<\/(p|div|li)\s*>/gi, "\n");
+  const pictures = [];
   t = t.replace(/<img\b[^>]*>/gi, (m) => {
-    const alt = /alt\s*=\s*"([^"]*)"/i.exec(m) || /alt\s*=\s*'([^']*)'/i.exec(m);
-    return alt ? alt[1] : "[image]";
+    const alt = _imgAttr(m, "alt");
+    if (alt.trim()) return alt;
+    const name = _mediaName(_imgAttr(m, "src"));
+    if (name === null) return "[image]";
+    pictures.push(name);
+    return "\u0000" + (pictures.length - 1) + "\u0000";
   });
   t = t.replace(/<[^>]+>/g, "");
   t = unescapeHtml(t);
   t = esc(t.trim());
-  t = t.replace(
-    /\{\{c(\d+)::([\s\S]*?)(?:::([\s\S]*?))?\}\}/g,
-    (_m, n, answer, hint) =>
-      `<span class="cloze" data-n="${n}"${hint ? ` data-hint="${hint}"` : ""}>${answer}</span>`,
-  );
+  t = t.replace(/\{\{c(\d+)::([\s\S]*?)(?:::([\s\S]*?))?\}\}/g, (_m, n, answer, hint) => {
+    // A picture cannot sit inside an attribute.
+    const h = hint ? hint.replace(_PIC_RE, "[image]") : "";
+    return `<span class="cloze" data-n="${n}"${h ? ` data-hint="${h}"` : ""}>${answer}</span>`;
+  });
+  t = t.replace(_PIC_RE, (_m, i) => _pictureTag(pictures[Number(i)]));
   let out = t.replace(/\n/g, "<br>");
   if (ctx) {
     const ctxText = esc(unescapeHtml(ctx.replace(/<[^>]+>/g, "")).trim());

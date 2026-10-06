@@ -5,6 +5,8 @@ A thin HTTP shell over `review.py`: parse the body, call the pure function, map 
 
 from __future__ import annotations
 
+import mimetypes
+
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
@@ -215,3 +217,21 @@ def get_models(request: Request) -> dict[str, list[str]]:
     """Every note type mapped to its field names, for the model pickers in the dialogs."""
     with _anki_errors():
         return _anki(request).model_names_and_fields()
+
+
+@router.get("/media/{filename}")
+def get_media(request: Request, filename: str) -> Response:
+    """One file from Anki's media folder, for the pictures pasted in notes
+    (specs/review.md#rendering). The name must be a bare file name: no path separator, no
+    `..`, so nothing outside the media folder can be asked for."""
+    if not filename or "/" in filename or "\\" in filename or filename in {".", ".."}:
+        raise HTTPException(status_code=404, detail=f"No media file {filename!r}")
+    with _anki_errors():
+        data = _anki(request).retrieve_media_file(filename)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"No media file {filename!r}")
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    # A media file is user data: never let the browser run it as a page (an SVG or HTML file
+    # opened directly would otherwise execute on the app's origin).
+    headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
+    return Response(content=data, media_type=media_type, headers=headers)

@@ -6,6 +6,7 @@ real client (including the `multi` batching) is exercised. Nothing here touches 
 
 from __future__ import annotations
 
+import base64
 import re
 from itertools import count
 from pathlib import Path
@@ -40,6 +41,7 @@ class FakeAnkiClient(AnkiClient):
         }
         self.calls: list[str] = []  # action names, in the order they were invoked
         self.review_budgets: dict[str, int] = {}  # deck name → max reviews/day
+        self.media: dict[str, bytes] = {}  # media folder: file name → content
         self._ids = count(1000)
 
     # -- fixture building -------------------------------------------------
@@ -116,6 +118,10 @@ class FakeAnkiClient(AnkiClient):
 
     # -- actions ----------------------------------------------------------
     # Method and parameter names mirror AnkiConnect's, camelCase included.
+
+    def _do_retrieveMediaFile(self, filename: str) -> str | bool:
+        data = self.media.get(filename)
+        return base64.b64encode(data).decode() if data is not None else False
 
     def _do_multi(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out = []
@@ -616,6 +622,9 @@ def test_split_leaves_the_original_in_place_when_a_fragment_fails(anki: FakeAnki
 # -------------------------------------------------------------------- rendering
 
 
+_PHOTO = '<img src="/api/media/photo.png" alt="" class="field-img">'
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -626,8 +635,11 @@ def test_split_leaves_the_original_in_place_when_a_fragment_fails(anki: FakeAnki
         ("<li>a</li>", "a"),
         ('<img src="x.png" alt="\\frac{1}{2}">', "\\frac{1}{2}"),
         ("<img src=\"latex.png\" alt='E=mc^2'>", "E=mc^2"),
-        ('<img src="photo.png">', "[image]"),
-        ('<img src="photo.png" alt="">', "[image]"),
+        ('<img src="photo.png">', _PHOTO),
+        ('<img src="photo.png" alt="">', _PHOTO),
+        ("<img>", "[image]"),
+        ('<img src="http://example.com/x.png">', "[image]"),
+        ('<img src="../secret.png">', "[image]"),
         ("caf&eacute; &amp; th&eacute;", "café &amp; thé"),
         ("a &lt;b&gt; c", "a &lt;b&gt; c"),
         ("<b>bold</b>", "bold"),
@@ -654,6 +666,27 @@ def test_render_field_escapes_before_marking_up_clozes():
     """A note cannot inject markup: its own angle brackets survive as text, escaped."""
     assert render_field("{{c1::&lt;script&gt;}}") == (
         '<span class="cloze" data-n="1">&lt;script&gt;</span>'
+    )
+
+
+def test_render_field_picture_takes_only_the_file_name():
+    """Nothing but the media file name crosses from the note into the emitted tag."""
+    raw = """<img src='a b&amp;"c.png' onerror="alert(1)" style="x">"""
+    assert render_field(raw) == ('<img src="/api/media/a%20b%26%22c.png" alt="" class="field-img">')
+
+
+def test_render_field_picture_marker_cannot_be_forged():
+    """The internal picture marker uses NUL, which is stripped from the note first."""
+    assert render_field("x\x000\x00") == "x0"
+    assert render_field('\x000\x00<img src="p.png">') == (
+        '0<img src="/api/media/p.png" alt="" class="field-img">'
+    )
+
+
+def test_render_field_picture_in_cloze():
+    assert render_field('{{c1::<img src="p.png">::<img src="h.png">}}') == (
+        '<span class="cloze" data-n="1" data-hint="[image]">'
+        '<img src="/api/media/p.png" alt="" class="field-img"></span>'
     )
 
 
@@ -737,6 +770,34 @@ def test_api_models(api: TestClient):
         "Basic": ["Front", "Back"],
         "Cloze": ["Text", "Back Extra"],
     }
+
+
+def test_api_media_serves_file_with_content_type(api: TestClient, anki: FakeAnkiClient):
+    anki.media["paste-abc.jpg"] = b"\xff\xd8jpeg"
+    resp = api.get("/api/media/paste-abc.jpg")
+    assert resp.status_code == 200
+    assert resp.content == b"\xff\xd8jpeg"
+    assert resp.headers["content-type"] == "image/jpeg"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+def test_api_media_name_is_url_decoded(api: TestClient, anki: FakeAnkiClient):
+    anki.media["my pic é.png"] = b"png"
+    resp = api.get("/api/media/my%20pic%20%C3%A9.png")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+
+
+def test_api_media_missing_is_404(api: TestClient):
+    assert api.get("/api/media/nope.png").status_code == 404
+
+
+@pytest.mark.parametrize("name", ["..", "a%2Fb.png", "..%2F..%2Fetc%2Fpasswd", "a%5Cb.png"])
+def test_api_media_rejects_paths(api: TestClient, anki: FakeAnkiClient, name: str):
+    anki.media["a/b.png"] = b"x"
+    anki.media["a\\b.png"] = b"x"
+    assert api.get(f"/api/media/{name}").status_code == 404
+    assert "retrieveMediaFile" not in anki.calls
 
 
 def test_api_maps_anki_failures(api: TestClient, anki: FakeAnkiClient, monkeypatch):

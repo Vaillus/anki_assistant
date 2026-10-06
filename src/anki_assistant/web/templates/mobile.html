@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script>
+  /* Stamp the resolved theme before the stylesheet paints — same key and defaults as the
+     inline script in index.html (specs/theme.md#picker). */
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("anki-theme"); } catch (e) { /* private mode */ }
+    if (!t) {
+      t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "tokyo-night"
+        : "catppuccin-latte";
+    }
+    document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
+<title>Anki — mobile</title>
+<meta name="theme-color" content="#1a1b26">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Anki">
+<link rel="manifest" href="/m/manifest.webmanifest?v={{ v }}">
+<link rel="icon" href="/static/star.svg?v={{ v }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/star-180.png?v={{ v }}">
+<link rel="stylesheet" href="/static/themes.css?v={{ v }}">
+<link rel="stylesheet" href="/static/app.css?v={{ v }}">
+<link rel="stylesheet" href="/static/mobile.css?v={{ v }}">
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['\\(', '\\)'], ['[$]', '[/$]']],
+      displayMath: [['\\[', '\\]'], ['[$$]', '[/$$]']]
+    }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+</head>
+<body class="mobile" data-version="{{ v }}">
+<header class="m-head" id="m-head"></header>
+<div class="m-menu" id="m-menu" hidden></div>
+<div class="m-notice" id="m-notice" hidden></div>
+<main class="m-card" id="m-card"><div class="m-empty">Loading…</div></main>
+<footer class="m-bar" id="m-bar"></footer>
+<script src="/static/themes.js?v={{ v }}"></script>
+<script src="/static/display.js?v={{ v }}"></script>
+<script src="/static/mobile-queue.js?v={{ v }}"></script>
+<script src="/static/mobile.js?v={{ v }}"></script>
+</body>
+</html>

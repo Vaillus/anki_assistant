@@ -76,7 +76,7 @@ The transform guarantees:
 
 - **No injection.** The raw value is escaped before any display markup is introduced. Nothing from the note can produce arbitrary markup.
 - **Line breaks preserved.** Anki's `<br>` and block-closing tags each become a line break.
-- **Images replaced.** An image with an alt attribute becomes the alt text (Anki's rendered LaTeX images carry the LaTeX source as alt). An image without useful alt becomes `[image]`.
+- **Images.** An image whose alt carries text is shown as that text: Anki's rendered LaTeX images carry the LaTeX source as alt, which MathJax then renders. An image without useful alt (a pasted picture) is shown as the picture itself, fetched from Anki's media through `GET /api/media/{filename}`; only the `src` file name is taken from the note, so the output tag is one the app writes. An image with neither useful alt nor a media file name in `src` becomes `[image]`, and so does a picture inside a cloze hint.
 - **All other tags stripped.**
 - **Cloze deletions marked up.** Each cloze deletion is displayed with its number as a label and, when present, its hint. The number is needed because most notes carry several clozes and the flag is per card.
 - **Context header extracted.** A [context header](./notes.md#context-header) at the start of the field is extracted and styled separately from the body.
@@ -102,6 +102,7 @@ All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note �
 | `POST /api/notes/{id}/move` | Move a note to another deck |
 | `DELETE /api/notes/{id}` | Delete a note |
 | `GET /api/models` | All note types and their field names |
+| `GET /api/media/{filename}` | One file from Anki's media folder, with its content type; 404 when missing or when the name has a path separator |
 
 The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 

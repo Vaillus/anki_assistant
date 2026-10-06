@@ -11,3 +11,5 @@ CLAUDE.md
 scripts/app/img/
 .anki-web.log
 guidelines.md
+review_log.jsonl
+mobile_actions.jsonl

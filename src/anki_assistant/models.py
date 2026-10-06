@@ -78,6 +78,8 @@ class Card:
     type: int
     factor: int
     left: int
+    #: Anki's display string of the interval each button would give (again, hard, good, easy).
+    next_reviews: list[str] = field(default_factory=list)
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Card:
@@ -99,6 +101,7 @@ class Card:
             type=int(raw.get("type", 0)),
             factor=int(raw.get("factor", 0)),
             left=int(raw.get("left", 0)),
+            next_reviews=[str(s) for s in raw.get("nextReviews") or []],
         )
 
     @property

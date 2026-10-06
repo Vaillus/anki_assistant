@@ -5,6 +5,7 @@ Anki must be running with the AnkiConnect add-on installed (default port 8765).
 
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.request
@@ -101,6 +102,13 @@ class AnkiClient:
     def deck_stats(self, *deck_names: str) -> dict[str, Any]:
         """Per-deck counts (new/learn/review/total). Keyed by deck id as a string."""
         return self.invoke("getDeckStats", decks=list(deck_names))
+
+    def deck_config(self, deck: str) -> dict[str, Any]:
+        """The options group of a deck (`new.perDay`, `rev.perDay`, `lapse.delays`…).
+
+        Per-deck "This deck" limit overrides are not part of it: AnkiConnect cannot see them.
+        """
+        return self.invoke("getDeckConfig", deck=deck)
 
     # ---------------------------------------------------------------- search
 
@@ -234,6 +242,23 @@ class AnkiClient:
         """Clear the flag on every card of a note (the review unit is the note)."""
         self.clear_flag(self.note_card_ids(note_id))
 
+    def answer_cards(self, answers: Sequence[tuple[int, int]]) -> list[bool]:
+        """Answer cards as if reviewed now: (card id, ease 1 again .. 4 easy) pairs, in order.
+
+        Anki's scheduler updates each card and logs a review. Returns, per answer, whether the
+        card was found.
+        """
+        if not answers:
+            return []
+        payload = [{"cardId": cid, "ease": ease} for cid, ease in answers]
+        return [bool(r) for r in self.invoke("answerCards", answers=payload)]
+
+    def set_due_date(self, card_ids: list[int], days: str) -> None:
+        """Anki's "Set due date": `days` is relative to today ("0" today, "3" in three days,
+        "1-7" a random day in range). A trailing `!` also resets the interval to that delay;
+        without it Anki keeps the interval."""
+        self.invoke("setDueDate", cards=card_ids, days=days)
+
     def suspend(self, card_ids: list[int]) -> None:
         self.invoke("suspend", cards=card_ids)
 
@@ -280,6 +305,18 @@ class AnkiClient:
             "updateNoteModel",
             note={"id": note_id, "modelName": model, "fields": fields, "tags": tags},
         )
+
+    # ----------------------------------------------------------------- media
+
+    def retrieve_media_file(self, name: str) -> bytes | None:
+        """The bytes of one file in Anki's media folder, or None when it does not exist.
+
+        AnkiConnect returns the content base64-encoded, or `false` for a missing file.
+        """
+        result = self.invoke("retrieveMediaFile", filename=name)
+        if not result:
+            return None
+        return base64.b64decode(result)
 
     # ---------------------------------------------------------------- models
 

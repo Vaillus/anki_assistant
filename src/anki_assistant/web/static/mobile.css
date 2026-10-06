@@ -91,17 +91,6 @@ body.mobile button {
 .m-empty { color: var(--muted); text-align: center; margin-top: 30vh; }
 .m-empty b { color: var(--ink); display: block; margin-bottom: 6px; }
 
-.m-foot {
-  margin-top: 32px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 
 /* ---------- action bar ---------- */
 
@@ -122,4 +111,10 @@ body.mobile button {
 .m-bar button.e3 { color: var(--ok); border-color: var(--okline); }
 .m-bar button.e4 { color: var(--accent); border-color: var(--accentline); }
 .m-bar button.m-tool { font-size: 13px; color: var(--muted); }
+.m-bar .m-status {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+  text-align: center;
+}
 .m-bar button.m-tool.on { background: var(--flag); border-color: var(--flag); color: var(--on-flag); }

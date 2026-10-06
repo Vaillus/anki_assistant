@@ -271,12 +271,13 @@ function fieldsHtml(fields, named) {
     .join("");
 }
 
-function foot() {
+/* The last line of the screen, under the action buttons. */
+function statusLine() {
   const where = UI.storage === "idb" ? "on this phone" : "in memory only";
   const synced = STATE.lastSync ? new Date(STATE.lastSync).toLocaleString() : "never";
   return (
-    `<div class="m-foot">` +
-    `<span>review log: ${UI.logCount} answers ${where} · last sync ${escText(synced)}</span></div>`
+    `<div class="m-status">review log: ${UI.logCount} answers ${where}` +
+    ` · last sync ${escText(synced)}</div>`
   );
 }
 
@@ -292,12 +293,11 @@ function renderCard(q, card) {
   const key = card
     ? `${card.card_id}|${UI.revealed}|${flag}`
     : `empty|${!!STATE.batch}|${q.expired}|${q.later.length ? q.later[0].at : ""}`;
-  const keyWithFoot = key + "|" + UI.logCount + "|" + STATE.lastSync;
-  if (keyWithFoot === UI.cardKey) return;
-  UI.cardKey = keyWithFoot;
+  if (key === UI.cardKey) return;
+  UI.cardKey = key;
   const el = document.getElementById("m-card");
   if (!card) {
-    el.innerHTML = emptyHtml(q) + foot();
+    el.innerHTML = emptyHtml(q);
     return;
   }
   const meta =
@@ -314,7 +314,7 @@ function renderCard(q, card) {
   } else {
     html = meta + fieldsHtml(card.question, false) + "<hr>" + fieldsHtml(card.answer, true);
   }
-  el.innerHTML = html + foot();
+  el.innerHTML = html;
   if (UI.scrolledFor !== `${card.card_id}|${UI.revealed}`) {
     UI.scrolledFor = `${card.card_id}|${UI.revealed}`;
     el.scrollTop = 0;
@@ -325,7 +325,7 @@ function renderCard(q, card) {
 function renderBar(card) {
   const bar = document.getElementById("m-bar");
   if (!card) {
-    bar.innerHTML = toolsRow(null);
+    bar.innerHTML = toolsRow(null) + statusLine();
     return;
   }
   let top;
@@ -344,7 +344,7 @@ function renderBar(card) {
       ).join("") +
       `</div>`;
   }
-  bar.innerHTML = top + toolsRow(card);
+  bar.innerHTML = top + toolsRow(card) + statusLine();
 }
 
 function toolsRow(card) {
@@ -546,7 +546,7 @@ document.addEventListener("click", (ev) => {
     return;
   }
   // A tap on the card shows the answer (not on a link).
-  if (ev.target.closest("#m-card") && !ev.target.closest(".m-foot, a")) {
+  if (ev.target.closest("#m-card") && !ev.target.closest("a")) {
     if (UI.currentId !== null && !UI.revealed) {
       UI.revealed = true;
       render();

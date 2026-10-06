@@ -108,7 +108,17 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
    - otherwise (past the window, second answer, `null` outcome) → not until the next sync.
 3. **Minus buried cards**: a card buried today is hidden until the next Anki day. Burying sends nothing to Anki.
 
-The header shows the count left today. Answer buttons show the outcome as Anki displays it. **Undo** removes the last pending action (and, for an answer, its review-log entry and its outcome) and puts its card back at the head of the queue.
+**Left today** is the number of cards the phone app still shows today: the phone queue now, plus the same-day returns whose time falls before the next rollover. It splits like Anki's counts; each card of it is in exactly one part:
+
+| Part | Cards |
+|---|---|
+| **new** | cards of today's share of kind `new` |
+| **learning** | same-day returns (outcome under one day: due now or later today), plus cards of today's share of kind `learn` |
+| **review** | cards of today's share of kind `review`, plus cards returning on a later Anki day (outcome of one day or more) whose day has come |
+
+Today's share holds only cards not answered on the phone, and suspended and buried cards are in no part, so the three parts sum to left today.
+
+Answer buttons show the outcome as Anki displays it. **Undo** removes the last pending action (and, for an answer, its review-log entry and its outcome) and puts its card back at the head of the queue.
 
 ## Pending actions
 
@@ -176,7 +186,7 @@ The page the phone app is made of. Vanilla JS like the main app; the phone-queue
 **Layout.** One column filling the screen, within the safe-area insets:
 
 ```
-courant · 18 left today · 2 pending          ⟳ 07:42
+☰  courant  5 2 11 · 2 pending                ⟳ 07:42
 ────────────────────────────────────────────────────
   question fields                     (scrolls)
   ── after « show answer »: answer fields, named ──
@@ -184,11 +194,13 @@ courant · 18 left today · 2 pending          ⟳ 07:42
   [            show answer            ]
   again <10m │ hard 24j │ good 3mo │ easy 3,9mo
   ⚑ flag      ↶ undo      bury      suspend
+  review log: 412 answers on this phone · last sync …
 ```
 
-- **Header**: the mobile deck, the count left today (the phone queue now, plus the cards answered under a day ago whose return falls before the next rollover), the number of pending actions when there are any, the sync button with the time of the last successful sync, or « offline » when the last attempt failed.
+- **Header**: the menu button (☰), the mobile deck, [left today](#phone-queue) as its three parts in Anki's order and colours — new (blue), learning (red), review (green) —, the number of pending actions when there are any, the sync button with the time of the last successful sync, or « offline » when the last attempt failed.
+- **Menu**: the menu button opens a panel under the header holding the theme picker; a second tap on the button, or a tap outside the panel, closes it. The theme picker appears nowhere else on the page.
 - **Card**: the question fields, without names; on a cloze card, cloze `c<cloze number>` hidden as `[…]`/`[hint]`. Once revealed: the question again with every cloze shown, then the non-empty answer fields, each under its name. Math is typeset after each render. Pictures fit the width.
-- **Action bar**, fixed at the bottom: « show answer » (a tap anywhere on the card does the same); once revealed, the four answer buttons, each labelled with its `outcome_labels` entry, or « — » on a card already answered on the phone (its answer has no outcome); below, flag, undo, bury, suspend. The flag button shows the card's current state — the batch's flag, overridden by the card's last pending flag/unflag — and toggles it: a flagged card (any colour) gets `unflag`, an unflagged one `flag`. Buttons are at least 44 px high. A theme picker sits below the card.
+- **Action bar**, fixed at the bottom: « show answer » (a tap anywhere on the card does the same); once revealed, the four answer buttons, each labelled with its `outcome_labels` entry, or « — » on a card already answered on the phone (its answer has no outcome); below, flag, undo, bury, suspend. The flag button shows the card's current state — the batch's flag, overridden by the card's last pending flag/unflag — and toggles it: a flagged card (any colour) gets `unflag`, an unflagged one `flag`. Buttons are at least 44 px high. Under the buttons, the last line of the screen: the number of answers in the phone's review log (and whether it is kept on the phone or in memory only), and the date and time of the last successful sync.
 - **Empty queue**: « done for today », with the time the next same-day return comes back when there is one; « sync to get more cards » when today is past the window's last day; « no cards yet: sync with the Mac » before the first batch.
 
 Keys are a convenience for testing on the Mac: `Space` shows the answer, `1`–`4` answer, `u` undoes.

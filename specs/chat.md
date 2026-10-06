@@ -12,7 +12,7 @@ When no `ANTHROPIC_API_KEY` is configured, the pane shows a banner and disables 
 
 The server keeps nothing between requests. On every **turn** — one user message and the reply to it — the client sends the whole conversation and the current state of every card, and the server rebuilds the **system prompt** from four blocks:
 
-1. **Standing instructions** — reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; **call** the proposal tools rather than describing changes in prose; the bracket markers that appear in the conversation history (`[proposal: …]`, `[read: …]`, `[added: …]`) are system-generated — never write them as text, only a tool call makes a proposal effective; target [active](./workspace.md#card-head) cards by [workspace number](./workspace.md#cards); only call `read_source` when genuinely needed (to verify a doubtful fact, correct an error, or fill in missing information); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages. Also lists every [note type](./notes.md#note-card-note-type) of the collection with its field names (so Claude can propose type conversions without a tool call), and states the conventions of the note collection ([context headers](./notes.md#context-header), [cloze syntax](./notes.md#cloze-markers)) as facts.
+1. **Standing instructions**, in two parts. The **protocol** is fixed in code: **call** the proposal tools rather than describing changes in prose; the bracket markers that appear in the conversation history (`[proposal: …]`, `[read: …]`, `[added: …]`) are system-generated — never write them as text, only a tool call makes a proposal effective; target [active](./workspace.md#card-head) cards by [workspace number](./workspace.md#cards); fields are [raw Anki HTML](./notes.md#fields-are-raw-anki-html) with valid cloze markers; web content should arrive with the source proposal that grounds it; URLs are not pasted into the reply because [citations](#citations) already link the passages; `propose_edit_guidelines` only when the user asks for it. It also lists every [note type](./notes.md#note-card-note-type) of the collection with its field names (so Claude can propose type conversions without a tool call). The **[guidelines](#guidelines)** follow: the user's editable rules for how Claude works.
 
 2. **Corpus index** — one line per source of the deck's [corpus](./sources.md): id, kind, target, page range, and a ⚠ marker when the file is missing. Sources [anchored](./sources.md#anchors) to a card of the workspace are marked. PDF sources include a compact **structural index** (from the PDF's bookmarks or heuristic headings) so Claude knows which pages to target with `read_source`. No source text — that is what attaching and `read_source` are for.
 
@@ -20,7 +20,7 @@ The server keeps nothing between requests. On every **turn** — one user messag
 
 4. **Cards of the workspace** — every card, [root](./workspace.md#opening-and-closing) first, then in order of arrival: workspace number, note id or « draft », active or inactive, states (deleted, kept, deferred with its comment, moved), parent when it is a [fragment](./workspace.md#split), deck, [note type](./notes.md#note-card-note-type), tags, flagged cards as cloze labels, [reason](./notes.md#reason-back-extra), [anchors](./sources.md#anchors), and the raw field values of the [shown version](./workspace.md#versions). When the shown version is not v0, the v0 fields follow so Claude sees what has changed. Intermediate versions are not sent.
 
-Blocks 1–3 are stable for the life of the workspace; block 3 (attached sources) is marked for the API's prompt cache (`cache_control: ephemeral`). A change on the workspace re-processes only block 4. Attaching or detaching a source invalidates the cache.
+Blocks 1–3 are stable for the life of the workspace; block 3 (attached sources) is marked for the API's prompt cache (`cache_control: ephemeral`). A change on the workspace re-processes only block 4. Attaching or detaching a source, or saving the guidelines, invalidates the cache.
 
 ### How source text enters context
 
@@ -33,6 +33,14 @@ Source text enters the prompt in two ways, both visible to the user:
 ### What Claude remembers between turns
 
 Only message text is re-sent across turns. Tool results — reads, proposals, additions — are not replayed. The client summarises them into the assistant text as bracketed notes (« [read: search_notes → 6 notes] », « [proposal: edit → card 1] », « [rejected version: 3 v2] ») so Claude knows what happened. Web citations survive the same way: the markers stay in the text and a bracket line lists the pages (« [sources: [1] https://…, [2] https://…] »); the numbering restarts at 1 on each turn. If Claude needs a read's content again, it reads again.
+
+### Guidelines
+
+The **guidelines** are a Markdown text, global to all decks, that the server reads from `guidelines.md` at the project root (gitignored; override with `ANKI_GUIDELINES`) on every turn. When the file does not exist, the **default guidelines** apply: reply in the user's language; answer questions and information requests without proposing changes — only propose when the user asks for a change or the answer reveals a clear factual error in a card; only call `read_source` when genuinely needed (to verify a doubtful fact, correct an error, or fill in missing information); propose a web page as a source whenever the reply cites a good reference for the deck; and the conventions of the note collection ([context headers](./notes.md#context-header)) stated as facts. The first save creates the file.
+
+The chat's message box has a « guidelines » button that opens a panel over the log: the guidelines in an editable text area, « Save », « Cancel » and « Reset to default ». « Reset to default » fills the text area with the default guidelines; nothing is written until « Save ». A save applies from the next turn.
+
+Claude changes the guidelines only through `propose_edit_guidelines`, when the user asks. The call renders as a proposal card in the log, like a [source proposal](#source-proposals): old → new as a diff, and « Apply ». Applying performs an exact-match replacement of `old` by `new` in the guidelines; an empty `old` appends `new` at the end. A refusal (passage not found or ambiguous) is shown on the card. An applied edit shows « Revert », refused if the passage changed since. Closing the workspace does not undo an applied edit.
 
 ## Read tools
 
@@ -111,6 +119,7 @@ A **proposal** is a structured description of a change — which card, which fie
 | `propose_add_source`    | An inline proposal card in the log (see [Source proposals](#source-proposals)).                                              |
 | `propose_create_source` | An inline proposal card in the log (see [Source proposals](#source-proposals)).                                              |
 | `propose_edit_source`   | An inline proposal card in the log (see [Source proposals](#source-proposals)).                                              |
+| `propose_edit_guidelines` | An inline proposal card in the log (see [Guidelines](#guidelines)).                                                        |
 
 Each invocation returns « ok » to Claude immediately — accepting, editing or dropping a version is the user's decision. One turn may contain several proposals; the same defect on several notes is several `propose_edit` calls, one card each.
 
@@ -140,7 +149,10 @@ Nothing else in the chat writes to Anki; undo lives in the [workspace](./workspa
 |---|---|
 | `POST /api/chat` | One chat turn, streamed as server-sent events. |
 | `GET /api/chat/status` | Whether the API key is configured and which model is active. |
+| `GET /api/guidelines` | The current guidelines and the default guidelines. |
+| `PUT /api/guidelines` | Replace the guidelines with the given text. |
+| `POST /api/guidelines/edit` | Apply or revert an exact-match replacement (`propose_edit_guidelines`). |
 
 ## Out of scope for v1
 
-Persistence of conversations, Claude acting without a click, editing note type definitions (read-only through the standing instructions and `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).
+Persistence of conversations, Claude acting without a click, editing the protocol, per-deck guidelines, editing note type definitions (read-only through the standing instructions and `get_note_type`; changing which note type a note belongs to is supported via `propose_edit`), creating or editing PDF sources, editing a web source (a web source is read-only; `propose_edit_source` refuses it).

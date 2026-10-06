@@ -25,7 +25,7 @@ After closing, the queue and deck counts are re-fetched. After a validation the 
 
 Nothing is persisted: a page reload drops an open workspace. Past workspaces are not kept.
 
-While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while a field or the message box is focused only returns the focus; a second `Esc` closes. `Enter` sends the message (`Shift+Enter` inserts a line break). No other workspace shortcut in v1.
+While the workspace is open, the queue's keyboard shortcuts are off. `Esc` while a field or the message box is focused only returns the focus; a second `Esc` closes the [guidelines panel](./chat.md#guidelines) when it is open, and the workspace otherwise. `Enter` sends the message (`Shift+Enter` inserts a line break). No other workspace shortcut in v1.
 
 ## Cards
 

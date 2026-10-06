@@ -164,6 +164,47 @@ function detachSource(id) {
   draw();
 }
 
+/* ---------------- guidelines (specs/chat.md#guidelines) ---------------- */
+
+async function openGuidelines() {
+  if (!S.ws) return;
+  if (S.ws.guidelines) return closeGuidelines();
+  const g = { draft: null, default: null, saving: false, error: "" };
+  S.ws.guidelines = g;
+  draw();
+  try {
+    const r = await API.getGuidelines();
+    g.draft = r.text;
+    g.default = r.default;
+    S.refocus = "ws-guidelines";
+  } catch (e) {
+    g.error = e.message;
+  }
+  draw();
+}
+
+function closeGuidelines() {
+  if (!S.ws) return;
+  S.ws.guidelines = null;
+  draw();
+}
+
+async function saveGuidelines() {
+  const g = S.ws && S.ws.guidelines;
+  if (!g || g.draft == null || g.saving) return;
+  g.saving = true;
+  g.error = "";
+  draw();
+  try {
+    await API.putGuidelines(g.draft);
+    S.ws.guidelines = null;
+  } catch (e) {
+    g.error = e.message;
+    g.saving = false;
+  }
+  draw();
+}
+
 /* ---------------- source proposals ---------------- */
 
 /* Source proposals write into the vault on click, not at validation (specs/chat.md). */
@@ -202,6 +243,8 @@ async function applySourceProposal(mi, pi) {
       refreshAnchorsOf(input.anchor_note_ids || []);
     } else if (p.kind === "edit_source") {
       await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
+    } else if (p.kind === "edit_guidelines") {
+      await API.editGuidelines({ old: input.old || "", new: input.new || "" });
     } else {
       throw new Error("unknown proposal: " + p.kind);
     }
@@ -247,13 +290,17 @@ function refreshAnchorsOf(noteIds) {
 async function revertSourceProposal(mi, pi) {
   const msg = S.ws && S.ws.chat[mi];
   const p = msg && msg.proposals && msg.proposals[pi];
-  if (!p || !p.applied || p.kind !== "edit_source" || S.busy) return;
+  if (!p || !p.applied || S.busy) return;
+  if (p.kind !== "edit_source" && p.kind !== "edit_guidelines") return;
   const input = p.input || {};
   p.error = "";
   S.busy = true;
   draw();
   try {
-    await API.patchSourceText(input.source_id, { old: input.new || "", new: input.old || "" });
+    // Reverting swaps old and new; an appended rule (empty old) is removed by replacing it.
+    const swapped = { old: input.new || "", new: input.old || "" };
+    if (p.kind === "edit_guidelines") await API.editGuidelines(swapped);
+    else await API.patchSourceText(input.source_id, swapped);
     p.applied = false;
     S.busy = false;
     await loadCorpus();
@@ -359,6 +406,13 @@ function wsClick(act, el, e) {
     return revertSourceProposal(Number(el.getAttribute("data-mi")), Number(el.getAttribute("data-pi")));
   }
   if (act === "ws-add-cited") return addCitedSource(el);
+  if (act === "ws-guidelines") return openGuidelines();
+  if (act === "ws-guidelines-cancel") return closeGuidelines();
+  if (act === "ws-guidelines-save") return saveGuidelines();
+  if (act === "ws-guidelines-reset") {
+    if (ws.guidelines && ws.guidelines.default != null) ws.guidelines.draft = ws.guidelines.default;
+    return draw();
+  }
   if (act === "attach-src") return attachSource(el.getAttribute("data-src"));
   if (act === "detach-src") return detachSource(el.getAttribute("data-src"));
   if (act === "ws-dismiss-report") {
@@ -397,6 +451,8 @@ function wsInput(key, el) {
   if (!ws) return;
   if (key === "chat") {
     ws.chatDraft = el.value;
+  } else if (key === "ws-guidelines") {
+    if (ws.guidelines) ws.guidelines.draft = el.value;
   } else if (key === "attach-src-menu") {
     attachSource(el.value);
   } else if (key === "ws-clear-reason") {

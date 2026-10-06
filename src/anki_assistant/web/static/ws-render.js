@@ -332,6 +332,7 @@ function chatPane() {
       (S.chatStatus && S.chatStatus.model
         ? '<span class="tag grow">' + esc(S.chatStatus.model) + "</span>"
         : '<span class="grow"></span>') +
+      '<button class="ghost" data-act="ws-guidelines" title="view and edit the guidelines Claude follows">guidelines</button>' +
       '<button class="primary" data-act="ws-send"' +
       (ws.chatBusy ? " disabled" : "") +
       ">Send</button></div>"
@@ -339,11 +340,33 @@ function chatPane() {
       '<textarea disabled placeholder="chat unavailable"></textarea>';
   return (
     '<div class="chat">' +
-    '<div class="log" id="chat-log" data-scroll="chat">' +
-    chatLogHtml() +
-    "</div>" +
+    (ws.guidelines
+      ? guidelinesPanelHtml(ws.guidelines)
+      : '<div class="log" id="chat-log" data-scroll="chat">' + chatLogHtml() + "</div>") +
     '<div class="box">' +
     box +
+    "</div></div>"
+  );
+}
+
+/* The guidelines panel, over the log: the user's rules for Claude, edited as raw Markdown. */
+function guidelinesPanelHtml(g) {
+  const disabled = g.saving || g.draft == null ? " disabled" : "";
+  return (
+    '<div class="guidelines-panel">' +
+    '<div class="row"><b>Guidelines</b><span class="muted small grow">' +
+    "your rules for Claude, sent with every turn · a save applies from the next message</span></div>" +
+    (g.draft == null
+      ? '<div class="muted small">loading…</div>'
+      : '<textarea class="mono" data-input="ws-guidelines" data-focus="ws-guidelines" spellcheck="false">' +
+        esc(g.draft) +
+        "</textarea>") +
+    (g.error ? '<div class="banner">' + esc(g.error) + "</div>" : "") +
+    '<div class="row" style="justify-content:flex-end">' +
+    '<button class="ghost" data-act="ws-guidelines-reset"' + disabled + ">Reset to default</button>" +
+    '<span class="grow"></span>' +
+    '<button class="ghost" data-act="ws-guidelines-cancel">Cancel</button>' +
+    '<button class="primary" data-act="ws-guidelines-save"' + disabled + ">Save</button>" +
     "</div></div>"
   );
 }
@@ -549,6 +572,11 @@ function proposalHtml(p, mi, pi) {
       ">" +
       (anchors.length ? '<div class="muted small">anchor: ' + anchors.map(short).join(" ") + "</div>" : "") +
       '<pre class="excerpt">' + esc(input.content || "") + "</pre>";
+  } else if (p.kind === "edit_guidelines") {
+    diff =
+      '<div class="muted small">' + (input.old ? "change to your guidelines" : "rule to add to your guidelines") + "</div>" +
+      (input.old ? '<div class="before"><pre class="excerpt">' + esc(input.old) + "</pre></div>" : "") +
+      '<div class="after"><pre class="excerpt">' + esc(input.new || "") + "</pre></div>";
   } else {
     const src = sourceById(input.source_id);
     diff =
@@ -559,12 +587,18 @@ function proposalHtml(p, mi, pi) {
   const at = ' data-mi="' + mi + '" data-pi="' + pi + '"';
   const head = p.applied
     ? '<span class="applied-mark">applied ✓</span>' +
-      (p.kind === "edit_source" ? '<button class="revert" data-act="ws-revert-src"' + at + disabled + ">Revert</button>" : "")
+      (p.kind === "edit_source" || p.kind === "edit_guidelines" ? '<button class="revert" data-act="ws-revert-src"' + at + disabled + ">Revert</button>" : "")
     : '<button class="primary" data-act="ws-apply-src"' + at + disabled + ">Apply</button>";
   return (
     '<div class="proposal' + (p.applied ? " applied" : "") + '">' +
     '<div class="proposal-head"><span class="pkind">' +
-    (p.kind === "add_source" ? "add source" : p.kind === "create_source" ? "new source" : "source") +
+    (p.kind === "add_source"
+      ? "add source"
+      : p.kind === "create_source"
+        ? "new source"
+        : p.kind === "edit_guidelines"
+          ? "guidelines"
+          : "source") +
     "</span>" +
     '<span class="grow"></span>' + head + "</div>" +
     '<div class="diff">' + diff + "</div>" +

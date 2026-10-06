@@ -12,6 +12,7 @@ from typing import Any
 
 from anki_assistant.models import strip_html
 
+from .guidelines import DEFAULT_GUIDELINES
 from .types import (
     BRIEF_FIELD_CHARS,
     MAX_ATTACHED_CHARS,
@@ -25,10 +26,9 @@ from .types import (
     WorkspaceCard,
 )
 
-# Block 1. Only what specs/chat.md lists: language, proposal tools over prose, raw field syntax,
-# and the conventions of the collection stated as facts. How to reason about a card (terseness,
-# when to read, how many notes an idea deserves) is the conversation's business, not the prompt's.
-STANDING_INSTRUCTIONS = """\
+# Block 1, first part: the protocol — what the app needs for proposals to work. Fixed in code;
+# the user's editable rules (the guidelines, specs/chat.md#guidelines) follow it.
+PROTOCOL = """\
 You assist the user in reviewing their flagged Anki notes. The user works in a workspace: \
 the cards they are looking at (the note the workspace was opened on, drafts prepared for it, \
 notes added since) are listed below with their identifier (1, 2…). This prompt also gives you \
@@ -38,10 +38,6 @@ source that is not attached, the deck tree — is read with the read tools, and 
 nowhere in the collection is searched for on the web.
 
 Rules:
-- Reply in the user's language, English by default.
-- When the user asks a question, requests an explanation, a check, or information, **reply \
-without proposing a change**. Only propose a change if the user explicitly asks for one or \
-your answer reveals a clear factual error in a card — and in that case, flag the error first.
 - Refer to a card by its workspace identifier (`target: "3"`); a note not yet in the \
 workspace is referred to by its Anki id (a large number), and it will be added.
 - When you propose a concrete change, **call** the proposal tools (propose_edit, \
@@ -54,32 +50,22 @@ them to the workspace.
 - The bracketed markers in the history (`[proposal: …]`, `[read: …]`, `[added: …]`) are \
 generated automatically when you call a tool. **Never write them yourself** in your reply: \
 they trigger nothing. For a proposal to take effect, always call the matching tool.
-- The web (web_search, then web_fetch to read a full page) serves two purposes: checking a \
-card against the outside world when the corpus is not enough, and **finding sources to add** \
-— an article, a book, a reference page. The corpus is not closed. **As soon as you cite a web \
-page in your reply and that page is a good reference for the deck (a Wikipedia article, a \
-course, documentation), call propose_add_source with its URL in the same turn** so the user \
-can add it to the corpus in one click; the server re-reads the page when it needs it, nothing \
-is copied. For a summary you write yourself, use propose_create_source (an Obsidian note in \
-the vault). Card content you draw from the web arrives with the source proposal that grounds \
-it, never on its own. Do not paste a URL into your reply: passages drawn from the web are \
-cited automatically (a numbered reference to the page, a source list under the reply); a bare \
-URL is only for recommending a page you have not cited.
-- Only read a source (`read_source`) when you genuinely need to for your reply: to verify a \
-doubtful fact, correct a factual error, or fill in a field with information missing from the \
-card and the context. If the card, the attached sources, and your own knowledge of the topic \
-are enough, don't read.
+- Card content you draw from the web arrives with the source proposal that grounds it, never \
+on its own. Do not paste a URL into your reply: passages drawn from the web are cited \
+automatically (a numbered reference to the page, a source list under the reply); a bare URL \
+is only for recommending a page you have not cited.
 - Fields are **raw** Anki field values: HTML, cloze markers `{{c1::answer}}` or \
 `{{c1::answer::hint}}` preserved. Produce your own in the same syntax and keep it valid: \
 contiguous numbers starting at c1, balanced braces, at least one cloze in a Cloze note.
-
-Collection conventions:
-- Context header: many notes open with a short topic label (e.g. « Stone's Model - FAB and \
-KKT Conditions: ») carried by `<div class="context">…</div>` on the field's first line, so a \
-cloze read in isolation is not ambiguous. A first line that is the grammatical start of the \
-sentence (« There are several ways to: ») is not a header: the wrapper is what makes the \
-difference, and the note type's CSS styles it.\
+- The user's guidelines follow. Change them (propose_edit_guidelines) only when the user asks \
+you to; copy the passage to replace verbatim, or leave `old` empty to add a rule at the end.\
 """
+
+
+def standing_instructions(guidelines: str | None = None) -> str:
+    """Block 1: the protocol, then the guidelines (the default ones when `guidelines` is None)."""
+    text = DEFAULT_GUIDELINES if guidelines is None else guidelines
+    return PROTOCOL + "\n\n# Guidelines\n\n" + text.strip()
 
 
 # --------------------------------------------------------------------- formatting helpers
@@ -294,12 +280,14 @@ def build_system(
     cards: Sequence[WorkspaceCard],
     flagged_count: int | None = None,
     note_types: Mapping[str, Sequence[str]] | None = None,
+    guidelines: str | None = None,
 ) -> list[dict[str, Any]]:
     """System prompt as four text blocks (specs/chat.md#context).
 
-    1. standing instructions, 2. corpus index, 3. attached sources, 4. deck + workspace cards.
-    Block 3 carries `cache_control: ephemeral`: blocks 1–3 depend only on the deck and on what
-    the user attached, so a change on the workspace (which only changes block 4) reuses the cache.
+    1. standing instructions (protocol + `guidelines`), 2. corpus index, 3. attached sources,
+    4. deck + workspace cards. Block 3 carries `cache_control: ephemeral`: blocks 1–3 depend
+    only on the deck, the guidelines and what the user attached, so a change on the workspace
+    (which only changes block 4) reuses the cache.
     """
     active_cards = [card for card in cards if card.active]
     note_ids = [card.note_id for card in active_cards if card.note_id is not None]
@@ -326,7 +314,7 @@ def build_system(
         notes_part.append("(No card.)")
 
     return [
-        {"type": "text", "text": STANDING_INSTRUCTIONS},
+        {"type": "text", "text": standing_instructions(guidelines)},
         {"type": "text", "text": _index_block(corpus_index, note_ids)},
         {
             "type": "text",

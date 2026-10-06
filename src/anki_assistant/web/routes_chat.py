@@ -1,4 +1,4 @@
-"""/api routes for chat: `POST /chat` (SSE) and `GET /chat/status`. Spec: specs/chat.md.
+"""/api routes for chat: `POST /chat` (SSE), `GET /chat/status`, `/guidelines`. Spec: specs/chat.md.
 
 Mounted with prefix `/api` by `web/main.py`, so paths are declared without it.
 """
@@ -12,12 +12,13 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from anki_assistant import review
 from anki_assistant.chat import (
+    DEFAULT_GUIDELINES,
     MAX_FULL_RESULT_CHARS,
     Attached,
     ChatEvent,
@@ -31,6 +32,9 @@ from anki_assistant.chat import (
     format_notes,
     format_notes_brief,
     format_source,
+    load_guidelines,
+    replace_in_guidelines,
+    save_guidelines,
     stream_chat,
 )
 from anki_assistant.client import AnkiClient
@@ -85,6 +89,17 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     #: Optional: number of flagged notes in the deck, shown to Claude as deck context.
     flagged_count: int | None = None
+
+
+class GuidelinesIn(BaseModel):
+    text: str
+
+
+class GuidelinesEditIn(BaseModel):
+    """An exact-match replacement; an empty `old` appends `new`."""
+
+    old: str
+    new: str
 
 
 # ------------------------------------------------------------------------- api client
@@ -258,6 +273,7 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
         return source, source.text(store.vault)
 
     note_types = anki.model_names_and_fields()
+    guidelines = load_guidelines()
 
     async def body_stream() -> AsyncIterator[str]:
         events = stream_chat(
@@ -271,8 +287,30 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
             read_tools=read_tools_for(anki, store, body.deck, load_source),
             flagged_count=body.flagged_count,
             note_types=note_types,
+            guidelines=guidelines,
         )
         async for event in events:
             yield _sse(event)
 
     return StreamingResponse(body_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.get("/guidelines")
+def get_guidelines() -> dict[str, str]:
+    return {"text": load_guidelines(), "default": DEFAULT_GUIDELINES}
+
+
+@router.put("/guidelines")
+def put_guidelines(body: GuidelinesIn) -> dict[str, str]:
+    save_guidelines(body.text)
+    return {"text": body.text}
+
+
+@router.post("/guidelines/edit")
+def edit_guidelines(body: GuidelinesEditIn) -> dict[str, str]:
+    """Apply (or, with old and new swapped, revert) one replacement. 409 when `old` occurs 0 or
+    2+ times."""
+    try:
+        return {"text": replace_in_guidelines(body.old, body.new)}
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

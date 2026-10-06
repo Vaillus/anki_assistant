@@ -5,6 +5,7 @@ Anki must be running with the AnkiConnect add-on installed (default port 8765).
 
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.request
@@ -280,6 +281,18 @@ class AnkiClient:
             "updateNoteModel",
             note={"id": note_id, "modelName": model, "fields": fields, "tags": tags},
         )
+
+    # ----------------------------------------------------------------- media
+
+    def retrieve_media_file(self, name: str) -> bytes | None:
+        """The bytes of one file in Anki's media folder, or None when it does not exist.
+
+        AnkiConnect returns the content base64-encoded, or `false` for a missing file.
+        """
+        result = self.invoke("retrieveMediaFile", filename=name)
+        if not result:
+            return None
+        return base64.b64decode(result)
 
     # ---------------------------------------------------------------- models
 

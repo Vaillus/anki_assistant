@@ -51,11 +51,26 @@ A sync [replays](#sync) answers given on earlier Anki days, and Anki counts each
 
 Being read from the review log, the correction holds for every batch built the same Anki day, at a sync or at `GET /api/mobile/batch`.
 
-A **batch** is the cards the phone downloads at a sync: one daily quota per day of the window, plus the learning cards due that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch. Within each day, cards come in this order — an approximation of Anki's own queue:
+A **batch** is the cards the phone downloads at a sync: one daily quota per day of the window, plus the learning cards due that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
 
-1. **learning cards** due by that day — intraday learning (queue 1) first, then interday learning (queue 3), each by due ascending — not counted in the quota;
-2. **review cards** (queue 2) due by that day, not taken by an earlier day, by due ascending (most overdue first), up to the day's review quota;
-3. **new cards** not taken by an earlier day, by new position then card ordinal, up to the day's new quota.
+Each day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (`getDeckConfig`). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value, or a missing option, keeps the default given for that option.
+
+| Option | Honoured value | Default |
+|---|---|---|
+| `newGatherPriority` + `newSortOrder` | `0` (Deck) with `1` (Order gathered): new cards by deck order, then position | new cards by position, then ordinal, across sub-decks |
+| `reviewOrder` | `2` (Deck, then due date): reviews and interday learning by deck order, then due | by due across sub-decks |
+| `interdayLearningMix` | `0` (Mix with reviews) | interday learning before the reviews |
+| `newMix` | `0` (Mix with reviews) | new cards after the reviews |
+
+**Deck order** is Anki's deck-list order: a parent before its sub-decks, siblings by name with case ignored. **Review order** and **new order** are the orders the first two rows give.
+
+Within each day:
+
+1. **review cards** (queue 2) due by that day, not taken by an earlier day, in review order (ties by card id), the first up to the day's review quota;
+2. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota;
+3. **learning cards** due by that day, not counted in the quota: intraday learning (queue 1) by due, interday learning (queue 3) in review order.
+
+The day's cards are then laid out: intraday learning first; then interday learning mixed into the reviews; then the new cards mixed into that. **Mixing** a shorter list into a longer one spreads it evenly, each list keeping its own order (Anki's intersperser). Where an option keeps its default, the lists follow each other instead of mixing.
 
 "Due by day *k*" is Anki's `prop:due<=k`, so a backlog of overdue cards fills every day of the window.
 

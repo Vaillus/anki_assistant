@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from urllib.parse import unquote
 
 from anki_assistant.client import AnkiClient, _quote
@@ -231,29 +231,94 @@ def daily_quotas(anki: AnkiClient, deck: str, late: DayQuota | None = None) -> l
     return [first] + [DayQuota(review=per_review, new=per_new) for _ in range(WINDOW_DAYS - 1)]
 
 
+@dataclass
+class OrderSettings:
+    """The display-order options of the mobile deck's options group that the batch honours
+    (specs/mobile.md#batch). False keeps the default order for that option."""
+
+    new_by_deck: bool = False
+    review_by_deck: bool = False
+    mix_interday: bool = False
+    mix_new: bool = False
+
+
+def order_settings(config: dict[str, Any]) -> OrderSettings:
+    """The honoured order options of a deck's options group (`getDeckConfig`)."""
+    return OrderSettings(
+        new_by_deck=config.get("newGatherPriority") == 0 and config.get("newSortOrder") == 1,
+        review_by_deck=config.get("reviewOrder") == 2,
+        mix_interday=config.get("interdayLearningMix") == 0,
+        mix_new=config.get("newMix") == 0,
+    )
+
+
+def _deck_order(card: Card) -> tuple[str, ...]:
+    """Anki's deck-list order: parent before children, siblings by name, case ignored."""
+    return tuple(part.casefold() for part in card.deck_name.split("::"))
+
+
+_T = TypeVar("_T")
+
+
+def intersperse(one: Sequence[_T], two: Sequence[_T]) -> list[_T]:
+    """Spread `two` evenly through `one`, each keeping its own order (Anki's intersperser,
+    rslib scheduler/queue/builder/intersperser.rs)."""
+    ratio = (len(one) + 1) / (len(two) + 1)
+    out: list[_T] = []
+    i = j = 0
+    while i < len(one) and j < len(two):
+        if (j + 1) * ratio <= i + 1:
+            out.append(two[j])
+            j += 1
+        else:
+            out.append(one[i])
+            i += 1
+    return out + list(one[i:]) + list(two[j:])
+
+
+CardKind = Literal["learn", "review", "new"]
+
+
 def _select(
-    anki: AnkiClient, deck: str, quotas: Sequence[DayQuota]
-) -> list[tuple[Card, int, Literal["learn", "review", "new"]]]:
-    """The batch's cards, each with its day and kind, in batch order (specs/mobile.md#batch)."""
+    anki: AnkiClient, deck: str, quotas: Sequence[DayQuota], order: OrderSettings | None = None
+) -> list[tuple[Card, int, CardKind]]:
+    """The batch's cards, each with its day and kind, in batch order (specs/mobile.md#batch).
+
+    Each day's cards are gathered in the order settings' order, then cut at the quota.
+    Without order settings, every option keeps its default.
+    """
+    order = order or OrderSettings()
     scope = f"deck:{_quote(deck)} -is:suspended -is:buried"
     due_by = [set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in range(WINDOW_DAYS)]
     new_ids = anki.find_card_ids(f"{scope} is:new")
     infos = {c.card_id: c for c in anki.cards_info(sorted(due_by[-1] | set(new_ids)))}
-    new_cards = sorted((infos[c] for c in new_ids if c in infos), key=lambda c: (c.due, c.ord))
+
+    def new_key(c: Card) -> tuple[Any, ...]:
+        return (_deck_order(c), c.due, c.ord) if order.new_by_deck else (c.due, c.ord)
+
+    def review_key(c: Card) -> tuple[Any, ...]:
+        return (_deck_order(c), c.due, c.card_id) if order.review_by_deck else (c.due, c.card_id)
+
+    def interday_key(c: Card) -> tuple[Any, ...]:
+        return (_deck_order(c), c.due) if order.review_by_deck else (c.due,)
+
+    new_cards = sorted((infos[c] for c in new_ids if c in infos), key=new_key)
 
     taken: set[int] = set()
-    chosen: list[tuple[Card, int, Literal["learn", "review", "new"]]] = []
+    chosen: list[tuple[Card, int, CardKind]] = []
     for day, quota in enumerate(quotas):
         pool = [infos[c] for c in due_by[day] if c in infos and c not in taken]
-        learn = sorted((c for c in pool if c.queue in (1, 3)), key=lambda c: (c.queue, c.due))
-        reviews = sorted((c for c in pool if c.queue == 2), key=lambda c: (c.due, c.card_id))
+        intraday = sorted((c for c in pool if c.queue == 1), key=lambda c: c.due)
+        interday = sorted((c for c in pool if c.queue == 3), key=interday_key)
+        reviews = sorted((c for c in pool if c.queue == 2), key=review_key)
         news = [c for c in new_cards if c.card_id not in taken]
-        picked: list[tuple[Card, Literal["learn", "review", "new"]]] = (
-            [(c, "learn") for c in learn]
-            + [(c, "review") for c in reviews[: max(quota.review, 0)]]
-            + [(c, "new") for c in news[: max(quota.new, 0)]]
-        )
-        for card, kind in picked:
+        intra: list[tuple[Card, CardKind]] = [(c, "learn") for c in intraday]
+        learning: list[tuple[Card, CardKind]] = [(c, "learn") for c in interday]
+        main: list[tuple[Card, CardKind]] = [(c, "review") for c in reviews[: max(quota.review, 0)]]
+        fresh: list[tuple[Card, CardKind]] = [(c, "new") for c in news[: max(quota.new, 0)]]
+        main = intersperse(main, learning) if order.mix_interday else learning + main
+        main = intersperse(main, fresh) if order.mix_new else main + fresh
+        for card, kind in intra + main:
             taken.add(card.card_id)
             chosen.append((card, day, kind))
     return chosen
@@ -271,7 +336,7 @@ def _templates(anki: AnkiClient, models: Iterable[str]) -> dict[str, dict[str, d
 def batch_card(
     card: Card,
     day: int,
-    kind: Literal["learn", "review", "new"],
+    kind: CardKind,
     templates: dict[str, dict[str, str]],
 ) -> BatchCard:
     question, answer, cloze = card_sides(card, templates)
@@ -316,7 +381,7 @@ def build_batch(
     log, when given, adds today's late replays back to day 0's quota."""
     late = late_replays(log.reviews(), rollover_hour, anki_day(now, rollover_hour)) if log else None
     quotas = daily_quotas(anki, deck, late)
-    chosen = _select(anki, deck, quotas)
+    chosen = _select(anki, deck, quotas, order_settings(anki.deck_config(deck) or {}))
     templates = _templates(anki, (c.model_name for c, _, _ in chosen))
     cards = [batch_card(c, day, kind, templates.get(c.model_name, {})) for c, day, kind in chosen]
     media: list[str] = []

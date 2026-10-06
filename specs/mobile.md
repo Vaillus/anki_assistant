@@ -38,10 +38,18 @@ The **daily quota** is how many review cards and new cards Anki would show in on
 
 | Day | Reviews | New cards |
 |---|---|---|
-| 0 | `review_count` of `getDeckStats` (what is left today) | `new_count` of `getDeckStats` |
+| 0 | `review_count` of `getDeckStats` (what is left today), plus the late replays of review cards | `new_count` of `getDeckStats`, plus the late replays of new cards |
 | 1, 2 | the deck options' `rev.perDay` (`getDeckConfig`) | the deck options' `new.perDay` |
 
 Day 0 uses `getDeckStats` because a per-deck "This deck" limit override is invisible through AnkiConnect, while today's counts reflect it.
+
+A sync [replays](#sync) answers given on earlier Anki days, and Anki counts each replay as done today: after two offline days, today's `getDeckStats` counts are near `0` although nothing was reviewed today. A **late replay** is a card with an applied answer in the [review log](#review-log) synced today whose answer's Anki day is before today. Day 0 adds them back:
+
+- each card counts once, however many of its answers were replayed;
+- it counts as a new card when one of those entries has `was_new` true, as a review otherwise (an entry without `was_new` counts as a review);
+- each sum is capped by the deck options' limit (`rev.perDay`, `new.perDay`), but never below the `getDeckStats` count.
+
+Being read from the review log, the correction holds for every batch built the same Anki day, at a sync or at `GET /api/mobile/batch`.
 
 A **batch** is the cards the phone downloads at a sync: one daily quota per day of the window, plus the learning cards due that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch. Within each day, cards come in this order — an approximation of Anki's own queue:
 
@@ -123,8 +131,11 @@ One line per answer action, written when the sync first processes it, applied or
 
 ```json
 {"action_id": "…", "card_id": 1692138612784, "ease": 3, "answered_at": 1759734120000,
- "time_ms": 8400, "synced_at": 1759900000000, "status": "applied", "reason": null}
+ "time_ms": 8400, "synced_at": 1759900000000, "status": "applied", "reason": null,
+ "was_new": false}
 ```
+
+`answered_at` and `synced_at` are ms since epoch. `was_new` is whether the card was new (`cardsInfo` `type` `0`) when the sync processed the answer, before the replay; `null` when the card no longer exists. Lines written before `was_new` existed lack it.
 
 ## Sync
 

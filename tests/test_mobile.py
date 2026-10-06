@@ -51,7 +51,7 @@ class FakeAnki(AnkiClient):
         self.cards: dict[int, dict[str, Any]] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.stats = {"review_count": 20, "new_count": 5, "learn_count": 0}
-        self.config = {"new": {"perDay": 5}, "rev": {"perDay": 20}}
+        self.config: dict[str, Any] = {"new": {"perDay": 5}, "rev": {"perDay": 20}}
         self.media: dict[str, bytes] = {}
         #: card id -> interval Anki gives on replay (and the queue the card lands in).
         self.replay: dict[int, tuple[int, int]] = {}
@@ -371,6 +371,119 @@ def test_batch_order_and_day_assignment(anki: FakeAnki) -> None:
         (n_third, 2, "new"),
     ]
     assert r_later not in {c.card_id for c in batch.cards}
+
+
+DECK_ORDER = {
+    "newGatherPriority": 0,
+    "newSortOrder": 1,
+    "reviewOrder": 2,
+    "newMix": 1,
+    "interdayLearningMix": 1,
+}
+
+
+def test_batch_deck_order_decides_which_cards_are_taken(anki: FakeAnki) -> None:
+    anki.stats = {"review_count": 2, "new_count": 1, "learn_count": 0}
+    anki.config = {"new": {"perDay": 1}, "rev": {"perDay": 2}, **DECK_ORDER}
+    r_b = anki.add(deck="courant::b", due=10, rel_due=-40)  # most overdue, last deck
+    r_a_late = anki.add(deck="courant::A", due=30, rel_due=-20)
+    r_a_early = anki.add(deck="courant::A", due=20, rel_due=-30)
+    r_root = anki.add(deck="courant", due=50, rel_due=-1)
+    n_b = anki.add(deck="courant::b", queue=0, due=1)  # lowest position, last deck
+    n_a = anki.add(deck="courant::A", queue=0, due=5)
+    n_ax = anki.add(deck="courant::A::x", queue=0, due=3)
+
+    got = [(c.card_id, c.day, c.kind) for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+    assert got == [
+        (r_root, 0, "review"),
+        (r_a_early, 0, "review"),
+        (n_a, 0, "new"),
+        (r_a_late, 1, "review"),
+        (r_b, 1, "review"),
+        (n_ax, 1, "new"),
+        (n_b, 2, "new"),
+    ]
+
+
+def test_batch_interday_learning_by_deck_order(anki: FakeAnki) -> None:
+    anki.stats = {"review_count": 0, "new_count": 0, "learn_count": 2}
+    anki.config = {"new": {"perDay": 0}, "rev": {"perDay": 0}, **DECK_ORDER}
+    i_b = anki.add(deck="courant::b", queue=3, due=1, rel_due=0)
+    i_a = anki.add(deck="courant::a", queue=3, due=2, rel_due=0)
+    got = [c.card_id for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+    assert got == [i_a, i_b]
+
+
+def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: FakeAnki) -> None:
+    anki.stats = {"review_count": 4, "new_count": 2, "learn_count": 2}
+    anki.config = {
+        "new": {"perDay": 0},
+        "rev": {"perDay": 0},
+        **DECK_ORDER,
+        "newMix": 0,
+        "interdayLearningMix": 0,
+    }
+    r1, r2, r3, r4 = (anki.add(due=d, rel_due=-5) for d in (1, 2, 3, 4))
+    n1, n2 = (anki.add(queue=0, due=d) for d in (1, 2))
+    interday = anki.add(queue=3, due=0, rel_due=0)
+    intraday = anki.add(queue=1, due=1759740000, rel_due=0)
+
+    got = [(c.card_id, c.kind) for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+    assert got == [
+        (intraday, "learn"),
+        (r1, "review"),
+        (n1, "new"),
+        (r2, "review"),
+        (interday, "learn"),
+        (n2, "new"),
+        (r3, "review"),
+        (r4, "review"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        {},
+        {
+            "newGatherPriority": 1,
+            "newSortOrder": 1,
+            "reviewOrder": 0,
+            "newMix": 1,
+            "interdayLearningMix": 2,
+        },
+        {"newGatherPriority": 0, "newSortOrder": 0, "reviewOrder": 1},
+    ],
+)
+def test_batch_order_defaults_when_options_absent_or_other(
+    anki: FakeAnki, order: dict[str, int]
+) -> None:
+    anki.stats = {"review_count": 2, "new_count": 1, "learn_count": 1}
+    anki.config = {"new": {"perDay": 0}, "rev": {"perDay": 0}, **order}
+    r_b = anki.add(deck="courant::b", due=10, rel_due=-40)
+    r_a = anki.add(deck="courant::a", due=20, rel_due=-30)
+    anki.add(deck="courant", due=50, rel_due=-1)
+    n_b = anki.add(deck="courant::b", queue=0, due=1)
+    anki.add(deck="courant::a", queue=0, due=5)
+    i_b = anki.add(deck="courant::b", queue=3, due=1, rel_due=0)
+    i_a = anki.add(deck="courant::a", queue=3, due=2, rel_due=0)
+
+    got = [c.card_id for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+    assert got == [i_b, i_a, r_b, r_a, n_b]
+
+
+@pytest.mark.parametrize(
+    ("one", "two", "mixed"),
+    [
+        ("abcd", "x", "abxcd"),
+        ("abcde", "xy", "axbcyde"),
+        ("ab", "xyz", "xaybz"),
+        ("", "xy", "xy"),
+        ("ab", "", "ab"),
+    ],
+)
+def test_intersperse_spreads_evenly(one: str, two: str, mixed: str) -> None:
+    assert "".join(mobile.intersperse(one, two)) == mixed
 
 
 def test_batch_card_content(anki: FakeAnki) -> None:

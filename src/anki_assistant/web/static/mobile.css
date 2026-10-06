@@ -1,0 +1,108 @@
+/* Phone app (specs/mobile.md#phone-page). Loaded after themes.css and app.css: it uses
+   app.css's semantic tokens and atoms (.cloze, .field-img, .context) and hardcodes no
+   colour. One column: header, scrolling card, action bar fixed at the bottom. */
+
+body.mobile {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-size: 15px;
+  line-height: 22px;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+body.mobile button {
+  min-height: 44px;
+  padding: 6px 8px;
+  touch-action: manipulation; /* no double-tap zoom delay */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------- header ---------- */
+
+.m-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(env(safe-area-inset-top) + 4px) 12px 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.m-head .m-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-head .m-deck { color: var(--accent); font-weight: 600; }
+.m-head .m-pending { color: var(--flag); }
+.m-head button.m-sync { min-width: 96px; color: var(--muted); font-size: 13px; }
+.m-head button.m-sync.offline { color: var(--danger); border-color: var(--dangerline); }
+.m-head button.m-sync.busy { color: var(--accent); }
+
+.m-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--flagbg);
+  border-bottom: 1px solid var(--flag);
+  font-size: 13px;
+}
+.m-notice.danger { background: var(--dangerbg); border-color: var(--danger); }
+.m-notice span { flex: 1; }
+.m-notice button { min-height: 32px; }
+
+/* ---------- card ---------- */
+
+.m-card {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px 24px;
+}
+.m-card .field-val { font-size: 17px; line-height: 26px; margin-bottom: 12px; }
+.m-card .field-val .context { font-size: 14px; }
+.m-card .m-meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.m-card .m-meta .m-flag { color: var(--flag); font-weight: 600; }
+.m-card hr { border: 0; border-top: 1px dashed var(--line-strong); margin: 14px 0; }
+.m-card .m-hint { color: var(--dim); font-size: 12px; text-align: center; margin-top: 20px; }
+.m-card mjx-container[display="true"] { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
+
+.m-empty { color: var(--muted); text-align: center; margin-top: 30vh; }
+.m-empty b { color: var(--ink); display: block; margin-bottom: 6px; }
+
+.m-foot {
+  margin-top: 32px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.m-foot select { font-size: 12px; padding: 2px 4px; color: var(--muted); }
+
+/* ---------- action bar ---------- */
+
+.m-bar {
+  border-top: 1px solid var(--line);
+  padding: 8px 8px calc(env(safe-area-inset-bottom) + 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.m-row { display: grid; gap: 6px; }
+.m-row.four { grid-template-columns: repeat(4, 1fr); }
+.m-bar button.m-show { width: 100%; min-height: 56px; font-size: 16px; }
+.m-bar button.m-ease { min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.m-bar button.m-ease .lbl { font-size: 14px; }
+.m-bar button.m-ease .out { font-size: 12px; color: var(--muted); }
+.m-bar button.e1 { color: var(--danger); border-color: var(--dangerline); }
+.m-bar button.e3 { color: var(--ok); border-color: var(--okline); }
+.m-bar button.e4 { color: var(--accent); border-color: var(--accentline); }
+.m-bar button.m-tool { font-size: 13px; color: var(--muted); }
+.m-bar button.m-tool.on { background: var(--flag); border-color: var(--flag); color: var(--on-flag); }

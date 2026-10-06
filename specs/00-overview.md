@@ -32,7 +32,8 @@ graph LR
     Sources --> PDF["PDF files · Docling / pypdf"]
     Sources -- fetch --> Web["Web pages · httpx"]
     API --> Chat["chat/ · Anthropic API"]
-    Phone["iPhone · /m (offline)"] -- tailscale serve · HTTPS --> API
+    Phone["iPhone · /m (offline)"] -- tailscale serve · HTTPS --> Gate["phone app · port 5071 · tailnet gate"]
+    Gate --> Client
 ```
 
 **Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; `guidelines.md` is the store for the chat's [guidelines](./chat.md#guidelines); `review_log.jsonl` and `mobile_actions.jsonl` hold the phone's [review log](./mobile.md#review-log) and the action ids already synced; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
@@ -41,7 +42,7 @@ graph LR
 
 **Who writes to the vault.** Two operations only, both behind a user click: create a file, replace a passage ([sources.md § Writing to the vault](./sources.md#writing-to-the-vault)).
 
-**Single user, Mac plus phone.** No login. Bound to `127.0.0.1`; the phone reaches it through `tailscale serve`, and the [tailnet gate](./mobile.md#tailnet-gate) lets only the phone app's routes, and only the owner's Tailscale login, through.
+**Single user, Mac plus phone.** No login. One process listens on two ports, both bound to `127.0.0.1`: the main app on `5070`, the phone app alone on the [phone port](./mobile.md#tailnet-gate) `5071`. Only the phone port is exposed on the tailnet, through `tailscale serve`, and its tailnet gate refuses every request that does not carry the owner's Tailscale login.
 
 ## Module map
 
@@ -56,13 +57,13 @@ graph LR
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
 | `src/anki_assistant/mobile.py` | Anki day, batch building, outcome parsing, sync (replay, re-dating, dropped actions, review log) | [mobile.md](./mobile.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
-| `src/anki_assistant/web/main.py` | FastAPI app factory, static mount, router includes, tailnet gate | — |
+| `src/anki_assistant/web/main.py` | App factories (main app, phone app), static mount, router includes, entry point serving both ports | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…`, `/api/notes/priority` | [review.md](./review.md#api), [priority.md](./priority.md#api) |
 | `src/anki_assistant/web/routes_workspace.py` | `/api/workspace/apply`, `/api/workspace/undo` | [workspace.md](./workspace.md#api) |
 | `src/anki_assistant/web/routes_sources.py` | `/api/sources…`, `/api/vault/notes` | [sources.md](./sources.md#api) |
 | `src/anki_assistant/web/routes_chat.py` | `/api/chat` (SSE) | [chat.md](./chat.md#api) |
-| `src/anki_assistant/web/routes_mobile.py` | `/api/mobile/batch`, `/api/mobile/sync`, `/api/mobile/media/{filename}` | [mobile.md](./mobile.md#api) |
-| `src/anki_assistant/web/gate.py` | Tailnet gate middleware | [mobile.md](./mobile.md#tailnet-gate) |
+| `src/anki_assistant/web/routes_mobile.py` | `/api/mobile/batch`, `/api/mobile/sync`, `/api/mobile/media/{filename}`, the page under `/m`, the phone port's shell files | [mobile.md](./mobile.md#api) |
+| `src/anki_assistant/web/gate.py` | Tailnet gate middleware (phone app only) | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/render.py` | Field display transform | [review.md](./review.md#rendering) |
 | `src/anki_assistant/web/errors.py` | Shared error handlers | — |
 | `src/anki_assistant/web/templates/index.html` | The single page | — |

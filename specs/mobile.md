@@ -16,7 +16,7 @@ Out of scope: editing cards from the phone, more than one deck, flag colours oth
 
 ## Phone app
 
-The phone app is the page at `/m`, served by the same FastAPI app; its API is under `/api/mobile`. It reaches the Mac over the tailnet through `tailscale serve`, which provides the HTTPS that offline caching requires ([Tailnet gate](#tailnet-gate)).
+The phone app is the page at `/m`, with its API under `/api/mobile`, served by the same process as the main app on a port of its own, the [phone port](#tailnet-gate). It reaches the Mac over the tailnet through `tailscale serve` on that port, which provides the HTTPS that offline caching requires.
 
 It is installable on the home screen and works offline: the page, its scripts, MathJax and the batch's pictures are cached on the phone. Its data lives in the **phone store**: the browser storage on the phone (IndexedDB), which survives closing the page. The phone store holds the current [batch](#batch), the [pending actions](#pending-actions), the phone's copy of the [review log](#review-log), the cards buried today, and the outcome of each card answered since the batch was downloaded.
 
@@ -153,14 +153,21 @@ If the Mac or Anki stops answering midway, the request fails and nothing is clea
 
 ## Tailnet gate
 
-The Mac sits on a tailnet shared with colleagues, and the app has no login. `tailscale serve --bg 5070` exposes the app over HTTPS at the Mac's `.ts.net` name while the server stays bound to `127.0.0.1`; Tailscale forwards each request with a `Tailscale-User-Login` header naming the sender, for user-owned devices only (not for tagged devices).
+The Mac sits on a tailnet shared with colleagues, and the app has no login. `tailscale serve` exposes one local port over HTTPS at the Mac's `.ts.net` name; it forwards each request with a `Tailscale-User-Login` header naming the sender, for user-owned devices only (not for tagged devices), and replaces any such header the sender put.
 
-The **tailnet gate** is a check on every request. A request is **remote** when its `Host` header, port removed, is neither `localhost` nor `127.0.0.1`. A remote request is let through only when both hold:
+The **phone port** is a second local port, env `MOBILE_PORT` (default `5071`), bound to `127.0.0.1` like the main port (`5070`). `uv run anki-web` listens on both in one process: the phone app and the main app share the AnkiConnect client, the mobile deck, the rollover hour and the review log. The phone port serves only the phone app:
 
-- its path is `/m`, under `/m/`, under `/static/` (the stylesheets and scripts of the app; nothing secret), or under `/api/mobile/`, with no `..` segment;
-- its `Tailscale-User-Login` header equals env `MOBILE_OWNER_LOGIN`.
+| Request | Served |
+|---|---|
+| `GET /m`, `GET /m/manifest.webmanifest`, `GET /m/sw.js` | the [page](#phone-page) |
+| `GET /static/<name>` | only the page's shell files, the ones the service worker precaches |
+| `/api/mobile/*` | the [API](#api) |
 
-Any other remote request gets `403`. When `MOBILE_OWNER_LOGIN` is unset or empty, every remote request gets `403`. Requests to `localhost` or `127.0.0.1` are unaffected.
+Any other request is `404`. `tailscale serve` points at the phone port, never at the main port, so nothing on the tailnet reaches the main app, whatever the request carries.
+
+The **tailnet gate** is the check on every request to the phone port, before routing: its `Tailscale-User-Login` header must be present once and equal env `MOBILE_OWNER_LOGIN` (surrounding spaces ignored, case kept); else `403` with `{ "detail": "Forbidden" }`. When `MOBILE_OWNER_LOGIN` is unset or empty, every request to the phone port gets `403`. The gate ignores the `Host` header, which the sender chooses.
+
+The main port has no gate. It also serves `/m` and `/api/mobile/*`, so the phone app can be tried on the Mac at `http://localhost:5070/m`.
 
 ## Phone page
 
@@ -210,7 +217,7 @@ The web app manifest is at `/m/manifest.webmanifest` (standalone display, start 
 
 ## API
 
-All routes are under `/api/mobile`. Errors follow [review.md § API](./review.md#api): Anki unreachable → `503`, other AnkiConnect failure → `502`, malformed body → `422`; bodies are `{ "detail": "<message>" }`.
+All routes are under `/api/mobile`, on the phone port and on the main port ([Tailnet gate](#tailnet-gate)). Errors follow [review.md § API](./review.md#api): Anki unreachable → `503`, other AnkiConnect failure → `502`, malformed body → `422`; bodies are `{ "detail": "<message>" }`.
 
 | Method & path | Purpose |
 |---|---|

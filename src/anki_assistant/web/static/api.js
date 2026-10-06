@@ -70,6 +70,9 @@ const API = {
 
   // chat
   chatStatus: () => jfetch("/api/chat/status"),
+  getGuidelines: () => jfetch("/api/guidelines"),
+  putGuidelines: (text) => jfetch("/api/guidelines", jsonBody("PUT", { text })),
+  editGuidelines: (body) => jfetch("/api/guidelines/edit", jsonBody("POST", body)),
 };
 
 /* POST /api/chat and parse the SSE response off the ReadableStream.

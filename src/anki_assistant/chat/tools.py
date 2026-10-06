@@ -29,6 +29,7 @@ TOOL_KINDS: dict[str, str] = {
     "propose_add_source": "add_source",
     "propose_create_source": "create_source",
     "propose_edit_source": "edit_source",
+    "propose_edit_guidelines": "edit_guidelines",
 }
 
 #: Proposals that bring a new source into the corpus: answered with the id it will carry.
@@ -339,6 +340,25 @@ def proposal_tools() -> list[dict[str, Any]]:
                     "new": {"type": "string", "description": "Replacement passage."},
                 },
                 required=["source_id", "old", "new"],
+            ),
+        },
+        {
+            "name": "propose_edit_guidelines",
+            "description": (
+                "Propose changing the user's guidelines (the « Guidelines » section of this "
+                "prompt). Only when the user asks for it. `old` must appear exactly once in the "
+                "guidelines (copy it verbatim); leave it empty to add `new` at the end. The user "
+                "applies it with one click; it takes effect from the next turn."
+            ),
+            "input_schema": _obj(
+                {
+                    "old": {
+                        "type": "string",
+                        "description": "Current passage, verbatim; empty to append.",
+                    },
+                    "new": {"type": "string", "description": "Replacement passage."},
+                },
+                required=["old", "new"],
             ),
         },
     ]

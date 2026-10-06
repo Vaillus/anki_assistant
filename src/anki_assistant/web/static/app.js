@@ -407,6 +407,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
       if (inField) active.blur(); // a field first gives the focus back, a second Esc closes
+      else if (S.ws.guidelines) closeGuidelines();
       else closeWorkspace(false);
       return;
     }

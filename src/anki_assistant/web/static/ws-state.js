@@ -200,6 +200,9 @@ function openWorkspace(noteId) {
     chat: [],
     chatSources: [],
     chatDraft: "",
+    // The guidelines panel (specs/chat.md#guidelines): null when closed, else
+    // { draft, default, saving, error }.
+    guidelines: null,
     chatBusy: false,
     applying: false,
     report: null,
@@ -357,9 +360,9 @@ async function lookupNotes(ids) {
   return (await API.lookup(missing)) || [];
 }
 
-/* Proposals that write into sources.json or the vault on click, not at validation. They stay
-   in the log as cards with « Appliquer » (specs/chat.md#proposal-tools). */
-const SOURCE_PROPOSALS = ["add_source", "create_source", "edit_source"];
+/* Proposals that write into sources.json, the vault or the guidelines on click, not at
+   validation. They stay in the log as cards with « Apply » (specs/chat.md#proposal-tools). */
+const SOURCE_PROPOSALS = ["add_source", "create_source", "edit_source", "edit_guidelines"];
 
 function isSourceProposal(kind) {
   return SOURCE_PROPOSALS.indexOf(kind) >= 0;

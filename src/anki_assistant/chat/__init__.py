@@ -1,15 +1,28 @@
 """Claude chat backend: prompt assembly, tools, streaming. Spec: specs/chat.md.
 
-Split into four modules:
+Split into five modules:
 
+- **guidelines** — the user's editable rules: default text, file load/save, replacement.
 - **types** — protocols, dataclasses, type aliases, config constants.
 - **prompt** — system prompt text, the four-block builder, read-tool output formatters.
 - **tools** — tool schemas (proposal, read, web) and dispatch constants.
 - **stream** — the async orchestrator (`stream_chat`), roster, citation tracker, web helpers.
 """
 
+from .guidelines import (
+    DEFAULT_GUIDELINES as DEFAULT_GUIDELINES,
+)
+from .guidelines import (
+    load_guidelines as load_guidelines,
+)
+from .guidelines import (
+    replace_in_guidelines as replace_in_guidelines,
+)
+from .guidelines import (
+    save_guidelines as save_guidelines,
+)
 from .prompt import (
-    STANDING_INSTRUCTIONS as STANDING_INSTRUCTIONS,
+    PROTOCOL as PROTOCOL,
 )
 from .prompt import (
     build_system as build_system,
@@ -28,6 +41,9 @@ from .prompt import (
 )
 from .prompt import (
     format_source as format_source,
+)
+from .prompt import (
+    standing_instructions as standing_instructions,
 )
 from .stream import stream_chat as stream_chat
 from .tools import (

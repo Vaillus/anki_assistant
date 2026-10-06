@@ -10,8 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from anki_assistant import chat
 
@@ -315,6 +318,31 @@ def test_standing_instructions_say_only_what_the_spec_lists() -> None:
         assert absent not in text
 
 
+def test_block_1_is_the_protocol_then_the_guidelines() -> None:
+    default = chat.build_system("d", [], [], [])[0]["text"]
+    assert default.startswith(chat.PROTOCOL)
+    assert chat.DEFAULT_GUIDELINES.strip() in default
+    custom = chat.build_system("d", [], [], [], guidelines="- Never more than one fact per cloze.")
+    text = custom[0]["text"]
+    assert text.startswith(chat.PROTOCOL)
+    assert text.endswith("# Guidelines\n\n- Never more than one fact per cloze.")
+    assert "reply without proposing a change" not in text  # the default is replaced, not kept
+
+
+def test_guidelines_file_defaults_saves_and_replaces(tmp_path: Path) -> None:
+    path = tmp_path / "guidelines.md"
+    assert chat.load_guidelines(path) == chat.DEFAULT_GUIDELINES  # absent file → default
+    chat.save_guidelines("- a\n- b\n", path)
+    assert chat.load_guidelines(path) == "- a\n- b\n"
+    assert chat.replace_in_guidelines("- b", "- c", path) == "- a\n- c\n"
+    assert chat.replace_in_guidelines("", "- d", path) == "- a\n- c\n- d\n"  # empty old appends
+    with pytest.raises(ValueError, match="not found"):
+        chat.replace_in_guidelines("- z", "- y", path)
+    chat.save_guidelines("- a\n- a\n", path)
+    with pytest.raises(ValueError, match="ambiguous"):
+        chat.replace_in_guidelines("- a", "- y", path)
+
+
 def test_empty_index_and_no_attached_source_are_said_explicitly() -> None:
     blocks = chat.build_system("d", [], [], [])
     assert "No source is attached" in blocks[1]["text"]
@@ -361,6 +389,7 @@ def test_tools_are_the_proposals_then_the_read_tools_then_the_web_tools() -> Non
         "propose_add_source",
         "propose_create_source",
         "propose_edit_source",
+        "propose_edit_guidelines",
     ]
     assert names[: len(proposals)] == proposals
     assert set(proposals) == set(chat.TOOL_KINDS)

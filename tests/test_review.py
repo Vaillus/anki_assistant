@@ -622,6 +622,9 @@ def test_split_leaves_the_original_in_place_when_a_fragment_fails(anki: FakeAnki
 # -------------------------------------------------------------------- rendering
 
 
+_PHOTO = '<img src="/api/media/photo.png" alt="" class="field-img">'
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -632,8 +635,11 @@ def test_split_leaves_the_original_in_place_when_a_fragment_fails(anki: FakeAnki
         ("<li>a</li>", "a"),
         ('<img src="x.png" alt="\\frac{1}{2}">', "\\frac{1}{2}"),
         ("<img src=\"latex.png\" alt='E=mc^2'>", "E=mc^2"),
-        ('<img src="photo.png">', "[image]"),
-        ('<img src="photo.png" alt="">', "[image]"),
+        ('<img src="photo.png">', _PHOTO),
+        ('<img src="photo.png" alt="">', _PHOTO),
+        ("<img>", "[image]"),
+        ('<img src="http://example.com/x.png">', "[image]"),
+        ('<img src="../secret.png">', "[image]"),
         ("caf&eacute; &amp; th&eacute;", "café &amp; thé"),
         ("a &lt;b&gt; c", "a &lt;b&gt; c"),
         ("<b>bold</b>", "bold"),
@@ -660,6 +666,27 @@ def test_render_field_escapes_before_marking_up_clozes():
     """A note cannot inject markup: its own angle brackets survive as text, escaped."""
     assert render_field("{{c1::&lt;script&gt;}}") == (
         '<span class="cloze" data-n="1">&lt;script&gt;</span>'
+    )
+
+
+def test_render_field_picture_takes_only_the_file_name():
+    """Nothing but the media file name crosses from the note into the emitted tag."""
+    raw = """<img src='a b&amp;"c.png' onerror="alert(1)" style="x">"""
+    assert render_field(raw) == ('<img src="/api/media/a%20b%26%22c.png" alt="" class="field-img">')
+
+
+def test_render_field_picture_marker_cannot_be_forged():
+    """The internal picture marker uses NUL, which is stripped from the note first."""
+    assert render_field("x\x000\x00") == "x0"
+    assert render_field('\x000\x00<img src="p.png">') == (
+        '0<img src="/api/media/p.png" alt="" class="field-img">'
+    )
+
+
+def test_render_field_picture_in_cloze():
+    assert render_field('{{c1::<img src="p.png">::<img src="h.png">}}') == (
+        '<span class="cloze" data-n="1" data-hint="[image]">'
+        '<img src="/api/media/p.png" alt="" class="field-img"></span>'
     )
 
 

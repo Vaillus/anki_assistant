@@ -191,6 +191,8 @@ a { color: var(--accent); }
 }
 .field-val { font-size: 15px; overflow-wrap: anywhere; }
 .field-val .context { color: var(--ink-dim); font-size: 13px; }
+/* Pasted pictures from Anki's media (specs/review.md#rendering): fit the column. */
+.field-img { display: block; max-width: 100%; height: auto; margin: 4px 0; }
 
 .reason {
   background: var(--flagbg);

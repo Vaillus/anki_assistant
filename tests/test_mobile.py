@@ -15,10 +15,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from anki_assistant import mobile
 from anki_assistant.client import AnkiClient, AnkiConnectError
 from anki_assistant.mobile import Action, MobileLog
+from anki_assistant.web import routes_mobile
 
 DECK = "courant"
 NOW = datetime(2026, 10, 6, 9, 0)  # Anki day 2026-10-06 with the default rollover
@@ -619,3 +622,86 @@ def test_review_log_entries(anki: FakeAnki, log: MobileLog) -> None:
 def test_log_survives_a_truncated_line(log: MobileLog) -> None:
     log.actions_log.write_text('{"id": "a", "status": "applied"}\n{"id": "b", "sta\n')
     assert log.processed() == {"a": None}
+
+
+# ---------------------------------------------------------------------- routes
+
+
+@pytest.fixture
+def http(anki: FakeAnki, log: MobileLog) -> TestClient:
+    app = FastAPI()
+    app.state.anki = anki
+    app.state.mobile_deck = DECK
+    app.state.rollover_hour = 4
+    app.state.mobile_log = log
+    app.include_router(routes_mobile.router, prefix="/api")
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_route_batch(http: TestClient, anki: FakeAnki) -> None:
+    cid = anki.add(fields={"Front": 'q <img src="paste-1.png">', "Back": "a", "Back Extra": ""})
+    res = http.get("/api/mobile/batch")
+    assert res.status_code == 200
+    body = res.json()
+    assert set(body) == {
+        "deck",
+        "generated_at",
+        "rollover_hour",
+        "days",
+        "quota",
+        "cards",
+        "media",
+    }
+    assert body["quota"][0] == {"review": 20, "new": 5}
+    card = body["cards"][0]
+    assert card["card_id"] == cid
+    assert card["question"][0]["name"] == "Front"
+    assert 'src="/api/mobile/media/paste-1.png"' in card["question"][0]["html"]
+    assert card["outcomes"][0] == 600
+    assert body["media"] == ["paste-1.png"]
+    assert anki.writes() == []
+
+
+def test_route_sync(http: TestClient, anki: FakeAnki, log: MobileLog) -> None:
+    cid = anki.add()
+    actions = [
+        {"id": "a1", "kind": "answer", "card_id": cid, "at": ms(NOW), "ease": 3, "time_ms": 900},
+        {"id": "f1", "kind": "flag", "card_id": 31337, "at": ms(NOW)},
+    ]
+    res = http.post("/api/mobile/sync", json={"actions": actions})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["applied"] == ["a1"]
+    assert body["dropped"] == [{"id": "f1", "reason": "card_missing"}]
+    assert body["batch"]["deck"] == DECK
+    assert log.reviews()[0]["time_ms"] == 900
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"id": "a", "kind": "answer", "card_id": 1, "at": 0},  # no ease
+        {"id": "a", "kind": "answer", "card_id": 1, "at": 0, "ease": 5},
+        {"id": "a", "kind": "bury", "card_id": 1, "at": 0},
+        {"id": "", "kind": "flag", "card_id": 1, "at": 0},
+    ],
+)
+def test_route_sync_rejects_malformed_actions(
+    http: TestClient, anki: FakeAnki, action: dict[str, Any]
+) -> None:
+    assert http.post("/api/mobile/sync", json={"actions": [action]}).status_code == 422
+    assert anki.writes() == []
+
+
+def test_route_sync_anki_unreachable(http: TestClient, anki: FakeAnki) -> None:
+    anki.fail_on = "getDeckStats"
+    assert http.post("/api/mobile/sync", json={"actions": []}).status_code == 503
+
+
+def test_route_media(http: TestClient, anki: FakeAnki) -> None:
+    anki.media["paste-1.png"] = b"\x89PNG"
+    res = http.get("/api/mobile/media/paste-1.png")
+    assert res.status_code == 200
+    assert res.content == b"\x89PNG"
+    assert res.headers["content-type"] == "image/png"
+    assert http.get("/api/mobile/media/missing.png").status_code == 404

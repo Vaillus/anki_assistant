@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from anki_assistant import mobile
 from anki_assistant.client import AnkiClient
 from anki_assistant.sources import SourceStore
 
@@ -27,15 +28,27 @@ def create_app() -> FastAPI:
     app.state.store = SourceStore()
     app.state.study_deck = os.environ.get("STUDY_DECK") or None
     app.state.last_validation = None  # snapshot of the last workspace validation (undo)
+    app.state.mobile_deck = os.environ.get("MOBILE_DECK") or mobile.DEFAULT_DECK
+    app.state.rollover_hour = int(
+        os.environ.get("ANKI_ROLLOVER_HOUR") or mobile.DEFAULT_ROLLOVER_HOUR
+    )
+    app.state.mobile_log = mobile.MobileLog()
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
 
-    from anki_assistant.web import routes_chat, routes_review, routes_sources, routes_workspace
+    from anki_assistant.web import (
+        routes_chat,
+        routes_mobile,
+        routes_review,
+        routes_sources,
+        routes_workspace,
+    )
 
     app.include_router(routes_review.router, prefix="/api")
     app.include_router(routes_sources.router, prefix="/api")
     app.include_router(routes_chat.router, prefix="/api")
     app.include_router(routes_workspace.router, prefix="/api")
+    app.include_router(routes_mobile.router, prefix="/api")
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:

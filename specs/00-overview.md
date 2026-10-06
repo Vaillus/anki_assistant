@@ -17,7 +17,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 | [priority.md](./priority.md) | Priority queue: urgency criteria, study-deck budget filtering, deck tree row |
 | [sources.md](./sources.md) | Corpus, source, anchors, extracted text, vault writes, Source tab |
 | [workspace.md](./workspace.md) | The overlay: cards, versions, split, flag toggle, validation, undo |
-| [chat.md](./chat.md) | The conversation: system prompt, read tools, proposal tools, source proposals |
+| [chat.md](./chat.md) | The conversation: system prompt, guidelines, read tools, proposal tools, source proposals |
 | [theme.md](./theme.md) | Visual identity: terminal look, Omarchy palettes, two-layer colour architecture, picker, logo |
 
 ## Architecture
@@ -33,7 +33,7 @@ graph LR
     API --> Chat["chat/ · Anthropic API"]
 ```
 
-**Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
+**Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; `guidelines.md` is the store for the chat's [guidelines](./chat.md#guidelines); the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
 
 **Who writes to Anki.** Two paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)). The server keeps one snapshot for « Undo last validation ».
 

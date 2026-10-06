@@ -151,6 +151,52 @@ The **tailnet gate** is a check on every request. A request is **remote** when i
 
 Any other remote request gets `403`. When `MOBILE_OWNER_LOGIN` is unset or empty, every remote request gets `403`. Requests to `localhost` or `127.0.0.1` are unaffected.
 
+## Phone page
+
+The page the phone app is made of. Vanilla JS like the main app; the phone-queue rules and the phone actions live in `static/mobile-queue.js`, a module with no DOM, and the page (`static/mobile.js`) holds the display, the phone store and the sync.
+
+**Layout.** One column filling the screen, within the safe-area insets:
+
+```
+courant · 18 left today · 2 pending          ⟳ 07:42
+────────────────────────────────────────────────────
+  question fields                     (scrolls)
+  ── after « show answer »: answer fields, named ──
+────────────────────────────────────────────────────
+  [            show answer            ]
+  again <10m │ hard 24j │ good 3mo │ easy 3,9mo
+  ⚑ flag      ↶ undo      bury      suspend
+```
+
+- **Header**: the mobile deck, the count left today (the phone queue now, plus the cards answered under a day ago whose return falls before the next rollover), the number of pending actions when there are any, the sync button with the time of the last successful sync, or « offline » when the last attempt failed.
+- **Card**: the question fields, without names; on a cloze card, cloze `c<cloze number>` hidden as `[…]`/`[hint]`. Once revealed: the question again with every cloze shown, then the non-empty answer fields, each under its name. Math is typeset after each render. Pictures fit the width.
+- **Action bar**, fixed at the bottom: « show answer » (a tap anywhere on the card does the same); once revealed, the four answer buttons, each labelled with its `outcome_labels` entry, or « — » on a card already answered on the phone (its answer has no outcome); below, flag, undo, bury, suspend. The flag button shows the card's current state — the batch's flag, overridden by the card's last pending flag/unflag — and toggles it: a flagged card (any colour) gets `unflag`, an unflagged one `flag`. Buttons are at least 44 px high. A theme picker sits below the card.
+- **Empty queue**: « done for today », with the time the next same-day return comes back when there is one; « sync to get more cards » when today is past the window's last day; « no cards yet: sync with the Mac » before the first batch.
+
+Keys are a convenience for testing on the Mac: `Space` shows the answer, `1`–`4` answer, `u` undoes.
+
+**Time spent** on an answer runs from the moment the card is displayed to the tap on an answer button, capped at 60 s (Anki's default maximum answer time), so a card left on screen does not log hours.
+
+**Bury and undo.** Burying records `{card, Anki day, instant}` in the phone store and sends nothing. Undo takes back the most recent of the last pending action and the last burial; after a sync has cleared the pending actions, undo reaches only burials. The card concerned goes to the head of the queue.
+
+**Phone store.** An IndexedDB database `anki-mobile`: the batch, the pending actions, the answers since the batch (action id, card, instant, ease, outcome), the burials and the last sync instant in one store; the review log in another, one entry per answer action, never cleared. Every phone action writes in one transaction before the screen changes. When IndexedDB is unavailable, the page keeps the store in memory and says that actions will be lost when it closes.
+
+**Sync on the phone.** Runs on page load, when the page becomes visible again, when the phone comes back online, and with the ⟳ button; one at a time. It sends the pending actions as they are when it starts. On success, it removes the ids listed in `applied` and `dropped` from the pending actions, replaces the batch, keeps only the answers whose action is still pending, drops burials of past days, and shows a notice when actions were dropped (count and reasons). On any failure (no network, HTTP error, timeout of 20 s), nothing changes and the header says « offline ».
+
+**Offline.** A service worker at `/m/sw.js`, scope `/m` (`Service-Worker-Allowed: /m`), serves:
+
+| Request | Strategy |
+|---|---|
+| the page `/m` | network first (4 s timeout), cache fallback |
+| the page's static files and the manifest | precached at install, cache first; their URLs carry a version (a hash of the shell files), so a new version is new URLs and a new service worker |
+| MathJax on `cdn.jsdelivr.net` | cache first, cached on first fetch; the script and its common fonts are precached at install |
+| `/api/mobile/media/<name>` | cache first, cached on fetch |
+| other `/api/mobile/*` | network only |
+
+After each sync the page downloads every media file of the batch not yet cached, and removes cached media the batch no longer lists.
+
+The web app manifest is at `/m/manifest.webmanifest` (standalone display, start URL `/m`, theme colour of the default dark theme, the star as icon); the page carries the iOS home-screen tags and a 180 px PNG of the star as `apple-touch-icon`.
+
 ## API
 
 All routes are under `/api/mobile`. Errors follow [review.md § API](./review.md#api): Anki unreachable → `503`, other AnkiConnect failure → `502`, malformed body → `422`; bodies are `{ "detail": "<message>" }`.
@@ -160,6 +206,8 @@ All routes are under `/api/mobile`. Errors follow [review.md § API](./review.md
 | `GET /api/mobile/batch` | A fresh batch, nothing applied |
 | `POST /api/mobile/sync` | Apply pending actions, then return a fresh batch |
 | `GET /api/mobile/media/{filename}` | One media file, as `GET /api/media/{filename}` ([review.md § Rendering](./review.md#rendering)) |
+
+The page itself is served outside `/api`: `GET /m` (the page), `GET /m/manifest.webmanifest`, `GET /m/sw.js` ([Phone page](#phone-page)).
 
 **Batch** (`GET /api/mobile/batch`, and `batch` in the sync response):
 

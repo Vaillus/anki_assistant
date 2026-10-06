@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from anki_assistant import mobile
 from anki_assistant.client import AnkiClient
 from anki_assistant.sources import SourceStore
+from anki_assistant.web.gate import TailnetGate
 
 HERE = Path(__file__).parent
 HOST = "127.0.0.1"
@@ -33,6 +34,8 @@ def create_app() -> FastAPI:
         os.environ.get("ANKI_ROLLOVER_HOUR") or mobile.DEFAULT_ROLLOVER_HOUR
     )
     app.state.mobile_log = mobile.MobileLog()
+    # Tailnet requests reach only the phone app, and only from the owner's login.
+    app.add_middleware(TailnetGate, owner=os.environ.get("MOBILE_OWNER_LOGIN") or None)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
 

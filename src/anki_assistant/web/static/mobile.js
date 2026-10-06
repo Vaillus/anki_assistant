@@ -12,6 +12,8 @@ const UI = {
   syncing: false,
   offline: false,
   notice: null, // { text, danger }
+  menuOpen: false,
+  menuKey: null, // what the menu panel shows, so an open <select> is not redrawn
   storage: "loading", // "idb" | "memory"
   logCount: 0,
   cardKey: null, // what the card area shows, so it is redrawn only when it changes
@@ -201,6 +203,7 @@ function render() {
     UI.shownAt = Date.now();
   }
   renderHead(q);
+  renderMenu();
   renderNotice();
   renderCard(q, card);
   renderBar(card);
@@ -230,8 +233,19 @@ function renderHead(q) {
     sync = "⟳ " + (STATE.lastSync ? hhmm(STATE.lastSync) : "sync");
   }
   document.getElementById("m-head").innerHTML =
+    `<button class="m-menu-btn${UI.menuOpen ? " on" : ""}" data-act="menu" aria-label="menu" ` +
+    `aria-expanded="${UI.menuOpen}">☰</button>` +
     `<div class="m-title">${parts.join(" · ")}</div>` +
     `<button class="m-sync${cls}" data-act="sync"${UI.syncing ? " disabled" : ""}>${sync}</button>`;
+}
+
+function renderMenu() {
+  const el = document.getElementById("m-menu");
+  const key = UI.menuOpen ? "open|" + chosenTheme : "closed";
+  if (key === UI.menuKey) return;
+  UI.menuKey = key;
+  el.hidden = !UI.menuOpen;
+  el.innerHTML = UI.menuOpen ? themePicker() : "";
 }
 
 function renderNotice() {
@@ -261,8 +275,8 @@ function foot() {
   const where = UI.storage === "idb" ? "on this phone" : "in memory only";
   const synced = STATE.lastSync ? new Date(STATE.lastSync).toLocaleString() : "never";
   return (
-    `<div class="m-foot">${themePicker()}` +
-    `<span>· review log: ${UI.logCount} answers ${where} · last sync ${escText(synced)}</span></div>`
+    `<div class="m-foot">` +
+    `<span>review log: ${UI.logCount} answers ${where} · last sync ${escText(synced)}</span></div>`
   );
 }
 
@@ -278,7 +292,7 @@ function renderCard(q, card) {
   const key = card
     ? `${card.card_id}|${UI.revealed}|${flag}`
     : `empty|${!!STATE.batch}|${q.expired}|${q.later.length ? q.later[0].at : ""}`;
-  const keyWithFoot = key + "|" + UI.logCount + "|" + STATE.lastSync + "|" + chosenTheme;
+  const keyWithFoot = key + "|" + UI.logCount + "|" + STATE.lastSync;
   if (keyWithFoot === UI.cardKey) return;
   UI.cardKey = keyWithFoot;
   const el = document.getElementById("m-card");
@@ -502,6 +516,12 @@ async function prefetchMedia(names) {
 /* ---------- events and boot ---------- */
 
 document.addEventListener("click", (ev) => {
+  // While the menu is open, a tap outside it only closes it.
+  if (UI.menuOpen && !ev.target.closest("#m-menu, [data-act=menu]")) {
+    UI.menuOpen = false;
+    render();
+    return;
+  }
   const btn = ev.target.closest("[data-act]");
   if (btn) {
     if (btn.disabled) return;
@@ -515,14 +535,18 @@ document.addEventListener("click", (ev) => {
     else if (act === "bury") onBury();
     else if (act === "suspend") onSuspend();
     else if (act === "sync") sync();
+    else if (act === "menu") {
+      UI.menuOpen = !UI.menuOpen;
+      render();
+    }
     else if (act === "dismiss") {
       UI.notice = null;
       render();
     }
     return;
   }
-  // A tap on the card shows the answer (not on the theme picker or a link).
-  if (ev.target.closest("#m-card") && !ev.target.closest(".m-foot, a, select, label")) {
+  // A tap on the card shows the answer (not on a link).
+  if (ev.target.closest("#m-card") && !ev.target.closest(".m-foot, a")) {
     if (UI.currentId !== null && !UI.revealed) {
       UI.revealed = true;
       render();
@@ -533,7 +557,6 @@ document.addEventListener("click", (ev) => {
 document.addEventListener("change", (ev) => {
   if (ev.target.id === "m-theme") {
     setTheme(ev.target.value);
-    UI.cardKey = null;
     render();
   }
 });

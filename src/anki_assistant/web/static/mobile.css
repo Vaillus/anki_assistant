@@ -34,6 +34,8 @@ body.mobile button {
   border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
+.m-head button.m-menu-btn { min-width: 44px; padding: 0 8px; font-size: 18px; color: var(--muted); }
+.m-head button.m-menu-btn.on { color: var(--accent); border-color: var(--accentline); }
 .m-head .m-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-head .m-deck { color: var(--accent); font-weight: 600; }
 .m-head .m-new { color: var(--count-new); }
@@ -43,6 +45,19 @@ body.mobile button {
 .m-head button.m-sync { min-width: 96px; color: var(--muted); font-size: 13px; }
 .m-head button.m-sync.offline { color: var(--danger); border-color: var(--dangerline); }
 .m-head button.m-sync.busy { color: var(--accent); }
+
+.m-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--raised);
+  font-size: 13px;
+}
+.m-menu[hidden] { display: none; }
+.m-menu label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.m-menu select { flex: 1; min-height: 44px; }
 
 .m-notice {
   display: flex;
@@ -87,7 +102,6 @@ body.mobile button {
   gap: 8px;
   flex-wrap: wrap;
 }
-.m-foot select { font-size: 12px; padding: 2px 4px; color: var(--muted); }
 
 /* ---------- action bar ---------- */
 

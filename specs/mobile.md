@@ -16,11 +16,11 @@ Out of scope: editing cards from the phone, more than one deck, flag colours oth
 
 ## Phone app
 
-The phone app is the page at `/m`, with its API under `/api/mobile`, served by the same process as the main app on a port of its own, the [phone port](#tailnet-gate). It reaches the Mac over the tailnet through `tailscale serve` on that port, which provides the HTTPS that offline caching requires.
+The phone app is the page at `/m`, with its API under `/api/mobile`, served by the same process as the main app. The phone reaches it on a port of its own, the [phone port](#tailnet-gate), exposed on the tailnet through `tailscale serve`, which provides the HTTPS that offline caching requires.
 
 It is installable on the home screen and works offline: the page, its scripts, MathJax and the batch's pictures are cached on the phone. Its data lives in the **phone store**: the browser storage on the phone (IndexedDB), which survives closing the page. The phone store holds the current [batch](#batch), the [pending actions](#pending-actions), the phone's copy of the [review log](#review-log), the cards buried today, and the outcome of each card answered since the batch was downloaded.
 
-The page uses the main app's theme (`themes.css`, same picker and stored choice, [theme.md](./theme.md)).
+The page uses the main app's themes and stored theme choice ([theme.md](./theme.md)); its theme picker sits in the page's [menu](#phone-page).
 
 The **mobile deck** is the one deck the phone app reviews: env `MOBILE_DECK`, default `courant`, sub-decks included.
 
@@ -53,7 +53,7 @@ Being read from the review log, the correction holds for every batch built the s
 
 A **batch** is the cards the phone downloads at a sync: one daily quota per day of the window, plus the learning cards due that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch. Within each day, cards come in this order — an approximation of Anki's own queue:
 
-1. **learning cards** (queue 1 or 3) due by that day, by due ascending — not counted in the quota;
+1. **learning cards** due by that day — intraday learning (queue 1) first, then interday learning (queue 3), each by due ascending — not counted in the quota;
 2. **review cards** (queue 2) due by that day, not taken by an earlier day, by due ascending (most overdue first), up to the day's review quota;
 3. **new cards** not taken by an earlier day, by new position then card ordinal, up to the day's new quota.
 
@@ -77,6 +77,8 @@ Each card of a batch carries:
 
 - **question** = the fields referenced on the front template, in order of first reference;
 - **answer** = the fields referenced on the back template, minus `{{FrontSide}}` and minus fields already in the question.
+
+When the template is missing or its front references no field, the first field is the question and the other fields are the answer.
 
 A reference is any `{{…}}` tag (`{{Field}}`, `{{cloze:Text}}`, `{{#Field}}` sections included); filters before the last `:` are ignored, and a name that is not one of the note's fields (`{{Tags}}`, `{{FrontSide}}`, add-on tags) is skipped. The answer side of the phone shows the question, then the answer: for a cloze card, `Text` is the question (cloze `c<cloze number>` hidden, as in [review.md § Question state](./review.md#question-state)) and the answer side reveals it, followed by `Back Extra`.
 
@@ -118,7 +120,7 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
 
 Today's share holds only cards not answered on the phone, and suspended and buried cards are in no part, so the three parts sum to left today.
 
-Answer buttons show the outcome as Anki displays it. **Undo** removes the last pending action (and, for an answer, its review-log entry and its outcome) and puts its card back at the head of the queue.
+Answer buttons show the outcome as Anki displays it. **Undo** takes back the last pending action (and, for an answer, its review-log entry and its outcome) or the last burial, whichever is more recent ([Phone page § Bury and undo](#phone-page)), and puts its card back at the head of the queue.
 
 ## Pending actions
 
@@ -135,7 +137,7 @@ Each carries an **action id** generated on the phone (a UUID), the card id and t
 
 ## Review log
 
-The **review log** is the permanent list of every answer given on the phone: card, button, time answered, time spent. It is kept on the phone and, at sync, appended to `review_log.jsonl` on the Mac (JSON lines, gitignored, next to `sources.json`). It is never sent to Anki: it is the history an own scheduler would start from, and survives leaving Anki.
+The **review log** is the permanent list of every answer given on the phone: card, button, time answered, time spent. It is kept on the phone and, at sync, appended to `review_log.jsonl` on the Mac (JSON lines, gitignored, at the repository root). It is never sent to Anki: it is the history an own scheduler would start from, and survives leaving Anki.
 
 One line per answer action, written when the sync first processes it, applied or dropped:
 
@@ -165,7 +167,7 @@ If the Mac or Anki stops answering midway, the request fails and nothing is clea
 
 The Mac sits on a tailnet shared with colleagues, and the app has no login. `tailscale serve` exposes one local port over HTTPS at the Mac's `.ts.net` name; it forwards each request with a `Tailscale-User-Login` header naming the sender, for user-owned devices only (not for tagged devices), and replaces any such header the sender put.
 
-The **phone port** is a second local port, env `MOBILE_PORT` (default `5071`), bound to `127.0.0.1` like the main port (`5070`). `uv run anki-web` listens on both in one process: the phone app and the main app share the AnkiConnect client, the mobile deck, the rollover hour and the review log. The phone port serves only the phone app:
+The **phone port** is a second local port, env `MOBILE_PORT` (default `5071`), bound to `127.0.0.1` like the main port (`5070`). `uv run anki-web` listens on both in one process, and both ports share the AnkiConnect client, the mobile deck, the rollover hour and the review log. A request is routed by the local port of the socket it arrived on, never by anything the request carries; a request whose local port is unknown is treated as arriving on the phone port. The phone port serves only the phone app:
 
 | Request | Served |
 |---|---|
@@ -175,7 +177,7 @@ The **phone port** is a second local port, env `MOBILE_PORT` (default `5071`), b
 
 Any other request is `404`. `tailscale serve` points at the phone port, never at the main port, so nothing on the tailnet reaches the main app, whatever the request carries.
 
-The **tailnet gate** is the check on every request to the phone port, before routing: its `Tailscale-User-Login` header must be present once and equal env `MOBILE_OWNER_LOGIN` (surrounding spaces ignored, case kept); else `403` with `{ "detail": "Forbidden" }`. When `MOBILE_OWNER_LOGIN` is unset or empty, every request to the phone port gets `403`. The gate ignores the `Host` header, which the sender chooses.
+The **tailnet gate** is the check on every request to the phone port, before routing: its `Tailscale-User-Login` header must be present once and equal env `MOBILE_OWNER_LOGIN` (surrounding spaces ignored, case kept); else `403` with `{ "detail": "Forbidden" }`. When `MOBILE_OWNER_LOGIN` is unset or empty, every request to the phone port gets `403`. No other header, `Host` included, plays a part.
 
 The main port has no gate. It also serves `/m` and `/api/mobile/*`, so the phone app can be tried on the Mac at `http://localhost:5070/m`.
 
@@ -198,8 +200,9 @@ The page the phone app is made of. Vanilla JS like the main app; the phone-queue
 ```
 
 - **Header**: the menu button (☰), the mobile deck, [left today](#phone-queue) as its three parts in Anki's order and colours — new (blue), learning (red), review (green) —, the number of pending actions when there are any, the sync button with the time of the last successful sync, or « offline » when the last attempt failed.
-- **Menu**: the menu button opens a panel under the header holding the theme picker; a second tap on the button, or a tap outside the panel, closes it. The theme picker appears nowhere else on the page.
-- **Card**: the question fields, without names; on a cloze card, cloze `c<cloze number>` hidden as `[…]`/`[hint]`. Once revealed: the question again with every cloze shown, then the non-empty answer fields, each under its name. Math is typeset after each render. Pictures fit the width.
+- **Menu**: the menu button opens a panel under the header holding the theme picker; a second tap on the button, or a tap outside the panel, closes it. The theme picker appears nowhere else on the page. Besides the themes, grouped by mode, it offers « auto (follow the phone) », which clears the stored choice ([theme.md § Picker](./theme.md#picker)).
+- **Notice**: a bar under the header, hidden when there is nothing to say, dismissed with « ok ». It shows the actions a sync dropped (count and reasons), an HTTP error from a sync, and, as a warning, that the phone store is unavailable or a write to it failed.
+- **Card**: a line with the card's deck, its kind and « ⚑ flagged » when its current state is flagged; then the question fields, without names; on a cloze card, cloze `c<cloze number>` hidden as `[…]`/`[hint]`. Once revealed: the question again with every cloze shown, then the non-empty answer fields, each under its name. Math is typeset after each render. Pictures fit the width.
 - **Action bar**, fixed at the bottom: « show answer » (a tap anywhere on the card does the same); once revealed, the four answer buttons, each labelled with its `outcome_labels` entry, or « — » on a card already answered on the phone (its answer has no outcome); below, flag, undo, bury, suspend. The flag button shows the card's current state — the batch's flag, overridden by the card's last pending flag/unflag — and toggles it: a flagged card (any colour) gets `unflag`, an unflagged one `flag`. Buttons are at least 44 px high. Under the buttons, the last line of the screen: the number of answers in the phone's review log (and whether it is kept on the phone or in memory only), and the date and time of the last successful sync.
 - **Empty queue**: « done for today », with the time the next same-day return comes back when there is one; « sync to get more cards » when today is past the window's last day; « no cards yet: sync with the Mac » before the first batch.
 
@@ -211,7 +214,7 @@ Keys are a convenience for testing on the Mac: `Space` shows the answer, `1`–`
 
 **Phone store.** An IndexedDB database `anki-mobile`: the batch, the pending actions, the answers since the batch (action id, card, instant, ease, outcome), the burials and the last sync instant in one store; the review log in another, one entry per answer action, never cleared. Every phone action writes in one transaction before the screen changes. When IndexedDB is unavailable, the page keeps the store in memory and says that actions will be lost when it closes.
 
-**Sync on the phone.** Runs on page load, when the page becomes visible again, when the phone comes back online, and with the ⟳ button; one at a time. It sends the pending actions as they are when it starts. On success, it removes the ids listed in `applied` and `dropped` from the pending actions, replaces the batch, keeps only the answers whose action is still pending, drops burials of past days, and shows a notice when actions were dropped (count and reasons). On any failure (no network, HTTP error, timeout of 20 s), nothing changes and the header says « offline ».
+**Sync on the phone.** Runs on page load, when the page becomes visible again, when the phone comes back online, and with the ⟳ button; one at a time. It sends the pending actions as they are when it starts. On success, it removes the ids listed in `applied` and `dropped` from the pending actions, replaces the batch, keeps only the answers whose action is still pending, drops burials of past days, and shows a notice when actions were dropped (count and reasons). On any failure (no network, HTTP error, timeout of 20 s), nothing changes and the header says « offline »; an HTTP error also shows its detail as a notice.
 
 **Offline.** A service worker at `/m/sw.js`, scope `/m` (`Service-Worker-Allowed: /m`), serves:
 

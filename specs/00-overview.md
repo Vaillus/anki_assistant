@@ -57,7 +57,7 @@ graph LR
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
 | `src/anki_assistant/mobile.py` | Anki day, batch building, outcome parsing, sync (replay, re-dating, dropped actions, review log) | [mobile.md](./mobile.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
-| `src/anki_assistant/web/main.py` | App factories (main app, phone app), static mount, router includes, entry point serving both ports | [mobile.md](./mobile.md#tailnet-gate) |
+| `src/anki_assistant/web/main.py` | App factories (main app, phone app), static mount, router includes, port dispatch, entry point serving both ports | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…`, `/api/notes/priority` | [review.md](./review.md#api), [priority.md](./priority.md#api) |
 | `src/anki_assistant/web/routes_workspace.py` | `/api/workspace/apply`, `/api/workspace/undo` | [workspace.md](./workspace.md#api) |
 | `src/anki_assistant/web/routes_sources.py` | `/api/sources…`, `/api/vault/notes` | [sources.md](./sources.md#api) |
@@ -66,8 +66,9 @@ graph LR
 | `src/anki_assistant/web/gate.py` | Tailnet gate middleware (phone app only) | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/render.py` | Field display transform | [review.md](./review.md#rendering) |
 | `src/anki_assistant/web/errors.py` | Shared error handlers | — |
-| `src/anki_assistant/web/templates/index.html` | The single page | — |
-| `src/anki_assistant/web/static/` | Frontend: vanilla JS, no framework, no bundler | [review.md](./review.md#frontend), [theme.md](./theme.md) |
+| `src/anki_assistant/web/templates/index.html` | The main app's page | — |
+| `src/anki_assistant/web/templates/mobile.html`, `mobile-sw.js` | The phone page and its service worker | [mobile.md](./mobile.md#phone-page) |
+| `src/anki_assistant/web/static/` | Frontend: vanilla JS, no framework, no bundler; `mobile*.js`, `mobile.css` are the phone page's | [review.md](./review.md#frontend), [theme.md](./theme.md), [mobile.md](./mobile.md#phone-page) |
 | `tests/` | pytest, AnkiConnect mocked | — |
 
 ## Conventions

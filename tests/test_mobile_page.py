@@ -1,5 +1,5 @@
 """Tests for the phone page routes (/m, its manifest and service worker,
-specs/mobile.md#phone-page), reached locally and through the tailnet gate."""
+specs/mobile.md#phone-page), on the main app. The phone port is tested in test_gate.py."""
 
 from __future__ import annotations
 
@@ -10,21 +10,10 @@ from fastapi.testclient import TestClient
 
 from anki_assistant.web import main, routes_mobile
 
-OWNER = "owner@example.com"
-TS_HOST = "macbook-pro-de-hugo-2.chamois-velociraptor.ts.net"
-
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("MOBILE_OWNER_LOGIN", OWNER)
+def client() -> TestClient:
     return TestClient(main.create_app(), base_url="http://localhost")
-
-
-def _remote(login: str | None = OWNER) -> dict[str, str]:
-    headers = {"host": TS_HOST}
-    if login is not None:
-        headers["Tailscale-User-Login"] = login
-    return headers
 
 
 def test_page_is_html_with_versioned_assets(client: TestClient) -> None:
@@ -62,13 +51,3 @@ def test_shell_files_exist(client: TestClient) -> None:
     version = routes_mobile.shell_version()
     for name in routes_mobile.SHELL_STATIC:
         assert client.get(f"/static/{name}?v={version}").status_code == 200, name
-
-
-@pytest.mark.parametrize("path", ["/m", "/m/manifest.webmanifest", "/m/sw.js", "/static/mobile.js"])
-def test_owner_reaches_the_page_through_the_gate(client: TestClient, path: str) -> None:
-    assert client.get(path, headers=_remote()).status_code == 200
-
-
-@pytest.mark.parametrize("login", [None, "colleague@example.com"])
-def test_others_are_refused(client: TestClient, login: str | None) -> None:
-    assert client.get("/m", headers=_remote(login)).status_code == 403

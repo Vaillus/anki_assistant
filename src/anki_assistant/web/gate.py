@@ -1,10 +1,9 @@
-"""The tailnet gate: what a request arriving through `tailscale serve` may reach.
-Spec: specs/mobile.md#tailnet-gate.
+"""The tailnet gate: who may reach the phone app. Spec: specs/mobile.md#tailnet-gate.
 
-The server is bound to 127.0.0.1; `tailscale serve` forwards tailnet requests to it with the
-`.ts.net` name as `Host` and the sender's login in `Tailscale-User-Login` (absent for tagged
-devices). A request whose Host is not localhost is **remote**: it may only reach the phone
-app's routes, and only when it comes from the owner's login.
+The phone app listens on its own port, the only one `tailscale serve` exposes. Tailscale
+forwards each request with the sender's login in `Tailscale-User-Login` (absent for tagged
+devices). Every request to the phone app must carry the owner's login; the Host header,
+which the sender chooses, plays no part.
 """
 
 from __future__ import annotations
@@ -13,38 +12,15 @@ import json
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
-LOGIN_HEADER = "tailscale-user-login"
-#: Path prefixes a remote request may reach (besides `/m` itself).
-REMOTE_PREFIXES = ("/m/", "/static/", "/api/mobile/")
+LOGIN_HEADER = b"tailscale-user-login"
 
 
-def is_remote(host: str | None) -> bool:
-    """True unless the Host header, port removed, is localhost or 127.0.0.1."""
-    if not host:
-        return True
-    name = host.strip().lower()
-    if not name.startswith("["):  # an IPv6 literal is never one of the local names
-        name = name.split(":", 1)[0]
-    return name not in LOCAL_HOSTS
-
-
-def remote_path_allowed(path: str) -> bool:
-    """`/m`, or under `/m/`, `/static/`, `/api/mobile/`, with no `..` segment."""
-    if ".." in path.split("/"):
-        return False
-    return path == "/m" or path.startswith(REMOTE_PREFIXES)
-
-
-def allows(host: str | None, path: str, login: str | None, owner: str | None) -> bool:
-    """Whether the gate lets this request through."""
-    if not is_remote(host):
-        return True
+def allows(logins: list[str], owner: str | None) -> bool:
+    """Whether a request carrying these `Tailscale-User-Login` values may pass: exactly one,
+    equal to the owner's login (surrounding spaces ignored). An unset owner refuses all."""
     if not owner or not owner.strip():
         return False
-    if login is None or login.strip() != owner.strip():
-        return False
-    return remote_path_allowed(path)
+    return len(logins) == 1 and logins[0].strip() == owner.strip()
 
 
 class TailnetGate:
@@ -58,8 +34,8 @@ class TailnetGate:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
-        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
-        if allows(headers.get("host"), scope["path"], headers.get(LOGIN_HEADER), self.owner):
+        logins = [v.decode("latin-1") for k, v in scope["headers"] if k.lower() == LOGIN_HEADER]
+        if allows(logins, self.owner):
             await self.app(scope, receive, send)
             return
         if scope["type"] == "websocket":

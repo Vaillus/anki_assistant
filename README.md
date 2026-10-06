@@ -31,27 +31,33 @@ Create, Move, Delete, Skip. Details in [`specs/review.md`](specs/review.md).
 The phone app (`/m`) reviews one deck on the iPhone, offline, and replays the answers into
 Anki at the next sync. Details in [`specs/mobile.md`](specs/mobile.md).
 
-The server stays bound to `127.0.0.1`; [Tailscale](https://tailscale.com) exposes it over
-HTTPS on your tailnet (offline caching on the phone requires HTTPS):
+`uv run anki-web` also serves the phone app alone on a second port, `5071` (the **phone
+port**), both bound to `127.0.0.1`. [Tailscale](https://tailscale.com) exposes the phone
+port over HTTPS on your tailnet (offline caching on the phone requires HTTPS):
 
 ```bash
-tailscale serve --bg 5070    # https://<mac-name>.<tailnet>.ts.net -> localhost:5070
+tailscale serve --bg 5071    # https://<mac-name>.<tailnet>.ts.net -> localhost:5071
 tailscale serve status       # check it
 tailscale serve reset        # stop exposing it
 ```
 
+> **Never `tailscale serve` port 5070.** The main app has no login and writes to Anki; your
+> tailnet may be shared. Only the phone port checks who is asking.
+
 Then open `https://<mac-name>.<tailnet>.ts.net/m` on the phone and add it to the home screen.
+On the Mac, `http://localhost:5070/m` shows the same page, without the check.
 
 Settings, in `.env`:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MOBILE_OWNER_LOGIN` | unset | Your Tailscale login (e.g. `you@example.com`). Requests from the tailnet are refused unless their `Tailscale-User-Login` is this login; unset refuses them all. |
+| `MOBILE_OWNER_LOGIN` | unset | Your Tailscale login (e.g. `you@example.com`). Every request to the phone port is refused (`403`) unless its `Tailscale-User-Login` is this login; unset refuses them all. |
+| `MOBILE_PORT` | `5071` | The phone port. |
 | `MOBILE_DECK` | `courant` | The deck the phone reviews (sub-decks included). |
 | `ANKI_ROLLOVER_HOUR` | `4` | Anki's "next day starts at" hour, to count Anki days. |
 
-From the tailnet only `/m`, `/static/` and `/api/mobile/` are reachable; the rest of the app
-answers `403`. Answers given on the phone are appended to `review_log.jsonl` (gitignored).
+The phone port serves only `/m`, the page's static files and `/api/mobile/`; anything else
+is `404`. Answers given on the phone are appended to `review_log.jsonl` (gitignored).
 
 ## Desktop launcher
 

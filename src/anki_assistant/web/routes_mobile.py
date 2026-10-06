@@ -1,6 +1,7 @@
 """/api/mobile routes: the phone app's batch, sync and media. Spec: specs/mobile.md#api.
 Also the phone page itself under /m: the page, its manifest and its service worker
-(specs/mobile.md#phone-page).
+(specs/mobile.md#phone-page), and the shell files the phone port serves under /static
+(specs/mobile.md#tailnet-gate).
 
 A thin HTTP shell over `mobile.py`. The deck, rollover hour and log files are read from
 `app.state` (set by `create_app` from the environment).
@@ -14,8 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, model_validator
 
@@ -27,6 +28,9 @@ from anki_assistant.web.errors import anki_errors
 router = APIRouter(prefix="/mobile")
 #: The phone page, mounted at the root (not under /api).
 page_router = APIRouter()
+#: The page's shell files under /static, for the phone app (the main app mounts all of
+#: /static instead).
+shell_static_router = APIRouter()
 
 WEB = Path(__file__).parent
 STATIC = WEB / "static"
@@ -110,7 +114,7 @@ def post_sync(request: Request, body: SyncBody) -> mobile.SyncResult:
 
 @router.get("/media/{filename}")
 def get_media(request: Request, filename: str) -> Response:
-    """The main app's media route, under the prefix the tailnet gate lets through."""
+    """The main app's media route, under the prefix the phone port serves."""
     return routes_review.get_media(request, filename)
 
 
@@ -171,3 +175,11 @@ def mobile_service_worker() -> Response:
     body = head + (TEMPLATES / "mobile-sw.js").read_text(encoding="utf-8")
     headers = {"Service-Worker-Allowed": "/m", "Cache-Control": "no-cache"}
     return Response(content=body, media_type="text/javascript", headers=headers)
+
+
+@shell_static_router.get("/static/{name}")
+def shell_static(name: str) -> FileResponse:
+    """One of the page's shell files; any other name is 404."""
+    if name not in SHELL_STATIC:
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(STATIC / name)

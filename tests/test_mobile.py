@@ -605,6 +605,7 @@ def test_review_log_entries(anki: FakeAnki, log: MobileLog) -> None:
             "synced_at": ms(NOW),
             "status": "applied",
             "reason": None,
+            "was_new": False,
         },
         {
             "action_id": "2",
@@ -615,8 +616,75 @@ def test_review_log_entries(anki: FakeAnki, log: MobileLog) -> None:
             "synced_at": ms(NOW),
             "status": "dropped",
             "reason": "card_missing",
+            "was_new": None,
         },
     ]
+
+
+def test_review_log_records_was_new_before_replay(anki: FakeAnki, log: MobileLog) -> None:
+    new = anki.add(queue=0, due=3)
+    run(anki, [answer("n", new, NOW - timedelta(days=1))], log)
+    assert anki.cards[new]["type"] != 0  # the replay graduated it
+    assert log.reviews()[0]["was_new"] is True
+
+
+# ------------------------------------------------------------- late replays
+
+YESTERDAY = NOW - timedelta(days=1)
+
+
+def entry(cid: int, answered: datetime, **extra: Any) -> dict[str, Any]:
+    base = {
+        "card_id": cid,
+        "answered_at": ms(answered),
+        "synced_at": ms(NOW - timedelta(hours=1)),
+        "status": "applied",
+        "was_new": False,
+    }
+    return base | extra
+
+
+def test_late_replays_counts_earlier_day_answers_synced_today() -> None:
+    reviews = [
+        entry(1, YESTERDAY),
+        entry(1, YESTERDAY - timedelta(days=1)),  # same card twice: once
+        entry(2, YESTERDAY, was_new=True),
+        entry(3, YESTERDAY - timedelta(days=1), was_new=True),
+        entry(3, YESTERDAY, was_new=False),  # new at its first replay: stays new
+        {k: v for k, v in entry(4, YESTERDAY).items() if k != "was_new"},  # old line: review
+        entry(5, NOW - timedelta(hours=2)),  # answered today: Anki counts it rightly
+        entry(6, YESTERDAY, synced_at=ms(YESTERDAY)),  # synced on an earlier day
+        entry(7, YESTERDAY, status="dropped"),  # never reached Anki
+        entry(8, datetime(2026, 10, 6, 2, 0)),  # 02:00 is still yesterday's Anki day
+    ]
+    late = mobile.late_replays(reviews, 4, date(2026, 10, 6))
+    assert (late.review, late.new) == (3, 2)
+
+
+def test_sync_adds_late_replays_to_today_quota(anki: FakeAnki, log: MobileLog) -> None:
+    reviewed = [anki.add(rel_due=-3) for _ in range(3)]
+    fresh = anki.add(queue=0, due=1)
+    for _ in range(4):
+        anki.add(rel_due=-2)  # backlog still due today
+    for i in range(3):
+        anki.add(queue=0, due=10 + i)
+    # After the replays Anki says nearly nothing is left today.
+    anki.stats = {"review_count": 1, "new_count": 0, "learn_count": 0}
+    actions = [answer(f"r{i}", c, NOW - timedelta(days=2)) for i, c in enumerate(reviewed)]
+    actions.append(answer("n", fresh, NOW - timedelta(days=1)))
+    batch = run(anki, actions, log).batch
+    assert (batch.quota[0].review, batch.quota[0].new) == (4, 1)
+    day0 = [c.kind for c in batch.cards if c.day == 0]
+    assert day0.count("new") == 1
+
+
+def test_late_replays_capped_by_per_day_never_below_stats(anki: FakeAnki, log: MobileLog) -> None:
+    anki.config = {"new": {"perDay": 1}, "rev": {"perDay": 3}}
+    cards = [anki.add() for _ in range(4)]
+    anki.stats = {"review_count": 2, "new_count": 2, "learn_count": 0}
+    actions = [answer(str(i), c, YESTERDAY) for i, c in enumerate(cards)]
+    batch = run(anki, actions, log).batch
+    assert (batch.quota[0].review, batch.quota[0].new) == (3, 2)
 
 
 def test_log_survives_a_truncated_line(log: MobileLog) -> None:
@@ -675,6 +743,22 @@ def test_route_sync(http: TestClient, anki: FakeAnki, log: MobileLog) -> None:
     assert body["dropped"] == [{"id": "f1", "reason": "card_missing"}]
     assert body["batch"]["deck"] == DECK
     assert log.reviews()[0]["time_ms"] == 900
+
+
+def test_route_batch_later_same_day_keeps_late_replays(
+    http: TestClient, anki: FakeAnki, log: MobileLog
+) -> None:
+    now = datetime.now()
+    synced = ms(now)
+    answered = ms(now - timedelta(days=2))
+    log.review_log.write_text(
+        json.dumps(
+            {"card_id": 1, "answered_at": answered, "synced_at": synced, "status": "applied"}
+        )
+        + "\n"
+    )
+    anki.stats = {"review_count": 0, "new_count": 5, "learn_count": 0}
+    assert http.get("/api/mobile/batch").json()["quota"][0] == {"review": 1, "new": 5}
 
 
 @pytest.mark.parametrize(

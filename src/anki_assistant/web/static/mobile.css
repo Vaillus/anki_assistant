@@ -71,6 +71,7 @@ body.mobile button {
 .m-notice.danger { background: var(--dangerbg); border-color: var(--danger); }
 .m-notice span { flex: 1; }
 .m-notice button { min-height: 32px; }
+.m-notice[hidden] { display: none; }
 
 /* ---------- card ---------- */
 

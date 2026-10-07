@@ -134,6 +134,8 @@ class NoteSnap:
     flags: dict[int, int]
     #: card id -> scheduling state, for fragment inheritance on split.
     scheduling: dict[int, CardSched] = field(default_factory=dict)
+    #: card id -> ordinal, to tell which cards a note type change leaves orphan.
+    ords: dict[int, int] = field(default_factory=dict)
 
     @property
     def flagged_card_ids(self) -> list[int]:
@@ -276,6 +278,7 @@ def take_snapshot(client: AnkiClient, plan: ApplyPlan) -> Snapshot:
                 )
                 for c in cards
             },
+            ords={c.card_id: c.ord for c in cards},
         )
     return snap
 
@@ -285,6 +288,26 @@ def target_model(card: CardPlan, snap: Snapshot) -> str:
     if card.model:
         return card.model
     return snap.notes[int(card.note_id or 0)].model
+
+
+def orphaned_cards(client: AnkiClient, note: NoteSnap, model: str) -> list[int]:
+    """Card ids of *note* that have no template once it is of type *model* (specs/notes.md).
+
+    A cloze type renders any ordinal, so it orphans nothing.
+    """
+    templates = client.model_templates(model)
+    if any("cloze:" in side for sides in templates.values() for side in sides.values()):
+        return []
+    return [cid for cid, ord_ in note.ords.items() if ord_ >= len(templates)]
+
+
+def _drop_cards(note: NoteSnap, card_ids: list[int]) -> None:
+    """Forget deleted cards so that an undo does not write to them."""
+    note.card_ids = [cid for cid in note.card_ids if cid not in card_ids]
+    for cid in card_ids:
+        note.flags.pop(cid, None)
+        note.scheduling.pop(cid, None)
+        note.ords.pop(cid, None)
 
 
 def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> dict[str, list[str]]:
@@ -426,6 +449,8 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
     deferred = [c for c in edits + defers if c.deferred]
 
     wid_to_note = {c.wid: c.note_id for c in plan.cards if c.note_id}
+    #: note id -> cards its type change leaves orphan.
+    orphans: dict[int, list[int]] = {}
 
     step = ""
     try:
@@ -474,8 +499,11 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
                 fields[REASON_FIELD] = ""
             if new_model != old_model:
                 tags = list(card.tags) if card.tags is not None else list(snap.notes[nid].tags)
+                orphaned = orphaned_cards(client, snap.notes[nid], new_model)
                 client.update_note_model(nid, model=new_model, fields=fields, tags=tags)
                 snap.model_changed.append(nid)
+                if orphaned:
+                    orphans[nid] = orphaned
             else:
                 review.edit(client, nid, fields=fields, tags=card.tags, unflag=False)
             snap.written[nid] = fields
@@ -537,6 +565,15 @@ def apply(client: AnkiClient, store: SourceStore, plan: ApplyPlan) -> tuple[Appl
         report.resolved = []
         report.deferred = []
         report.moved = []
+
+    if report.ok and orphans:
+        try:
+            client.check_database()
+        except Exception as exc:  # noqa: BLE001 — the notes are written; report, keep ok
+            report.errors.append(f"deleting orphan cards (run Check Database in Anki): {exc}")
+        else:
+            for nid, card_ids in orphans.items():
+                _drop_cards(snap.notes[nid], card_ids)
 
     report.undo_available = report.ok and not snap.deleted
     return report, snap

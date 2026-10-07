@@ -10,6 +10,8 @@ A **card** is what Anki schedules and shows to the learner. Cards are generated 
 
 A **note type** (Anki calls it "model") decides which fields a note has, how many cards it produces, and what those cards look like (front template, back template, CSS). The set of fields is fixed by the note type — every note of the same type has exactly the same field names in the same order.
 
+An **orphan card** is a card whose ordinal (`ord`) has no template in its note's type. Changing a note's type does not touch its cards, so a Cloze note with `c1`–`c3` turned Basic keeps its cards of ord 1 and 2, and Basic has a single template. Anki cannot render an orphan, and AnkiConnect refuses a whole `cardsInfo` read when one of the requested cards is an orphan (« missing template »). Reads skip orphans: when a batch read fails, the cards are read one by one and the ones that fail are left out, so a note with an orphan still shows its other cards. Only Anki's Check Database deletes orphans ([workspace.md § What is written](./workspace.md#what-is-written)).
+
 ## The review unit is the note
 
 The app reviews notes, not cards. A note is **flagged** when any of its cards carries a flag; resolving a note clears the flag on all its cards. Flag colours carry no meaning — any flag means "to review."

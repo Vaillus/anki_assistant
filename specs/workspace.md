@@ -143,7 +143,7 @@ A draft note is created. An existing note's card becomes one action — deleted 
 | Card | Anki writes | Flag |
 |---|---|---|
 | Draft note (fragment, created) | `addNote` in its deck (parent's deck for a fragment, current deck otherwise), with the version's note type and tags; anchors written to `sources.json`; a fragment's cards receive the inherited scheduling state ([Split](#split)). Deferred: `Back Extra` is the comment in the same `addNote` | — (new notes are unflagged), unless deferred: red on every card |
-| Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the note type changed | cleared |
+| Existing, edited | `updateNote` with the shown version's complete fields (and tags if changed); `updateNoteModel` when the note type changed, then orphan cleanup when the change left [orphan cards](./notes.md#note-card-note-type) | cleared |
 | Existing, kept | none | cleared |
 | Existing, deferred (alone or with an edit) | `updateNote` setting `Back Extra` to the comment (in the edit's `updateNote` when there is one; skipped and reported when the note type has no such field) | **kept**; a red flag is set on every card of a note that carried none |
 | Existing, moved (combined with edit, keep or defer) | `changeDeck` on all Anki cards; anchors re-checked against the destination corpus ([sources.md § Anchors](./sources.md#anchors)) | cleared (unless deferred) |
@@ -151,13 +151,15 @@ A draft note is created. An existing note's card becomes one action — deleted 
 
 An edit sends every field of the shown version, not just the ones that changed; the server writes them as-is.
 
+**Orphan cleanup.** A type change leaves orphan cards when the new type is not a cloze type and has fewer templates than the note had cards — the usual case is a Cloze note turned Basic. After a successful write that left any, the server asks Anki to run Check Database (`guiCheckDatabase`, the only way AnkiConnect can delete a card). It runs in Anki's window, over the whole collection, and returns before it finishes; Anki shows its own result dialog. The orphans' review history is lost. A cleanup that fails is reported without rolling anything back.
+
 **« clear Back Extra »** (header toggle, on by default): every edited note that had a user comment gets `Back Extra` set to empty. Kept notes are not touched. Deferred notes are exempt: their `Back Extra` is the comment, whatever the toggle says.
 
 Whether a note *has* `Back Extra` — for the comment as for the clearing — is decided by the note type the edit writes, not the one the note had: an edit that turns a Cloze note into a Basic note neither clears nor sets a field Basic does not have, and a comment that cannot be written is reported.
 
 ### Order and rollback
 
-Writes proceed in a safe order: validate, snapshot, creates, edits, moves, unflag/flag, deletes. Before touching Anki the plan is validated — shape, field names against the version's note type (case-corrected or refused) — and nothing is written on failure. Deletion comes last so that a failure anywhere before it has lost no content.
+Writes proceed in a safe order: validate, snapshot, creates, edits, moves, unflag/flag, deletes, orphan cleanup. Before touching Anki the plan is validated — shape, field names against the version's note type (case-corrected or refused) — and nothing is written on failure. Deletion comes last so that a failure anywhere before it has lost no content.
 
 On the first failure the write stops and a rollback is attempted: created notes deleted, edited notes restored from the snapshot, moved notes moved back. The workspace stays open; draft cards that were created and not rolled back gain their `note_id` so a retry does not duplicate them.
 
@@ -168,6 +170,8 @@ The server keeps the state of every existing note before the write for the **las
 Undo is **unavailable** when the validation deleted notes — a deleted note cannot be recreated with its history. It is **refused** when a note no longer holds the values the validation wrote, which means it was edited since; nothing is written then.
 
 Undo restores: created notes deleted, edited notes' fields, tags and flags put back, moves reverted. The notes come back in the queue.
+
+Undo of a type change whose orphans were cleaned up gives the note back its old type; Anki generates the missing cards again, as new cards.
 
 ## API
 

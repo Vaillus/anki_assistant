@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient, AnkiConnectError
+from anki_assistant.client import AnkiActionError, AnkiClient, AnkiConnectError
 from anki_assistant.sources import Source, SourceStore
 from anki_assistant.web.render import render_field
 from anki_assistant.web.routes_review import router
@@ -177,6 +177,17 @@ class FakeAnkiClient(AnkiClient):
     def _do_findNotes(self, query: str) -> list[int]:
         return sorted({self.cards[cid]["note"] for cid in self._do_findCards(query)})
 
+    def is_orphan(self, card_id: int) -> bool:
+        """No template for the card's ordinal: every model but Cloze has a single template."""
+        card = self.cards[card_id]
+        return self.notes[card["note"]]["modelName"] != "Cloze" and card["ord"] >= 1
+
+    def _do_guiCheckDatabase(self) -> bool:
+        for cid in [cid for cid in self.cards if self.is_orphan(cid)]:
+            card = self.cards.pop(cid)
+            self.notes[card["note"]]["cards"].remove(cid)
+        return True
+
     def _do_cardsInfo(self, cards: list[int]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for cid in cards:
@@ -184,6 +195,8 @@ class FakeAnkiClient(AnkiClient):
             if card is None:
                 out.append({})
                 continue
+            if self.is_orphan(cid):
+                raise AnkiActionError("cardsInfo: missing template")
             note = self.notes[card["note"]]
             out.append(
                 {**card, "modelName": note["modelName"], "fields": _api_fields(note["fields"])}
@@ -263,7 +276,7 @@ class FakeAnkiClient(AnkiClient):
 
     def _do_modelTemplates(self, modelName: str) -> dict[str, dict[str, str]]:
         first, last = self.models[modelName][0], self.models[modelName][-1]
-        front = "{{" + first + "}}"
+        front = "{{" + ("cloze:" if modelName == "Cloze" else "") + first + "}}"
         return {modelName: {"Front": front, "Back": front + "<br>{{" + last + "}}"}}
 
     def _do_modelStyling(self, modelName: str) -> dict[str, str]:
@@ -937,11 +950,20 @@ def test_edit_reflag_puts_a_flag_back_for_undo(anki: FakeAnkiClient):
     assert view.flagged and view.fields["Text"] == "x"
 
 
+def test_client_cards_info_skips_orphan_cards(anki: FakeAnkiClient):
+    """An orphan makes AnkiConnect refuse the batch: the cards are read one by one instead."""
+    note_id = anki.add("d", flags=(0, 1, 0))
+    anki.notes[note_id]["modelName"] = "Basic"  # a type change leaves ords 1 and 2 orphan
+    first, *_ = anki.notes[note_id]["cards"]
+    cards = anki.cards_info(anki.notes[note_id]["cards"])
+    assert [c.card_id for c in cards] == [first]
+
+
 def test_client_note_type_reads_fields_templates_and_css(anki: FakeAnkiClient):
     note_type = anki.note_type("Cloze")
     assert note_type.name == "Cloze"
     assert note_type.fields == ["Text", "Back Extra"]
     assert note_type.templates == {
-        "Cloze": {"Front": "{{Text}}", "Back": "{{Text}}<br>{{Back Extra}}"}
+        "Cloze": {"Front": "{{cloze:Text}}", "Back": "{{cloze:Text}}<br>{{Back Extra}}"}
     }
     assert ".card" in note_type.css

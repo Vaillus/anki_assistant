@@ -39,6 +39,7 @@ from anki_assistant.chat import (
 )
 from anki_assistant.client import AnkiClient
 from anki_assistant.sources import SourceStore
+from anki_assistant.web.errors import anki_errors
 
 router = APIRouter()
 
@@ -272,7 +273,8 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
             raise KeyError(f"unknown source: {source_id}")
         return source, source.text(store.vault)
 
-    note_types = anki.model_names_and_fields()
+    with anki_errors(anki):  # 503 while Anki desktop holds the collection
+        note_types = anki.model_names_and_fields()
     guidelines = load_guidelines()
 
     async def body_stream() -> AsyncIterator[str]:

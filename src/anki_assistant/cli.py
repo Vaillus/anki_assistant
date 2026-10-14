@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import subprocess
 import sys
 import textwrap
 from collections.abc import Iterable
+from pathlib import Path
 
-from anki_assistant.client import AnkiClient, AnkiConnectError
+from dotenv import find_dotenv, load_dotenv, set_key
+
+from anki_assistant.client import AnkiClient, AnkiError, anki_client_from_env
 from anki_assistant.models import Card, Note
 from anki_assistant.sources import SourceStore
 
@@ -202,9 +206,28 @@ def cmd_source(client: AnkiClient, args: argparse.Namespace) -> None:
         print(f"\n{len(unmapped)} deck(s) without a source")
 
 
+def cmd_login(client: AnkiClient, args: argparse.Namespace) -> None:
+    """Log in to AnkiWeb once and keep the key it returns in .env (never the password)."""
+    username = args.username or input("AnkiWeb email: ")
+    password = getpass.getpass("AnkiWeb password: ")
+    auth = client.login(username, password)
+    # the .env that `main`'s load_dotenv() reads: found upward from this package, not the cwd
+    env = find_dotenv() or str(Path(__file__).resolve().parents[2] / ".env")
+    Path(env).touch(exist_ok=True)
+    set_key(env, "ANKIWEB_HKEY", auth.hkey, quote_mode="never")
+    if auth.endpoint:
+        set_key(env, "ANKIWEB_ENDPOINT", auth.endpoint, quote_mode="never")
+    print(f"AnkiWeb key saved in {env}: the app now syncs with AnkiWeb after its writes.")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="anki", description="Talk to Anki through AnkiConnect.")
-    p.add_argument("--url", default="http://localhost:8765", help="AnkiConnect URL")
+    p = argparse.ArgumentParser(
+        prog="anki", description="Read and edit Anki's collection (Anki desktop closed)."
+    )
+    p.add_argument(
+        "--collection",
+        help="the collection.anki2 file (default: $ANKI_COLLECTION, else the only profile's)",
+    )
     p.add_argument("--json", action="store_true", help="machine-readable output")
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -270,6 +293,10 @@ def build_parser() -> argparse.ArgumentParser:
     q = ssub.add_parser("missing", help="decks with no source, and broken targets")
     q.set_defaults(func=cmd_source)
 
+    sp = sub.add_parser("login", help="log in to AnkiWeb and keep its key in .env")
+    sp.add_argument("username", nargs="?", help="AnkiWeb email (asked when left out)")
+    sp.set_defaults(func=cmd_login)
+
     sp = sub.add_parser("tag", help="add (or --remove) tags on notes")
     sp.add_argument("note_ids", type=int, nargs="+")
     sp.add_argument("-t", "--tags", nargs="+", required=True)
@@ -279,12 +306,37 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+SYNC_WAIT_SECONDS = 10
+
+
+def _wait_for_sync(client: AnkiClient) -> None:
+    """A command that wrote has no server to run its AnkiWeb sync after it: wait for it a few
+    seconds, and say on stderr when it failed or is still running at exit."""
+    synced = client.wait_for_sync(SYNC_WAIT_SECONDS)
+    if not synced:
+        print(
+            f"AnkiWeb sync still running after {SYNC_WAIT_SECONDS} s: exiting; "
+            "the changes go with the next sync",
+            file=sys.stderr,
+        )
+    elif client.last_sync is not None and not client.last_sync.ok:
+        print(f"{client.last_sync.message}; the changes go with the next sync", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    client = AnkiClient(url=args.url)
+    load_dotenv()
+    client = anki_client_from_env(collection=args.collection)
     try:
-        args.func(client, args)
-    except AnkiConnectError as exc:
+        if args.func is cmd_source:  # sources.json only: Anki's file is not needed
+            args.func(client, args)
+        else:
+            try:
+                with client.action():
+                    args.func(client, args)
+            finally:
+                _wait_for_sync(client)
+    except AnkiError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except BrokenPipeError:  # output piped into `head` & co

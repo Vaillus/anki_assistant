@@ -9,17 +9,20 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 from urllib.parse import unquote
 
-from anki_assistant.client import AnkiClient, _quote
+from anki_assistant.client import AnkiClient, Outcomes, _quote
 from anki_assistant.models import Card
 from anki_assistant.web.render import render_field
+
+_log = logging.getLogger(__name__)
 
 WINDOW_DAYS = 3
 DEFAULT_DECK = "courant"
@@ -53,42 +56,13 @@ def window(today: date) -> list[date]:
 
 # ---------------------------------------------------------- precomputed outcomes
 
-_DAY = 86_400.0
-_YEAR = 365 * _DAY
-# Anki's own time-span constants (rslib scheduler/timespan.rs): a month is a year / 12.
-_UNIT_SECONDS: dict[str, float] = {
-    "s": 1.0,
-    "m": 60.0,
-    "min": 60.0,
-    "h": 3_600.0,
-    "d": _DAY,
-    "j": _DAY,
-    "mo": _YEAR / 12,
-    "y": _YEAR,
-    "a": _YEAR,
-}
-# Unicode isolation / direction marks Anki wraps numbers in, and spaces.
+# Unicode isolation / direction marks Anki wraps numbers in.
 _MARKS = re.compile("[⁦-⁩‎‏]")
-_SPACES = re.compile(r"[\s  ]+")
-_SPAN = re.compile(r"^[<>]?(\d+(?:[.,]\d+)?)([^\d.,]+)$")
 
 
 def clean_label(label: str) -> str:
     """An interval display string with Anki's isolation marks removed: `<⁨10⁩m` → `<10m`."""
     return _MARKS.sub("", label).strip()
-
-
-def parse_interval(label: str) -> int | None:
-    """Seconds for one of Anki's interval display strings (`<⁨10⁩m`, `⁨3,9⁩mo`, `1.5y`…),
-    or None when the string is not understood."""
-    text = _SPACES.sub("", clean_label(label)).lower()
-    m = _SPAN.match(text)
-    if not m:
-        return None
-    unit = _UNIT_SECONDS.get(m.group(2))
-    if unit is None:
-        return None
-    return round(float(m.group(1).replace(",", ".")) * unit)
 
 
 # ----------------------------------------------------------- question / answer
@@ -179,6 +153,10 @@ class BatchCard:
     #: Seconds Anki would give for again, hard, good, easy (None when not understood).
     outcomes: list[int | None]
     outcome_labels: list[str]
+    #: The Anki day the card is due (review and interday learning cards), else None.
+    due_day: str | None = None
+    #: The card's deck's place in Anki's deck list, among the batch's decks.
+    deck_rank: int = 0
 
 
 @dataclass
@@ -190,45 +168,20 @@ class Batch:
     quota: list[DayQuota]
     cards: list[BatchCard] = field(default_factory=list)
     media: list[str] = field(default_factory=list)
+    #: The preset's review order: `deck` (deck first, then due day) or `due` (due day).
+    review_order: Literal["due", "deck"] = "due"
 
 
-def late_replays(reviews: Iterable[dict[str, Any]], rollover_hour: int, today: date) -> DayQuota:
-    """Cards whose answer, given on an earlier Anki day, a sync replayed today: Anki counts
-    them as done today. Each card once; new when one of its entries says it was new."""
-    was_new: dict[int, bool] = {}
-    for entry in reviews:
-        if entry.get("status") != "applied":
-            continue
-        try:
-            card_id = int(entry["card_id"])
-            synced = anki_day(from_epoch_ms(int(entry["synced_at"])), rollover_hour)
-            answered = anki_day(from_epoch_ms(int(entry["answered_at"])), rollover_hour)
-        except (KeyError, TypeError, ValueError):
-            continue
-        if synced != today or answered >= today:
-            continue
-        was_new[card_id] = was_new.get(card_id, False) or entry.get("was_new") is True
-    new = sum(was_new.values())
-    return DayQuota(review=len(was_new) - new, new=new)
-
-
-def daily_quotas(anki: AnkiClient, deck: str, late: DayQuota | None = None) -> list[DayQuota]:
-    """Day 0: what `getDeckStats` says is left today, plus the late replays (capped by the deck
-    options' limits, never below the stats). Later days: the deck options' limits."""
-    stats = anki.deck_stats(deck)
-    today = next((s for s in stats.values() if s.get("name") == deck), None)
-    if today is None:
-        today = next(iter(stats.values()), {})
-    config = anki.deck_config(deck) or {}
-    per_review = int((config.get("rev") or {}).get("perDay", 0))
-    per_new = int((config.get("new") or {}).get("perDay", 0))
-    left_review, left_new = int(today.get("review_count", 0)), int(today.get("new_count", 0))
-    late = late or DayQuota(review=0, new=0)
+def daily_quotas(anki: AnkiClient, deck: str) -> list[DayQuota]:
+    """Day 0: the effective deck limit minus what Anki counts as studied today. Later days:
+    the effective deck limit without its "Today only" value."""
+    limits = anki.deck_limits(deck)
     first = DayQuota(
-        review=max(left_review, min(left_review + late.review, per_review)),
-        new=max(left_new, min(left_new + late.new, per_new)),
+        review=max(0, limits.review - limits.studied_review),
+        new=max(0, limits.new - limits.studied_new),
     )
-    return [first] + [DayQuota(review=per_review, new=per_new) for _ in range(WINDOW_DAYS - 1)]
+    later = [DayQuota(review=limits.review_default, new=limits.new_default)]
+    return [first] + [DayQuota(review=q.review, new=q.new) for q in later * (WINDOW_DAYS - 1)]
 
 
 @dataclass
@@ -254,7 +207,12 @@ def order_settings(config: dict[str, Any]) -> OrderSettings:
 
 def _deck_order(card: Card) -> tuple[str, ...]:
     """Anki's deck-list order: parent before children, siblings by name, case ignored."""
-    return tuple(part.casefold() for part in card.deck_name.split("::"))
+    return deck_list_key(card.deck_name)
+
+
+def deck_list_key(deck: str) -> tuple[str, ...]:
+    """Sort key of a deck name in Anki's deck list."""
+    return tuple(part.casefold() for part in deck.split("::"))
 
 
 _T = TypeVar("_T")
@@ -284,14 +242,17 @@ def _select(
 ) -> list[tuple[Card, int, CardKind]]:
     """The batch's cards, each with its day and kind, in batch order (specs/mobile.md#batch).
 
-    Each day's cards are gathered in the order settings' order, then cut at the quota.
+    Day 0 is Anki's study queue of the deck. Days 1 and 2 are rebuilt: each day's cards not
+    taken by an earlier day are gathered in the order settings' order, then cut at the quota.
     Without order settings, every option keeps its default.
     """
     order = order or OrderSettings()
+    queue = anki.study_queue(deck)
     scope = f"deck:{_quote(deck)} -is:suspended -is:buried"
-    due_by = [set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in range(WINDOW_DAYS)]
+    due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in (1, 2)}
     new_ids = anki.find_card_ids(f"{scope} is:new")
-    infos = {c.card_id: c for c in anki.cards_info(sorted(due_by[-1] | set(new_ids)))}
+    wanted = {q.card_id for q in queue} | due_by[WINDOW_DAYS - 1] | set(new_ids)
+    infos = {c.card_id: c for c in anki.cards_info(sorted(wanted))}
 
     def new_key(c: Card) -> tuple[Any, ...]:
         return (_deck_order(c), c.due, c.ord) if order.new_by_deck else (c.due, c.ord)
@@ -304,17 +265,23 @@ def _select(
 
     new_cards = sorted((infos[c] for c in new_ids if c in infos), key=new_key)
 
-    taken: set[int] = set()
-    chosen: list[tuple[Card, int, CardKind]] = []
-    for day, quota in enumerate(quotas):
+    chosen: list[tuple[Card, int, CardKind]] = [
+        (infos[q.card_id], 0, cast(CardKind, q.kind)) for q in queue if q.card_id in infos
+    ]
+    taken = {card.card_id for card, _, _ in chosen}
+    for day in range(1, len(quotas)):
+        quota = quotas[day]
         pool = [infos[c] for c in due_by[day] if c in infos and c not in taken]
         intraday = sorted((c for c in pool if c.queue == 1), key=lambda c: c.due)
         interday = sorted((c for c in pool if c.queue == 3), key=interday_key)
         reviews = sorted((c for c in pool if c.queue == 2), key=review_key)
         news = [c for c in new_cards if c.card_id not in taken]
+        # Interday learning takes the review quota before the reviews (Anki's v3 scheduler).
+        room = max(quota.review, 0)
         intra: list[tuple[Card, CardKind]] = [(c, "learn") for c in intraday]
-        learning: list[tuple[Card, CardKind]] = [(c, "learn") for c in interday]
-        main: list[tuple[Card, CardKind]] = [(c, "review") for c in reviews[: max(quota.review, 0)]]
+        learning: list[tuple[Card, CardKind]] = [(c, "learn") for c in interday[:room]]
+        room -= len(learning)
+        main: list[tuple[Card, CardKind]] = [(c, "review") for c in reviews[:room]]
         fresh: list[tuple[Card, CardKind]] = [(c, "new") for c in news[: max(quota.new, 0)]]
         main = intersperse(main, learning) if order.mix_interday else learning + main
         main = intersperse(main, fresh) if order.mix_new else main + fresh
@@ -325,12 +292,7 @@ def _select(
 
 
 def _templates(anki: AnkiClient, models: Iterable[str]) -> dict[str, dict[str, dict[str, str]]]:
-    names = sorted(set(models))
-    raw = anki.invoke_multi([("modelTemplates", {"modelName": n}) for n in names])
-    return {
-        name: {card: dict(sides or {}) for card, sides in (tm or {}).items()}
-        for name, tm in zip(names, raw, strict=True)
-    }
+    return {name: anki.model_templates(name) for name in sorted(set(models))}
 
 
 def batch_card(
@@ -338,6 +300,7 @@ def batch_card(
     day: int,
     kind: CardKind,
     templates: dict[str, dict[str, str]],
+    outcomes: Outcomes | None = None,
 ) -> BatchCard:
     question, answer, cloze = card_sides(card, templates)
     media: list[str] = []
@@ -350,7 +313,9 @@ def batch_card(
             out.append(FieldView(name=name, html=rendered))
         return out
 
-    labels = [clean_label(s) for s in card.next_reviews[:4]]
+    seconds = list(outcomes.seconds[:4]) if outcomes else []
+    seconds += [None] * (4 - len(seconds))
+    labels = [clean_label(s) for s in outcomes.labels[:4]] if outcomes else []
     labels += [""] * (4 - len(labels))
     return BatchCard(
         card_id=card.card_id,
@@ -365,25 +330,32 @@ def batch_card(
         answer=views(answer),
         flag=card.flag,
         media=media,
-        outcomes=[parse_interval(s) if s else None for s in labels],
+        outcomes=seconds,
         outcome_labels=labels,
     )
 
 
-def build_batch(
-    anki: AnkiClient,
-    deck: str,
-    rollover_hour: int,
-    now: datetime,
-    log: MobileLog | None = None,
-) -> Batch:
-    """The cards the phone downloads: one daily quota per Anki day of the window. The review
-    log, when given, adds today's late replays back to day 0's quota."""
-    late = late_replays(log.reviews(), rollover_hour, anki_day(now, rollover_hour)) if log else None
-    quotas = daily_quotas(anki, deck, late)
-    chosen = _select(anki, deck, quotas, order_settings(anki.deck_config(deck) or {}))
+def build_batch(anki: AnkiClient, deck: str, rollover_hour: int, now: datetime) -> Batch:
+    """The cards the phone downloads: Anki's study queue for day 0, one daily quota for each
+    later Anki day of the window."""
+    quotas = daily_quotas(anki, deck)
+    order = order_settings(anki.deck_config(deck) or {})
+    chosen = _select(anki, deck, quotas, order)
     templates = _templates(anki, (c.model_name for c, _, _ in chosen))
-    cards = [batch_card(c, day, kind, templates.get(c.model_name, {})) for c, day, kind in chosen]
+    outcomes = anki.answer_outcomes([c.card_id for c, _, _ in chosen])
+    today = anki_day(now, rollover_hour)
+    anki_today = anki.today() if chosen else 0
+    ranks = {
+        name: rank
+        for rank, name in enumerate(sorted({c.deck_name for c, _, _ in chosen}, key=deck_list_key))
+    }
+    cards = []
+    for c, day, kind in chosen:
+        bc = batch_card(c, day, kind, templates.get(c.model_name, {}), outcomes.get(c.card_id))
+        if c.queue in (2, 3):  # due counted in days
+            bc.due_day = (today + timedelta(days=c.due - anki_today)).isoformat()
+        bc.deck_rank = ranks[c.deck_name]
+        cards.append(bc)
     media: list[str] = []
     for bc in cards:
         media.extend(n for n in bc.media if n not in media)
@@ -391,10 +363,11 @@ def build_batch(
         deck=deck,
         generated_at=round(now.timestamp() * 1000),
         rollover_hour=rollover_hour,
-        days=[d.isoformat() for d in window(anki_day(now, rollover_hour))],
+        days=[d.isoformat() for d in window(today)],
         quota=list(quotas),
         cards=cards,
         media=media,
+        review_order="deck" if order.review_by_deck else "due",
     )
 
 
@@ -428,7 +401,8 @@ class SyncResult:
 
 class MobileLog:
     """The two append-only files a sync writes: the review log (every answer given on the
-    phone) and the processed-actions log (every action id already handled, for idempotency)."""
+    phone) and the processed-actions log (every action id already handled, for idempotency,
+    with what each late replay counted, and each give-back done: specs/mobile.md#sync)."""
 
     def __init__(
         self, review_log: Path = DEFAULT_REVIEW_LOG, actions_log: Path = DEFAULT_ACTIONS_LOG
@@ -440,26 +414,46 @@ class MobileLog:
         """Action id -> None when it was applied, its `Dropped` record when it was dropped."""
         out: dict[str, Dropped | None] = {}
         for entry in _read_lines(self.actions_log):
-            action_id = str(entry.get("id", ""))
+            if "id" not in entry:
+                continue  # a give-back line
+            action_id = str(entry["id"])
             if entry.get("status") == "dropped":
                 out[action_id] = Dropped(id=action_id, reason=str(entry.get("reason")))
             else:
                 out[action_id] = None
         return out
 
-    def record(self, action: Action, dropped: Dropped | None, synced_at: int) -> None:
-        _append(
-            self.actions_log,
-            {
-                "id": action.id,
-                "kind": action.kind,
-                "card_id": action.card_id,
-                "at": action.at,
-                "status": "dropped" if dropped else "applied",
-                "reason": dropped.reason if dropped else None,
-                "synced_at": synced_at,
-            },
-        )
+    def record(
+        self,
+        action: Action,
+        dropped: Dropped | None,
+        synced_at: int,
+        late: LateCount | None = None,
+    ) -> None:
+        entry: dict[str, Any] = {
+            "id": action.id,
+            "kind": action.kind,
+            "card_id": action.card_id,
+            "at": action.at,
+            "status": "dropped" if dropped else "applied",
+            "reason": dropped.reason if dropped else None,
+            "synced_at": synced_at,
+        }
+        if late is not None:
+            entry["late"] = late.as_json()
+        _append(self.actions_log, entry)
+
+    def record_give_back(self, given: LateCount, synced_at: int) -> None:
+        """One deck's studied-today counter lowered by `extend_limits`."""
+        _append(self.actions_log, {"give_back": given.as_json(), "synced_at": synced_at})
+
+    def owed(self, day: date) -> dict[str, DayQuota]:
+        """What the late replays recorded on Anki day `day` counted, per deck of their cards."""
+        return _sum_by_deck(_late_counts(self.actions_log, "late", day))
+
+    def given_back(self, day: date) -> dict[str, DayQuota]:
+        """What was already given back on Anki day `day`, per deck lowered."""
+        return _sum_by_deck(_late_counts(self.actions_log, "give_back", day))
 
     def log_answer(
         self, action: Action, dropped: Dropped | None, synced_at: int, was_new: bool | None
@@ -481,6 +475,46 @@ class MobileLog:
 
     def reviews(self) -> list[dict[str, Any]]:
         return list(_read_lines(self.review_log))
+
+
+@dataclass
+class LateCount:
+    """Reviews and new cards counted as studied on Anki day `day` in `deck`'s counter."""
+
+    day: date
+    deck: str
+    review: int
+    new: int
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "day": self.day.isoformat(),
+            "deck": self.deck,
+            "review": self.review,
+            "new": self.new,
+        }
+
+
+def _late_counts(path: Path, key: str, day: date) -> Iterable[LateCount]:
+    for entry in _read_lines(path):
+        raw = entry.get(key)
+        if not isinstance(raw, dict) or raw.get("day") != day.isoformat():
+            continue
+        yield LateCount(
+            day=day,
+            deck=str(raw.get("deck")),
+            review=int(raw.get("review") or 0),
+            new=int(raw.get("new") or 0),
+        )
+
+
+def _sum_by_deck(counts: Iterable[LateCount]) -> dict[str, DayQuota]:
+    out: dict[str, DayQuota] = {}
+    for count in counts:
+        total = out.setdefault(count.deck, DayQuota(review=0, new=0))
+        total.review += count.review
+        total.new += count.new
+    return out
 
 
 def _read_lines(path: Path) -> Iterable[dict[str, Any]]:
@@ -530,19 +564,27 @@ def redate_days(interval: int, answered: date, today: date) -> int | None:
     return max(0, interval - lag)
 
 
-def _apply(anki: AnkiClient, action: Action, rollover_hour: int, today: date) -> None:
+def _apply(anki: AnkiClient, action: Action, rollover_hour: int, today: date) -> DayQuota | None:
+    """Apply one action. For a late replay (an answer from an earlier Anki day), returns what
+    Anki counted as studied today for it."""
     cid = action.card_id
     if action.kind == "answer":
-        anki.answer_cards([(cid, action.ease or 0)])
         answered = anki_day(from_epoch_ms(action.at), rollover_hour)
-        if answered >= today:
-            return  # answered today: Anki's due date already counts from today
-        replayed = anki.cards_info([cid])
-        if replayed and replayed[0].queue == 2:  # learning cards keep Anki's delays
-            days = redate_days(replayed[0].interval, answered, today)
+        replayed = anki.answer_card(
+            cid,
+            action.ease or 0,
+            answered_at=action.at,
+            time_ms=action.time_ms,
+            days_late=max(0, (today - answered).days),
+        )
+        if answered >= today or replayed is None:
+            return None  # answered today: Anki's due date already counts from today
+        if replayed.card.queue == 2:  # learning cards keep Anki's delays
+            days = redate_days(replayed.card.interval, answered, today)
             if days is not None:
                 anki.set_due_date([cid], str(days))
-    elif action.kind == "flag":
+        return DayQuota(review=replayed.counted_review, new=replayed.counted_new)
+    if action.kind == "flag":
         anki.set_flag([cid], ORANGE)
     elif action.kind == "unflag":
         anki.set_flag([cid], 0)
@@ -550,6 +592,51 @@ def _apply(anki: AnkiClient, action: Action, rollover_hour: int, today: date) ->
         anki.suspend([cid])
     else:
         raise ValueError(f"unknown action kind {action.kind!r}")
+    return None
+
+
+def _parents(deck: str) -> list[str]:
+    parts = deck.split("::")
+    return ["::".join(parts[:cut]) for cut in range(1, len(parts))]
+
+
+def limits_to_give_back(
+    counted: Mapping[str, DayQuota], all_parent_limits: bool
+) -> dict[str, DayQuota]:
+    """Per deck, how much to lower its studied-today counter after late replays (`counted`:
+    what Anki counted, per deck of the replayed cards). A replay raises the counter of its
+    deck and of every parent deck; `extend_limits` lowers the parents along with the deck only
+    when Anki applies all parent limits, so otherwise each parent gets its own sum."""
+    if all_parent_limits:
+        return {deck: q for deck, q in counted.items() if q.review or q.new}
+    out: dict[str, DayQuota] = {}
+    for deck, quota in counted.items():
+        for name in [deck, *_parents(deck)]:
+            total = out.setdefault(name, DayQuota(review=0, new=0))
+            total.review += quota.review
+            total.new += quota.new
+    return {deck: q for deck, q in out.items() if q.review or q.new}
+
+
+def give_back_limits(
+    anki: AnkiClient,
+    owed: Mapping[str, DayQuota],
+    given: Mapping[str, DayQuota],
+    on_given: Callable[[str, DayQuota], None],
+) -> None:
+    """Lower the studied-today counters the late replays raised, so that a late replay does
+    not count against today's limits (specs/mobile.md#sync). `owed`: what today's late
+    replays counted, per deck of their cards; `given`: what earlier give-backs already
+    lowered, per deck; `on_given` records each deck lowered, right after it is."""
+    if not any(q.review or q.new for q in owed.values()):
+        return
+    for deck, quota in limits_to_give_back(owed, anki.apply_all_parent_limits()).items():
+        done = given.get(deck, DayQuota(review=0, new=0))
+        rest = DayQuota(review=max(0, quota.review - done.review), new=max(0, quota.new - done.new))
+        if not rest.review and not rest.new:
+            continue
+        anki.extend_limits(deck, new=rest.new, review=rest.review)
+        on_given(deck, rest)
 
 
 def apply_actions(
@@ -564,8 +651,8 @@ def apply_actions(
     """Apply pending actions oldest first, each at most once across syncs.
 
     Returns the applied ids and the dropped ones; every distinct id sent is in exactly one.
-    An AnkiConnect failure propagates: what was processed before it is recorded, so a retry
-    skips it.
+    An Anki failure propagates: what was processed before it is recorded, so a retry
+    skips it, and gives back what today's recorded late replays still owe.
     """
     for action in actions:
         if action.kind == "answer" and action.ease not in (1, 2, 3, 4):
@@ -577,29 +664,49 @@ def apply_actions(
     dropped: list[Dropped] = []
     seen: set[str] = set()
     ordered = sorted(enumerate(actions), key=lambda pair: (pair[1].at, pair[0]))
-    for _, action in ordered:
-        if action.id in seen:
-            continue
-        seen.add(action.id)
-        if action.id in done:
-            previous = done[action.id]
-            if previous is None:
+
+    def give_back() -> None:
+        def record(deck: str, quota: DayQuota) -> None:
+            log.record_give_back(LateCount(today, deck, quota.review, quota.new), synced_at)
+
+        give_back_limits(anki, log.owed(today), log.given_back(today), record)
+
+    try:
+        for _, action in ordered:
+            if action.id in seen:
+                continue
+            seen.add(action.id)
+            if action.id in done:
+                previous = done[action.id]
+                if previous is None:
+                    applied.append(action.id)
+                else:
+                    dropped.append(previous)
+                continue
+            cards = anki.cards_info([action.card_id])
+            card = cards[0] if cards else None
+            reason = drop_reason(card, deck)
+            record = Dropped(id=action.id, reason=reason) if reason else None
+            counted: LateCount | None = None
+            if record is None and card is not None:
+                late = _apply(anki, action, rollover_hour, today)
+                if late is not None:  # never negative: a give-back must not raise a counter
+                    review, new = max(0, late.review), max(0, late.new)
+                    if review or new:
+                        counted = LateCount(today, card.deck_name, review, new)
                 applied.append(action.id)
-            else:
-                dropped.append(previous)
-            continue
-        cards = anki.cards_info([action.card_id])
-        card = cards[0] if cards else None
-        reason = drop_reason(card, deck)
-        record = Dropped(id=action.id, reason=reason) if reason else None
-        if record is None:
-            _apply(anki, action, rollover_hour, today)
-            applied.append(action.id)
-        else:
-            dropped.append(record)
-        log.record(action, record, synced_at)
-        if action.kind == "answer":
-            log.log_answer(action, record, synced_at, card.type == 0 if card else None)
+            elif record is not None:
+                dropped.append(record)
+            log.record(action, record, synced_at, counted)
+            if action.kind == "answer":
+                log.log_answer(action, record, synced_at, card.type == 0 if card else None)
+    except BaseException:
+        try:  # the room is given back even when the sync stops midway
+            give_back()
+        except Exception as exc:  # noqa: BLE001 — the first failure is the one to report
+            _log.warning("giving back today's limits failed: %s", exc)
+        raise
+    give_back()
     return applied, dropped
 
 
@@ -616,5 +723,5 @@ def sync(
     applied, dropped = apply_actions(
         anki, actions, log, deck=deck, rollover_hour=rollover_hour, now=now()
     )
-    batch = build_batch(anki, deck, rollover_hour, now(), log)
+    batch = build_batch(anki, deck, rollover_hour, now())
     return SyncResult(applied=applied, dropped=dropped, batch=batch)

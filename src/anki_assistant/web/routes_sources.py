@@ -192,7 +192,7 @@ def _to_view(store: SourceStore, source: Source) -> SourceView:
 
 
 def _anchors_response(store: SourceStore, anki: AnkiClient, note_id: int) -> AnchorsResponse:
-    with _anki_errors():
+    with _anki_errors(anki):
         deck = review.get_note(anki, note_id).deck
     in_corpus = {source.id for source in store.corpus(deck)}
     return AnchorsResponse(
@@ -209,7 +209,7 @@ def _orphans(store: SourceStore, anki: AnkiClient) -> list[int]:
     ids = store.anchored_note_ids()
     if not ids:
         return []
-    with _anki_errors():
+    with _anki_errors(anki):
         known = {note.note_id for note in anki.notes_info(ids)}
     return [note_id for note_id in ids if note_id not in known]
 

@@ -1,9 +1,10 @@
 /* Thin wrappers over the HTTP API. Every call rejects with an Error carrying the
-   server's `detail` (502 AnkiConnect / 503 unreachable / 404 unknown note). */
+   server's `detail` (502 Anki refused / 503 collection held by Anki desktop / 404 unknown note). */
 
 "use strict";
 
 async function jfetch(url, opts) {
+  if (url !== SYNC_STATUS_URL) afterRequest(opts && opts.method);
   let res;
   try {
     res = await fetch(url, opts);
@@ -34,6 +35,38 @@ function jsonBody(method, body) {
 }
 
 const q = encodeURIComponent;
+
+/* ---------- sync status (specs/00-overview.md#ankiweb-sync) ----------
+   The app's AnkiWeb sync runs after a write has replied, so its outcome is asked for
+   separately: after each request (coalesced), and again a few seconds after one that can
+   write, once its sync has had time to end. A failed sync shows as a notice at the top. */
+
+const SYNC_STATUS_URL = "/api/anki/sync";
+const SYNC_SETTLE_MS = 5000;
+let syncPollTimer = null;
+
+function afterRequest(method) {
+  pollSyncStatus(300);
+  if (method && method !== "GET") setTimeout(() => pollSyncStatus(0), SYNC_SETTLE_MS);
+}
+
+function pollSyncStatus(delay) {
+  clearTimeout(syncPollTimer);
+  syncPollTimer = setTimeout(refreshSyncStatus, delay);
+}
+
+async function refreshSyncStatus() {
+  let status;
+  try {
+    status = await jfetch(SYNC_STATUS_URL);
+  } catch (e) {
+    return; // the server is down: the request that failed already says so
+  }
+  const notice = status && !status.ok ? status.message || "AnkiWeb sync failed" : null;
+  if (notice === S.syncNotice) return;
+  S.syncNotice = notice;
+  draw();
+}
 
 const API = {
   // review

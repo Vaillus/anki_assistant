@@ -1,7 +1,7 @@
 """Tests for workspace.py and web/routes_workspace.py. Spec: specs/workspace.md.
 
-Driven by the in-memory `FakeAnkiClient` of test_review.py, extended here with failure
-injection (`fail_on`: raise on the n-th call of an action) to exercise the rollback paths.
+Driven by a temporary collection (tests/anki_fixture.py), with failure injection (`fail_on`:
+raise on the n-th call of an `AnkiClient` operation) to exercise the rollback paths.
 """
 
 from __future__ import annotations
@@ -14,35 +14,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from anki_assistant import workspace
-from anki_assistant.client import AnkiConnectError
 from anki_assistant.review import NoteNotFound
 from anki_assistant.sources import Source, SourceStore
 from anki_assistant.web import routes_review, routes_workspace
 from anki_assistant.workspace import ApplyPlan, CardPlan
-from tests.test_review import FakeAnkiClient
+from tests.anki_fixture import TempAnki
 
 # --------------------------------------------------------------------------- fixtures
 
 
-class FailingAnki(FakeAnkiClient):
-    """Raises on the n-th invocation of a given action; every other call goes through."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.fail_on: dict[str, int] = {}
-        self._seen: dict[str, int] = {}
-
-    def invoke(self, action: str, **params: Any) -> Any:
-        self._seen[action] = self._seen.get(action, 0) + 1
-        if self.fail_on.get(action) == self._seen[action]:
-            self.calls.append(action)
-            raise AnkiConnectError(f"{action}: boom")
-        return super().invoke(action, **params)
-
-
 @pytest.fixture
-def anki() -> FailingAnki:
-    return FailingAnki()
+def anki(tmp_path: Path) -> TempAnki:
+    return TempAnki(tmp_path)
 
 
 @pytest.fixture
@@ -101,22 +84,22 @@ def test_validate_reports_every_shape_problem() -> None:
     assert workspace.validate(ApplyPlan(deck="d", cards=[edit("w1", 1, "x")])) == []
 
 
-def test_apply_refuses_a_malformed_plan_before_touching_anki(anki: FailingAnki, store: SourceStore):
+def test_apply_refuses_a_malformed_plan_before_touching_anki(anki: TempAnki, store: SourceStore):
     with pytest.raises(workspace.PlanError):
         workspace.apply(anki, store, ApplyPlan(deck="d"))
     assert anki.calls == []
 
 
-def test_apply_refuses_an_unknown_note_before_writing(anki: FailingAnki, store: SourceStore):
+def test_apply_refuses_an_unknown_note_before_writing(anki: TempAnki, store: SourceStore):
     with pytest.raises(NoteNotFound):
         workspace.apply(anki, store, ApplyPlan(deck="d", cards=[edit("w1", 999, "x")]))
-    assert "updateNote" not in anki.calls
+    assert "update_note" not in anki.calls
 
 
 # ---------------------------------------------------------------------------- apply
 
 
-def test_apply_writes_every_kind_of_card_in_the_safe_order(anki: FailingAnki, store: SourceStore):
+def test_apply_writes_every_kind_of_card_in_the_safe_order(anki: TempAnki, store: SourceStore):
     edited = anki.add("d", fields={"Text": "old", "Back Extra": "why"}, flags=(2, 0))
     kept = anki.add("d", fields={"Text": "fine", "Back Extra": "hm"}, flags=(1,))
     gone = anki.add("d", fields={"Text": "bye"}, flags=(3,))
@@ -153,13 +136,15 @@ def test_apply_writes_every_kind_of_card_in_the_safe_order(anki: FailingAnki, st
     assert report.undo_available is False, "the validation deleted a note"
     assert snap.deleted == [gone]
 
-    order = [a for a in anki.calls if a in ("addNote", "updateNote", "changeDeck", "deleteNotes")]
-    assert order == ["addNote", "updateNote", "changeDeck", "deleteNotes"]
-    unflag_at = anki.calls.index("setSpecificValueOfCard")
-    assert anki.calls.index("changeDeck") < unflag_at < anki.calls.index("deleteNotes")
+    order = [
+        a for a in anki.calls if a in ("add_note", "update_note", "change_deck", "delete_notes")
+    ]
+    assert order == ["add_note", "update_note", "change_deck", "delete_notes"]
+    unflag_at = anki.calls.index("set_flag")
+    assert anki.calls.index("change_deck") < unflag_at < anki.calls.index("delete_notes")
 
 
-def test_clear_reason_off_keeps_back_extra(anki: FailingAnki, store: SourceStore):
+def test_clear_reason_off_keeps_back_extra(anki: TempAnki, store: SourceStore):
     nid = anki.add("d", fields={"Text": "old", "Back Extra": "why"}, flags=(1,))
     plan = ApplyPlan(deck="d", clear_reason=False, cards=[edit("w1", nid, "new")])
     report, _ = workspace.apply(anki, store, plan)
@@ -168,7 +153,7 @@ def test_clear_reason_off_keeps_back_extra(anki: FailingAnki, store: SourceStore
 
 
 def test_edit_without_tags_leaves_them_and_edit_only_plan_allows_undo(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     nid = anki.add("d", fields={"Text": "old", "Back Extra": ""}, tags=["k"], flags=(1,))
     report, _ = workspace.apply(anki, store, ApplyPlan(deck="d", cards=[edit("w1", nid, "new")]))
@@ -176,9 +161,7 @@ def test_edit_without_tags_leaves_them_and_edit_only_plan_allows_undo(
     assert report.undo_available is True
 
 
-def test_move_drops_anchors_absent_from_the_destination_corpus(
-    anki: FailingAnki, store: SourceStore
-):
+def test_move_drops_anchors_absent_from_the_destination_corpus(anki: TempAnki, store: SourceStore):
     nid = anki.add("d", flags=(1,))
     store.set_anchors(nid, ["s1"])
     plan = ApplyPlan(deck="d", cards=[CardPlan(wid="w1", action="keep", note_id=nid, move_to="e")])
@@ -189,7 +172,7 @@ def test_move_drops_anchors_absent_from_the_destination_corpus(
 # --------------------------------------------------------------------- scheduling
 
 
-def test_fragment_inherits_scheduling_from_parent(anki: FailingAnki, store: SourceStore):
+def test_fragment_inherits_scheduling_from_parent(anki: TempAnki, store: SourceStore):
     parent = anki.add(
         "d",
         fields={"Text": "old {{c1::x}} {{c2::y}}", "Back Extra": "r"},
@@ -225,7 +208,7 @@ def test_fragment_inherits_scheduling_from_parent(anki: FailingAnki, store: Sour
     assert card["left"] == 1001
 
 
-def test_non_fragment_draft_does_not_inherit_scheduling(anki: FailingAnki, store: SourceStore):
+def test_non_fragment_draft_does_not_inherit_scheduling(anki: TempAnki, store: SourceStore):
     parent = anki.add(
         "d",
         fields={"Text": "old", "Back Extra": "r"},
@@ -247,7 +230,7 @@ def test_non_fragment_draft_does_not_inherit_scheduling(anki: FailingAnki, store
     assert anki.cards[new_card_id]["interval"] == 0, "non-fragment stays new"
 
 
-def test_fragment_of_new_note_skips_scheduling(anki: FailingAnki, store: SourceStore):
+def test_fragment_of_new_note_skips_scheduling(anki: TempAnki, store: SourceStore):
     parent = anki.add("d", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
     plan = ApplyPlan(
         deck="d",
@@ -266,10 +249,10 @@ def test_fragment_of_new_note_skips_scheduling(anki: FailingAnki, store: SourceS
 # ------------------------------------------------------------------------- rollback
 
 
-def test_failure_in_the_middle_rolls_back_creates_and_edits(anki: FailingAnki, store: SourceStore):
+def test_failure_in_the_middle_rolls_back_creates_and_edits(anki: TempAnki, store: SourceStore):
     a = anki.add("d", fields={"Text": "a0", "Back Extra": "r"}, tags=["x"], flags=(2,))
     b = anki.add("d", fields={"Text": "b0", "Back Extra": ""}, flags=(0,))
-    anki.fail_on["updateNote"] = 2  # the second edit fails
+    anki.fail_on["update_note"] = 2  # the second edit fails
     plan = ApplyPlan(
         deck="d",
         cards=[create("w0", "frag", deck="d"), edit("w1", a, "a1"), edit("w2", b, "b1")],
@@ -290,12 +273,12 @@ def test_failure_in_the_middle_rolls_back_creates_and_edits(anki: FailingAnki, s
 
 
 def test_failure_at_the_delete_step_restores_flags_moves_and_fields(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     a = anki.add("d", fields={"Text": "a0", "Back Extra": ""}, flags=(4, 0, 1))
     m = anki.add("d", flags=(1,))
     gone = anki.add("d", flags=(1,))
-    anki.fail_on["deleteNotes"] = 1
+    anki.fail_on["delete_notes"] = 1
     plan = ApplyPlan(
         deck="d",
         cards=[
@@ -316,11 +299,11 @@ def test_failure_at_the_delete_step_restores_flags_moves_and_fields(
 
 
 def test_rollback_failure_is_reported_and_created_notes_keep_their_ids(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     a = anki.add("d", flags=(1,))
-    anki.fail_on["changeDeck"] = 1
-    anki.fail_on["deleteNotes"] = 1  # the rollback of the create fails too
+    anki.fail_on["change_deck"] = 1
+    anki.fail_on["delete_notes"] = 1  # the rollback of the create fails too
     plan = ApplyPlan(
         deck="d",
         cards=[create("w0", "frag", deck="d"), edit("w1", a, "a1", move_to="e")],
@@ -336,7 +319,7 @@ def test_rollback_failure_is_reported_and_created_notes_keep_their_ids(
 # ------------------------------------------------------------------------------ undo
 
 
-def test_undo_reverts_a_successful_validation(anki: FailingAnki, store: SourceStore):
+def test_undo_reverts_a_successful_validation(anki: TempAnki, store: SourceStore):
     a = anki.add("d", fields={"Text": "a0", "Back Extra": "r"}, tags=["x"], flags=(2, 0))
     m = anki.add("d", flags=(1,))
     store.set_anchors(m, ["s1"])
@@ -365,9 +348,7 @@ def test_undo_reverts_a_successful_validation(anki: FailingAnki, store: SourceSt
     assert store.anchors(m) == ["s1"], "anchors re-checked against the deck moved back to"
 
 
-def test_undo_is_refused_without_a_snapshot_or_after_a_deletion(
-    anki: FailingAnki, store: SourceStore
-):
+def test_undo_is_refused_without_a_snapshot_or_after_a_deletion(anki: TempAnki, store: SourceStore):
     with pytest.raises(workspace.NothingToUndo):
         workspace.undo(anki, store, None)
     gone = anki.add("d", flags=(1,))
@@ -379,27 +360,27 @@ def test_undo_is_refused_without_a_snapshot_or_after_a_deletion(
 
 
 def test_undo_is_refused_when_a_note_changed_since_and_writes_nothing(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     a = anki.add("d", fields={"Text": "a0", "Back Extra": ""}, flags=(1,))
     b = anki.add("d", fields={"Text": "b0", "Back Extra": ""}, flags=(1,))
     _, snap = workspace.apply(
         anki, store, ApplyPlan(deck="d", cards=[edit("w1", a, "a1"), edit("w2", b, "b1")])
     )
-    anki.notes[b]["fields"]["Text"] = "edited in Anki meanwhile"
+    anki.set_fields(b, Text="edited in Anki meanwhile")
     before = len(anki.calls)
     with pytest.raises(workspace.ModifiedSince) as exc:
         workspace.undo(anki, store, snap)
     assert f"#{b}" in str(exc.value)
     assert anki.notes[a]["fields"]["Text"] == "a1", "nothing written"
-    assert anki.calls[before:] == ["notesInfo"]
+    assert anki.calls[before:] == ["notes_info"]
 
 
 # ------------------------------------------------------------------------------- api
 
 
 @pytest.fixture
-def api(anki: FailingAnki, store: SourceStore) -> TestClient:
+def api(anki: TempAnki, store: SourceStore) -> TestClient:
     app = FastAPI()
     app.include_router(routes_review.router, prefix="/api")
     app.include_router(routes_workspace.router, prefix="/api")
@@ -409,7 +390,7 @@ def api(anki: FailingAnki, store: SourceStore) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_api_apply_then_undo(api: TestClient, anki: FailingAnki):
+def test_api_apply_then_undo(api: TestClient, anki: TempAnki):
     a = anki.add("d", fields={"Text": "a0", "Back Extra": "r"}, flags=(1,))
     assert api.get("/api/workspace/undo").json() == {"available": False}
     assert api.post("/api/workspace/undo").status_code == 409
@@ -457,9 +438,9 @@ def test_api_apply_maps_plan_and_note_errors(api: TestClient):
     assert res.status_code == 404
 
 
-def test_api_failed_apply_is_a_200_report_and_keeps_no_snapshot(api: TestClient, anki: FailingAnki):
+def test_api_failed_apply_is_a_200_report_and_keeps_no_snapshot(api: TestClient, anki: TempAnki):
     a = anki.add("d", flags=(1,))
-    anki.fail_on["updateNote"] = 1
+    anki.fail_on["update_note"] = 1
     res = api.post(
         "/api/workspace/apply",
         json={
@@ -473,7 +454,7 @@ def test_api_failed_apply_is_a_200_report_and_keeps_no_snapshot(api: TestClient,
     assert api.get("/api/workspace/undo").json() == {"available": False}
 
 
-def test_api_lookup_returns_known_notes_in_order(api: TestClient, anki: FailingAnki):
+def test_api_lookup_returns_known_notes_in_order(api: TestClient, anki: TempAnki):
     a = anki.add("d", fields={"Text": "a"})
     b = anki.add("d", fields={"Text": "b"})
     res = api.post("/api/notes/lookup", json={"note_ids": [b, 999, a]})
@@ -485,8 +466,8 @@ def test_api_lookup_returns_known_notes_in_order(api: TestClient, anki: FailingA
 # ----------------------------------------------------------------------- model change
 
 
-def test_apply_changes_note_type_via_update_note_model(anki: FailingAnki, store: SourceStore):
-    """An edit with a different `model` calls updateNoteModel and the note becomes Basic."""
+def test_apply_changes_note_type_via_update_note_model(anki: TempAnki, store: SourceStore):
+    """An edit with a different `model` calls update_note_model and the note becomes Basic."""
     nid = anki.add(
         "d", model="Cloze", fields={"Text": "old {{c1::x}}", "Back Extra": "r"}, flags=(1, 0)
     )
@@ -508,17 +489,17 @@ def test_apply_changes_note_type_via_update_note_model(anki: FailingAnki, store:
     assert anki.notes[nid]["modelName"] == "Basic"
     assert anki.notes[nid]["fields"] == {"Front": "question", "Back": "answer"}
     assert anki.notes[nid]["tags"] == ["t"]
-    assert "updateNoteModel" in anki.calls
-    assert "updateNote" not in anki.calls, "updateNoteModel replaces the normal edit"
+    assert "update_note_model" in anki.calls
+    assert "update_note" not in anki.calls, "updateNoteModel replaces the normal edit"
     assert nid in snap.model_changed
     assert report.undo_available is True
 
 
-def test_apply_model_change_rollback_restores_old_type(anki: FailingAnki, store: SourceStore):
+def test_apply_model_change_rollback_restores_old_type(anki: TempAnki, store: SourceStore):
     """On failure after a model change, rollback swaps back to the old type."""
     a = anki.add("d", model="Cloze", fields={"Text": "x", "Back Extra": ""}, flags=(1,))
     b = anki.add("d", model="Cloze", fields={"Text": "y", "Back Extra": ""}, flags=(1,))
-    anki.fail_on["updateNoteModel"] = 2  # the second model change fails
+    anki.fail_on["update_note_model"] = 2  # the second model change fails
     plan = ApplyPlan(
         deck="d",
         cards=[
@@ -546,7 +527,7 @@ def test_apply_model_change_rollback_restores_old_type(anki: FailingAnki, store:
     assert anki.notes[a]["fields"] == {"Text": "x", "Back Extra": ""}
 
 
-def test_undo_reverts_model_change(anki: FailingAnki, store: SourceStore):
+def test_undo_reverts_model_change(anki: TempAnki, store: SourceStore):
     """Undo after a model change restores the original note type."""
     nid = anki.add("d", model="Cloze", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
     plan = ApplyPlan(
@@ -571,7 +552,7 @@ def test_undo_reverts_model_change(anki: FailingAnki, store: SourceStore):
     assert anki.notes[nid]["fields"] == {"Text": "old", "Back Extra": ""}
 
 
-def test_model_change_decides_back_extra_from_the_new_type(anki: FailingAnki, store: SourceStore):
+def test_model_change_decides_back_extra_from_the_new_type(anki: TempAnki, store: SourceStore):
     """A Cloze turned Basic has no `Back Extra`: « vider Back Extra » writes nothing there, and
     a deferred comment is reported as not written instead of being sent to a missing field."""
     cleared = anki.add(
@@ -609,12 +590,10 @@ def test_model_change_decides_back_extra_from_the_new_type(anki: FailingAnki, st
     assert anki.notes[cleared]["fields"] == {"Front": "q", "Back": "a"}
     assert report.errors == ["w2: no Back Extra field, comment not written"]
     assert report.deferred == [deferred] and anki.flags_of(deferred) == [1]
-    assert "modelFieldNames" in anki.calls
+    assert "model_field_names" in anki.calls
 
 
-def test_check_fields_returns_the_fields_of_every_type_written(
-    anki: FailingAnki, store: SourceStore
-):
+def test_check_fields_returns_the_fields_of_every_type_written(anki: TempAnki, store: SourceStore):
     nid = anki.add("d", model="Cloze", fields={"Text": "t", "Back Extra": ""}, flags=(1,))
     plan = ApplyPlan(
         deck="d",
@@ -629,7 +608,7 @@ def test_check_fields_returns_the_fields_of_every_type_written(
     assert workspace.check_fields(anki, ApplyPlan(deck="d"), workspace.Snapshot()) == {}
 
 
-def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, store: SourceStore):
+def test_apply_edit_without_model_change_uses_normal_path(anki: TempAnki, store: SourceStore):
     """An edit where `model` matches the note's current type goes through `review.edit`."""
     nid = anki.add("d", model="Cloze", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
     plan = ApplyPlan(
@@ -646,8 +625,8 @@ def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, sto
     )
     report, snap = workspace.apply(anki, store, plan)
     assert report.ok
-    assert "updateNoteModel" not in anki.calls
-    assert "updateNote" in anki.calls
+    assert "update_note_model" not in anki.calls
+    assert "update_note" in anki.calls
     assert nid not in snap.model_changed
 
 
@@ -655,7 +634,7 @@ def test_apply_edit_without_model_change_uses_normal_path(anki: FailingAnki, sto
 
 
 def test_field_names_are_fitted_to_the_note_type_case_insensitively(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     nid = anki.add("d", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
     plan = ApplyPlan(
@@ -685,7 +664,7 @@ def test_field_names_are_fitted_to_the_note_type_case_insensitively(
 
 
 def test_an_unknown_field_or_an_empty_first_field_is_refused_before_writing(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     nid = anki.add("d", fields={"Text": "old", "Back Extra": ""}, flags=(1,))
     bad = ApplyPlan(
@@ -702,7 +681,7 @@ def test_an_unknown_field_or_an_empty_first_field_is_refused_before_writing(
     assert "w1: field « Recto » unknown for type Basic (fields: Front, Back)" in message
     assert "w2: the first field (Front) is empty" in message
     assert "w3: field « Extra » unknown for type Cloze" in message
-    assert "addNote" not in anki.calls and "updateNote" not in anki.calls
+    assert "add_note" not in anki.calls and "update_note" not in anki.calls
     assert anki.notes[nid]["fields"] == {"Text": "old", "Back Extra": ""}
 
 
@@ -735,9 +714,7 @@ def test_validate_rejects_a_deferral_or_comment_in_the_wrong_place() -> None:
     assert workspace.validate(bad) == ["w1: a comment accompanies a non-deferred note"]
 
 
-def test_a_deferred_draft_is_created_flagged_with_its_comment(
-    anki: FailingAnki, store: SourceStore
-):
+def test_a_deferred_draft_is_created_flagged_with_its_comment(anki: TempAnki, store: SourceStore):
     plan = ApplyPlan(
         deck="d",
         cards=[
@@ -759,7 +736,7 @@ def test_a_deferred_draft_is_created_flagged_with_its_comment(
 
 
 def test_a_deferred_draft_gets_its_comment_even_when_the_proposal_left_the_field_out(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     plan = ApplyPlan(
         deck="d",
@@ -791,9 +768,9 @@ def test_a_deferred_draft_gets_its_comment_even_when_the_proposal_left_the_field
     assert report.errors == ["w2: no Back Extra field, comment not written"]
 
 
-def test_a_failure_after_a_deferred_draft_deletes_it(anki: FailingAnki, store: SourceStore):
+def test_a_failure_after_a_deferred_draft_deletes_it(anki: TempAnki, store: SourceStore):
     gone = anki.add("d", flags=(1,))
-    anki.fail_on["deleteNotes"] = 1
+    anki.fail_on["delete_notes"] = 1
     plan = ApplyPlan(
         deck="d",
         cards=[
@@ -813,7 +790,7 @@ def test_comment_html_escapes_and_keeps_line_breaks() -> None:
 
 
 def test_defer_keeps_the_flag_writes_the_comment_and_flags_an_unflagged_note(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     root = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(2, 0))
     pulled = anki.add("d", fields={"Text": "u", "Back Extra": ""}, flags=(0, 0))
@@ -842,7 +819,7 @@ def test_defer_keeps_the_flag_writes_the_comment_and_flags_an_unflagged_note(
 
 
 def test_edit_with_defer_writes_the_comment_instead_of_clearing_and_keeps_the_flag(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     nid = anki.add("d", fields={"Text": "old", "Back Extra": "why"}, flags=(3,))
     plan = ApplyPlan(
@@ -857,19 +834,19 @@ def test_edit_with_defer_writes_the_comment_instead_of_clearing_and_keeps_the_fl
     assert report.deferred == [nid] and report.resolved == []
 
 
-def test_defer_without_comment_leaves_back_extra_alone(anki: FailingAnki, store: SourceStore):
+def test_defer_without_comment_leaves_back_extra_alone(anki: TempAnki, store: SourceStore):
     nid = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(1,))
     report, snap = workspace.apply(
         anki, store, ApplyPlan(deck="d", cards=[CardPlan(wid="w1", action="defer", note_id=nid)])
     )
     assert report.ok and report.deferred == [nid]
     assert anki.notes[nid]["fields"]["Back Extra"] == "why"
-    assert "updateNote" not in anki.calls
+    assert "update_note" not in anki.calls
     assert snap.written == {}
 
 
 def test_defer_on_a_note_type_without_back_extra_flags_and_reports(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     nid = anki.add("d", model="Basic", fields={"Front": "f", "Back": "b"}, flags=(0,))
     plan = ApplyPlan(deck="d", cards=[CardPlan(wid="w1", action="defer", note_id=nid, comment="x")])
@@ -880,7 +857,7 @@ def test_defer_on_a_note_type_without_back_extra_flags_and_reports(
     assert report.errors == ["w1: no Back Extra field, comment not written"]
 
 
-def test_undo_reverts_a_deferral(anki: FailingAnki, store: SourceStore):
+def test_undo_reverts_a_deferral(anki: TempAnki, store: SourceStore):
     root = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(2, 0))
     pulled = anki.add("d", fields={"Text": "u", "Back Extra": ""}, flags=(0,))
     plan = ApplyPlan(
@@ -902,11 +879,11 @@ def test_undo_reverts_a_deferral(anki: FailingAnki, store: SourceStore):
 
 
 def test_failure_after_a_deferral_rolls_its_flag_and_comment_back(
-    anki: FailingAnki, store: SourceStore
+    anki: TempAnki, store: SourceStore
 ):
     pulled = anki.add("d", fields={"Text": "u", "Back Extra": ""}, flags=(0,))
     gone = anki.add("d", flags=(1,))
-    anki.fail_on["deleteNotes"] = 1
+    anki.fail_on["delete_notes"] = 1
     plan = ApplyPlan(
         deck="d",
         cards=[
@@ -922,7 +899,7 @@ def test_failure_after_a_deferral_rolls_its_flag_and_comment_back(
     assert gone in anki.notes
 
 
-def test_api_accepts_a_deferred_plan(api: TestClient, anki: FailingAnki):
+def test_api_accepts_a_deferred_plan(api: TestClient, anki: TempAnki):
     nid = anki.add("d", fields={"Text": "t", "Back Extra": ""}, flags=(0,))
     body = {
         "deck": "d",

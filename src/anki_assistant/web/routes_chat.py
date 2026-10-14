@@ -39,6 +39,7 @@ from anki_assistant.chat import (
 )
 from anki_assistant.client import AnkiClient
 from anki_assistant.sources import SourceStore
+from anki_assistant.web.errors import anki_errors
 
 router = APIRouter()
 
@@ -210,11 +211,20 @@ def read_tools_for(
         source, text = load_source(source_id)
         return format_source(source, text)
 
+    def one_action(tool: ReadTool) -> ReadTool:
+        """One tool call, one action of the holding policy: the file opened once."""
+
+        def run(inp: Mapping[str, Any]) -> str:
+            with anki.action():
+                return tool(inp)
+
+        return run
+
     return {
-        "list_decks": list_decks,
-        "search_notes": search_notes,
-        "get_notes": get_notes,
-        "get_note_type": get_note_type,
+        "list_decks": one_action(list_decks),
+        "search_notes": one_action(search_notes),
+        "get_notes": one_action(get_notes),
+        "get_note_type": one_action(get_note_type),
         "read_source": read_source,
     }
 
@@ -272,7 +282,8 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
             raise KeyError(f"unknown source: {source_id}")
         return source, source.text(store.vault)
 
-    note_types = anki.model_names_and_fields()
+    with anki_errors(anki):  # 503 while Anki desktop holds the collection
+        note_types = anki.model_names_and_fields()
     guidelines = load_guidelines()
 
     async def body_stream() -> AsyncIterator[str]:

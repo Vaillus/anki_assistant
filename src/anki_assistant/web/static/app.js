@@ -479,6 +479,7 @@ async function boot() {
       draw();
     });
   refreshUndoStatus().then(draw);
+  refreshSyncStatus();
 }
 
 boot();

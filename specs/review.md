@@ -30,7 +30,7 @@ Pressing `Entrée` in the input submits; `Échap` cancels and closes the input. 
 
 **Validation.** Before creating, the frontend checks that the name is non-empty and does not match an existing deck name (case-sensitive, against the loaded deck list). On conflict the input shows an inline error ("Ce paquet existe déjà") and stays open.
 
-**Creation.** `POST /api/decks` with `{ "name": "<full deck name>" }`. The server calls AnkiConnect's `createDeck`, which creates intermediate decks if needed. Returns the created deck name. On success the deck tree refreshes and the new deck is selected.
+**Creation.** `POST /api/decks` with `{ "name": "<full deck name>" }`. The server creates the deck, and any intermediate deck it needs. Returns the created deck name. On success the deck tree refreshes and the new deck is selected.
 
 ## Queue (column 2)
 
@@ -84,7 +84,7 @@ The transform guarantees:
 
 ## API
 
-All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note → 404, Anki unreachable → 503. All error bodies are `{ "detail": "<message>" }`.
+All routes are under `/api`. Each request is one action of the [holding policy](./00-overview.md#anki). Errors: Anki refused the operation → 502, unknown note → 404, collection held by Anki desktop → 503 with `Close Anki desktop first`. All error bodies are `{ "detail": "<message>" }`.
 
 | Route | Purpose |
 |---|---|
@@ -103,6 +103,7 @@ All routes are under `/api`. Errors: AnkiConnect failure → 502, unknown note �
 | `DELETE /api/notes/{id}` | Delete a note |
 | `GET /api/models` | All note types and their field names |
 | `GET /api/media/{filename}` | One file from Anki's media folder, with its content type; 404 when missing or when the name has a path separator |
+| `GET /api/anki/sync` | `{ ok, message }` — the [sync status](./00-overview.md#ankiweb-sync) of the app's last AnkiWeb sync; never opens the collection |
 
 The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 

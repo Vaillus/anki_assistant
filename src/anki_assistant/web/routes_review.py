@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient
+from anki_assistant.client import AnkiClient, SyncStatus
 from anki_assistant.review import DeckNotes, DeckSummary, NoteView, PriorityResult, SplitResult
 from anki_assistant.sources import SourceStore
 from anki_assistant.web.errors import anki_errors
@@ -93,7 +93,7 @@ class DecksResponse(BaseModel):
 
 @router.get("/decks")
 def get_decks(request: Request) -> DecksResponse:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         decks = review.list_decks(_anki(request), _store(request))
         pcount = review.priority_count(_anki(request), study_deck=_study_deck(request))
     return DecksResponse(decks=decks, priority_count=pcount)
@@ -101,7 +101,7 @@ def get_decks(request: Request) -> DecksResponse:
 
 @router.post("/decks", status_code=201)
 def create_deck(request: Request, body: CreateDeckBody) -> dict[str, str]:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         try:
             name = review.create_deck(_anki(request), body.name)
         except review.DeckAlreadyExists as exc:
@@ -111,20 +111,20 @@ def create_deck(request: Request, body: CreateDeckBody) -> dict[str, str]:
 
 @router.delete("/decks", status_code=204)
 def delete_deck(request: Request, name: str = Query(...)) -> Response:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         review.delete_deck(_anki(request), name)
     return Response(status_code=204)
 
 
 @router.get("/notes/priority")
 def get_priority_notes(request: Request) -> PriorityResult:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return review.priority_notes(_anki(request), study_deck=_study_deck(request))
 
 
 @router.get("/notes")
 def get_notes(request: Request, deck: str = Query(...)) -> DeckNotes:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return review.list_notes(_anki(request), deck)
 
 
@@ -132,25 +132,25 @@ def get_notes(request: Request, deck: str = Query(...)) -> DeckNotes:
 def lookup_notes(request: Request, body: LookupBody) -> list[NoteView]:
     """Several notes by id, unknown ids dropped, order kept — the workspace materialises its
     cards with it (specs/workspace.md#how-notes-enter)."""
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return review.get_notes(_anki(request), body.note_ids)
 
 
 @router.get("/notes/{note_id}")
 def get_one_note(request: Request, note_id: int) -> NoteView:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return review.get_note(_anki(request), note_id)
 
 
 @router.post("/notes/{note_id}/keep")
 def keep_note(request: Request, note_id: int) -> NoteView:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return review.keep(_anki(request), note_id)
 
 
 @router.patch("/notes/{note_id}")
 def edit_note(request: Request, note_id: int, body: EditBody) -> NoteView:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return review.edit(
             _anki(request),
             note_id,
@@ -165,7 +165,7 @@ def edit_note(request: Request, note_id: int, body: EditBody) -> NoteView:
 def split_note(request: Request, note_id: int, body: SplitBody) -> SplitResult:
     store = _store(request)
     anchors = store.anchors(note_id)
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         result = review.split(
             _anki(request),
             note_id,
@@ -183,7 +183,7 @@ def split_note(request: Request, note_id: int, body: SplitBody) -> SplitResult:
 
 @router.post("/notes")
 def create_note(request: Request, body: CreateBody) -> NoteView:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         view = review.create(
             _anki(request), deck=body.deck, model=body.model, fields=body.fields, tags=body.tags
         )
@@ -198,7 +198,7 @@ def create_note(request: Request, body: CreateBody) -> NoteView:
 @router.post("/notes/{note_id}/move")
 def move_note(request: Request, note_id: int, body: MoveBody) -> NoteView:
     store = _store(request)
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         view = review.move(_anki(request), note_id, body.deck)
     # An anchor survives the move only if its source is in the destination's corpus.
     anchors_after_move(store, note_id, body.deck)
@@ -207,7 +207,7 @@ def move_note(request: Request, note_id: int, body: MoveBody) -> NoteView:
 
 @router.delete("/notes/{note_id}", status_code=204)
 def delete_note(request: Request, note_id: int) -> Response:
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         review.delete(_anki(request), note_id)
     return Response(status_code=204)
 
@@ -215,7 +215,7 @@ def delete_note(request: Request, note_id: int) -> Response:
 @router.get("/models")
 def get_models(request: Request) -> dict[str, list[str]]:
     """Every note type mapped to its field names, for the model pickers in the dialogs."""
-    with _anki_errors():
+    with _anki_errors(_anki(request)):
         return _anki(request).model_names_and_fields()
 
 
@@ -235,3 +235,10 @@ def get_media(request: Request, filename: str) -> Response:
     # opened directly would otherwise execute on the app's origin).
     headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
     return Response(content=data, media_type=media_type, headers=headers)
+
+
+@router.get("/anki/sync")
+def get_sync_status(request: Request) -> SyncStatus:
+    """The sync status of the app's last AnkiWeb sync (specs/00-overview.md#ankiweb-sync),
+    which the main page shows as a notice while it failed. Never opens the collection."""
+    return _anki(request).last_sync or SyncStatus(ok=True, message=None)

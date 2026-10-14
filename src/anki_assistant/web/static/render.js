@@ -9,7 +9,9 @@ function draw() {
   const root = document.getElementById("app");
   if (!root) return;
   const scroll = captureScroll(root);
+  root.classList.toggle("has-notice", !!S.syncNotice);
   root.innerHTML =
+    syncNotice() +
     '<div class="app">' + deckColumn() + queueColumn() + rightColumn() + "</div>" +
     themePicker() + wsOverlay();
   restoreScroll(root, scroll);
@@ -26,6 +28,12 @@ function draw() {
   const log = root.querySelector("#chat-log");
   if (log) log.scrollTop = log.scrollHeight;
   typesetMath();
+}
+
+/* The last AnkiWeb sync failed: a notice across the top until a sync succeeds. */
+function syncNotice() {
+  if (!S.syncNotice) return "";
+  return '<div class="sync-notice" role="status">' + esc(S.syncNotice) + "</div>";
 }
 
 function captureScroll(root) {

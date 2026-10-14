@@ -44,7 +44,7 @@ Claude changes the guidelines only through `propose_edit_guidelines`, when the u
 
 ## Read tools
 
-Claude sees only what the system prompt pushes. Everything else it pulls through read tools. They come in two families: **local** tools (`list_decks`, `search_notes`, `get_notes`, `add_notes`, `get_note_type`, `read_source`) run on the server against Anki or the source store; **web** tools (`web_search`, `web_fetch`, see [Web tools](#web-tools)) run on Anthropic's side. Read tools never write to Anki or the vault; `add_notes` changes what the workspace shows.
+Claude sees only what the system prompt pushes. Everything else it pulls through read tools. They come in two families: **local** tools (`list_decks`, `search_notes`, `get_notes`, `add_notes`, `get_note_type`, `read_source`) run on the server against Anki or the source store; **web** tools (`web_search`, `web_fetch`, see [Web tools](#web-tools)) run on Anthropic's side. Read tools never write to Anki or the vault; `add_notes` changes what the workspace shows. A local tool call that reads Anki is one [action](./00-overview.md#anki) of its own, run off the server's request loop, so a call made while an AnkiWeb sync holds the file waits for it without stalling other requests; while Anki desktop holds the file, Claude gets `Close Anki desktop first` as the tool's error.
 
 | Tool            | Returns                                                                                              |
 | --------------- | ---------------------------------------------------------------------------------------------------- |

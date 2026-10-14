@@ -1,8 +1,8 @@
 """Note-level view of a deck and the decisions that write to Anki. Spec: specs/review.md.
 
 Pure functions over an `AnkiClient` (plus a `SourceStore` for deck source kinds), no FastAPI:
-`web/routes_review.py` is a thin HTTP shell over this module, and the tests drive it with a fake
-client holding an in-memory collection.
+`web/routes_review.py` is a thin HTTP shell over this module, and the tests drive it with a
+client on a temporary collection.
 
 The review unit is the **note**, not the card: a note is flagged when any of its cards carries a
 flag, and resolving a note clears the flag on all of them. Flag colours carry no meaning.
@@ -251,41 +251,17 @@ def search_notes(client: AnkiClient, query: str, limit: int = 50) -> list[NoteVi
 PRIORITY_QUERY = "-flag:0 (is:buried OR is:new OR is:due)"
 
 
-def _quote(value: str) -> str:
-    return '"' + value.replace('"', '\\"') + '"'
-
-
 def _due_within_budget(
     client: AnkiClient,
     flagged_due_cards: list[Card],
     study_deck: str,
 ) -> set[int]:
-    """Return card ids of flagged due cards within the study deck's review budget.
-
-    The user studies from one root deck (e.g. ``courant``); its ``review_count``
-    from ``getDeckStats`` is the total remaining reviews for today across all
-    sub-decks. Anki presents review cards grouped by sub-deck in tree order
-    (alphabetical), so the sort key is ``(deck_name, due)`` — all of one sub-deck's
-    cards before the next, most overdue first within each.
+    """Return card ids of flagged due cards within the study deck's review budget: the cards
+    of Anki's study queue for that deck, which is what Anki will show today, limits applied.
     """
     if not flagged_due_cards:
         return set()
-
-    stats_raw = client.deck_stats(study_deck)
-    budget = 0
-    for stat in stats_raw.values():
-        budget = int(stat.get("review_count", 0))
-
-    if budget == 0:
-        return set()
-
-    all_due_ids = client.find_card_ids(f"deck:{_quote(study_deck)} is:due -is:new -is:buried")
-    if len(all_due_ids) <= budget:
-        return {c.card_id for c in flagged_due_cards}
-
-    all_due = client.cards_info(all_due_ids)
-    all_due.sort(key=lambda c: (c.deck_name, c.due))
-    within = {c.card_id for c in all_due[:budget]}
+    within = {queued.card_id for queued in client.study_queue(study_deck)}
     return {c.card_id for c in flagged_due_cards if c.card_id in within}
 
 

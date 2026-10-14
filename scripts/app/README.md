@@ -1,6 +1,6 @@
 # scripts/app/
 
-Desktop launcher for macOS: a real `.app` bundle that starts Anki, starts the server,
+Desktop launcher for macOS: a real `.app` bundle that starts the server
 and renders the UI in its own window — no browser tab, its own Dock icon.
 
 ## Install
@@ -28,7 +28,7 @@ scripts/app/launch.sh status        # check what's running
 
 | File | What it does |
 |---|---|
-| `launch.sh` | Starts Anki (if not running) and the web server (if not running), then opens the window. Idempotent. |
+| `launch.sh` | Starts the web server (if not running), then opens the window. Idempotent. Anki desktop is not started: the app opens Anki's collection itself and needs Anki desktop closed. |
 | `install.sh` | Compiles `main.swift`, rasterises the icon, assembles and codesigns the `.app` bundle. |
 | `main.swift` | A `WKWebView` in a Cocoa window — the native host. Keeps ⌘C/⌘V alive, hands `obsidian://` links to the system, saves window position across quits. |
 | `make_icon.py` | Rasterises `star.svg` into an `.icns` in `img/` — pure Python, no image library. |

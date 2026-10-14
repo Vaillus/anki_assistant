@@ -1,30 +1,34 @@
-"""Tests for mobile.py (specs/mobile.md), driven by an in-memory fake AnkiConnect.
+"""Tests for mobile.py (specs/mobile.md), on a temporary collection (tests/anki_fixture.py):
+Anki's own search, scheduler and writes answer, on an empty collection created in the test's
+temp folder.
 
-`FakeAnki` subclasses `AnkiClient` and overrides only `invoke()`. Each card carries a test-only
-`rel_due` (days from today, the value Anki's `prop:due` compares) next to its real `due`.
+Anki's scheduler reads the real clock, so the sync and batch tests run at the real instant
+`NOW`; the pure functions use fixed dates.
 """
 
 from __future__ import annotations
 
-import base64
 import json
-import re
+import time
 from datetime import date, datetime, timedelta
-from itertools import count
 from pathlib import Path
 from typing import Any
 
 import pytest
+from anki.collection import Collection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from anki_assistant import mobile
-from anki_assistant.client import AnkiClient, AnkiConnectError
+from anki_assistant.client import AnkiError
 from anki_assistant.mobile import Action, MobileLog
+from anki_assistant.models import Card
 from anki_assistant.web import routes_mobile
+from tests.anki_fixture import TempAnki
 
 DECK = "courant"
-NOW = datetime(2026, 10, 6, 9, 0)  # Anki day 2026-10-06 with the default rollover
+NOW = datetime.now().replace(microsecond=0)
+TODAY = mobile.anki_day(NOW, 4)
 
 TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
     "Basic": {
@@ -37,161 +41,97 @@ TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
     "Cloze": {"Cloze": {"Front": "{{cloze:Text}}", "Back": "{{cloze:Text}}<br>\n{{Back Extra}}"}},
 }
 
-# Real `nextReviews` strings read from AnkiConnect (French locale, isolation marks included).
-LABELS = ["<⁨10⁩m", "⁨24⁩j", "⁨3⁩mo", "⁨3,9⁩mo"]
+#: Display-order options the batch does not honour: every option keeps its default.
+PLAIN_ORDER = {
+    "newGatherPriority": 1,
+    "newSortOrder": 0,
+    "reviewOrder": 0,
+    "newMix": 1,
+    "interdayLearningMix": 1,
+}
 
 
 def ms(instant: datetime) -> int:
     return round(instant.timestamp() * 1000)
 
 
-class FakeAnki(AnkiClient):
-    def __init__(self) -> None:
-        super().__init__(url="http://fake.invalid")
-        self.cards: dict[int, dict[str, Any]] = {}
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.stats = {"review_count": 20, "new_count": 5, "learn_count": 0}
-        self.config: dict[str, Any] = {"new": {"perDay": 5}, "rev": {"perDay": 20}}
-        self.media: dict[str, bytes] = {}
-        #: card id -> interval Anki gives on replay (and the queue the card lands in).
-        self.replay: dict[int, tuple[int, int]] = {}
-        self.fail_on: str | None = None  # action name that raises, to simulate Anki dying
-        self._ids = count(1000)
+class PhoneAnki(TempAnki):
+    """A temporary collection holding the mobile deck, one card per note."""
 
-    def add(
+    def new_card(
         self,
         *,
         deck: str = DECK,
         model: str = "Basic",
         fields: dict[str, str] | None = None,
         queue: int = 2,
-        card_type: int | None = None,
-        due: int = 100,
-        rel_due: int = 0,
-        ord_: int = 0,
-        flags: int = 0,
+        rel_due: int | None = 0,
+        due: int | None = None,
         interval: int = 10,
-        labels: list[str] | None = None,
+        flags: int = 0,
     ) -> int:
-        cid = next(self._ids)
+        """Add a note with one card and return the card id. `queue` 2 is a review card due
+        `rel_due` days from today, 3 an interday learning card, 1 an intraday learning card due
+        a minute ago, 0 a new card at position `due`."""
+        scheduling: dict[str, int] = {}
+        if queue == 2:
+            scheduling = {"queue": 2, "card_type": 2, "interval": interval, "factor": 2500}
+            scheduling |= {"reps": 3, "last_review_days": interval}
+        elif queue == 3:
+            scheduling = {"queue": 3, "card_type": 3, "interval": 1, "left": 1, "reps": 2}
+        elif queue == 1:
+            scheduling = {"queue": 1, "card_type": 1, "left": 1, "reps": 1}
+            scheduling["due"] = int(time.time()) - 60 if due is None else due
+        elif queue == 0 and due is not None:
+            scheduling = {"due": due}
+        if queue in (2, 3) and rel_due is not None:
+            scheduling["rel_due"] = rel_due
+        if queue in (-1, -2):
+            scheduling = {"queue": queue, "card_type": 2, "interval": interval, "rel_due": -90}
         if fields is None:
-            fields = (
-                {"Text": "{{c1::a}} {{c2::b}}", "Back Extra": ""}
-                if model == "Cloze"
-                else {"Front": f"q{cid}", "Back": f"a{cid}", "Back Extra": ""}
-            )
-        if card_type is None:
-            card_type = {0: 0, 1: 1, 3: 1, 2: 2}.get(queue, 2)
-        self.cards[cid] = {
-            "cardId": cid,
-            "note": cid + 100_000,
-            "deckName": deck,
-            "modelName": model,
-            "fields": {n: {"value": v, "order": i} for i, (n, v) in enumerate(fields.items())},
-            "flags": flags,
-            "ord": ord_,
-            "interval": interval,
-            "due": due,
-            "queue": queue,
-            "type": card_type,
-            "reps": 3,
-            "lapses": 0,
-            "factor": 0,
-            "left": 0,
-            "nextReviews": list(LABELS if labels is None else labels),
-            "rel_due": rel_due,
-        }
+            fields = {"Text": "{{c1::a}}", "Back Extra": ""} if model == "Cloze" else {}
+        nid = self.add(deck, model=model, fields=fields or None, flags=(flags,), **scheduling)  # ty: ignore[invalid-argument-type]
+        cid = self.card_ids_of(nid)[0]
+        if not fields:
+            self.set_fields(nid, Front=f"q{cid}", Back=f"a{cid}")
         return cid
-
-    def invoke(self, action: str, **params: Any) -> Any:
-        self.calls.append((action, params))
-        if action == self.fail_on:
-            raise AnkiConnectError(f"Cannot reach AnkiConnect ({action})")
-        return getattr(self, f"_do_{action}")(**params)
-
-    def writes(self) -> list[tuple[str, dict[str, Any]]]:
-        reads = {"cardsInfo", "findCards", "getDeckStats", "getDeckConfig", "multi"}
-        return [(a, p) for a, p in self.calls if a not in reads and a != "modelTemplates"]
-
-    # -- actions
-
-    def _do_multi(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {"result": self.invoke(a["action"], **a.get("params", {})), "error": None}
-            for a in actions
-        ]
-
-    def _do_getDeckStats(self, decks: list[str]) -> dict[str, Any]:
-        return {"1721677596007": {"deck_id": 1721677596007, "name": decks[0], **self.stats}}
-
-    def _do_getDeckConfig(self, deck: str) -> dict[str, Any]:
-        return self.config
-
-    def _do_modelTemplates(self, modelName: str) -> dict[str, Any]:
-        return TEMPLATES[modelName]
-
-    def _do_findCards(self, query: str) -> list[int]:
-        deck = re.search(r'deck:"([^"]*)"', query)
-        out = []
-        for cid, c in self.cards.items():
-            if deck and not mobile.in_deck(c["deckName"], deck.group(1)):
-                continue
-            if "-is:suspended" in query and c["queue"] == -1:
-                continue
-            if "-is:buried" in query and c["queue"] in (-2, -3):
-                continue
-            if "-is:new" in query:
-                if c["type"] == 0:
-                    continue
-            elif "is:new" in query and c["type"] != 0:
-                continue
-            prop = re.search(r"prop:due<=(-?\d+)", query)
-            if prop and (c["type"] == 0 or c["rel_due"] > int(prop.group(1))):
-                continue
-            out.append(cid)
-        return list(reversed(out))  # AnkiConnect gives no order: don't rely on one
-
-    def _do_cardsInfo(self, cards: list[int]) -> list[dict[str, Any]]:
-        return [dict(self.cards[c]) if c in self.cards else {} for c in cards]
-
-    def _do_answerCards(self, answers: list[dict[str, Any]]) -> list[bool]:
-        out = []
-        for a in answers:
-            card = self.cards.get(a["cardId"])
-            if card is None:
-                out.append(False)
-                continue
-            interval, queue = self.replay.get(a["cardId"], (card["interval"], 2))
-            card.update(interval=interval, queue=queue, type=2 if queue == 2 else 3)
-            out.append(True)
-        return out
-
-    def _do_setDueDate(self, cards: list[int], days: str) -> bool:
-        return True
-
-    def _do_setSpecificValueOfCard(self, card: int, keys: list[str], newValues: list[Any]) -> Any:
-        for k, v in zip(keys, newValues, strict=True):
-            self.cards[card][k] = v
-        return [True]
-
-    def _do_suspend(self, cards: list[int]) -> bool:
-        for c in cards:
-            self.cards[c]["queue"] = -1
-        return True
-
-    def _do_retrieveMediaFile(self, filename: str) -> str | bool:
-        data = self.media.get(filename)
-        return base64.b64encode(data).decode() if data is not None else False
 
 
 @pytest.fixture
-def anki() -> FakeAnki:
-    return FakeAnki()
+def anki(tmp_path: Path) -> PhoneAnki:
+    client = PhoneAnki(tmp_path)
+    client.add_field("Basic", "Back Extra")
+    client.set_limits(DECK, review=20, new=5, **PLAIN_ORDER)
+    client.calls.clear()
+    return client
 
 
 @pytest.fixture
 def log(tmp_path: Path) -> MobileLog:
     return MobileLog(tmp_path / "review_log.jsonl", tmp_path / "mobile_actions.jsonl")
+
+
+def make_card(model: str, ord_: int, fields: dict[str, str]) -> Card:
+    return Card(
+        card_id=1,
+        note_id=2,
+        deck_name=DECK,
+        model_name=model,
+        fields=fields,
+        flag=0,
+        ord=ord_,
+        interval=0,
+        due=0,
+        reps=0,
+        lapses=0,
+        queue=0,
+        type=0,
+        factor=0,
+        left=0,
+    )
+
+
+BASIC_FIELDS = {"Front": "f", "Back": "b", "Back Extra": ""}
 
 
 # ------------------------------------------------------------------- Anki day
@@ -214,43 +154,6 @@ def test_window_is_three_days_from_today() -> None:
 
 # ---------------------------------------------------------- precomputed outcomes
 
-DAY = 86_400
-MONTH = 365 * DAY / 12
-YEAR = 365 * DAY
-
-
-@pytest.mark.parametrize(
-    ("label", "seconds"),
-    [
-        # Real samples from the collection (French locale).
-        ("<⁨1⁩m", 60),
-        ("<⁨10⁩m", 600),
-        ("<⁨15⁩m", 900),
-        ("⁨2⁩j", 2 * DAY),
-        ("⁨24⁩j", 24 * DAY),
-        ("⁨3⁩mo", round(3 * MONTH)),
-        ("⁨3,9⁩mo", round(3.9 * MONTH)),
-        ("⁨10,6⁩mo", round(10.6 * MONTH)),
-        ("⁨1,4⁩a", round(1.4 * YEAR)),
-        ("⁨10,6⁩a", round(10.6 * YEAR)),
-        # English locale, spaces, decimal point, hours and seconds.
-        ("<10m", 600),
-        ("3d", 3 * DAY),
-        ("1.5y", round(1.5 * YEAR)),
-        ("2 h", 2 * 3600),
-        ("45s", 45),
-        ("1,2 mo", round(1.2 * MONTH)),
-        ("‎5‏min", 300),
-    ],
-)
-def test_parse_interval(label: str, seconds: int) -> None:
-    assert mobile.parse_interval(label) == seconds
-
-
-@pytest.mark.parametrize("label", ["", "soon", "10", "mo", "3 parsecs", "1,2,3mo", "10w"])
-def test_parse_interval_unknown_gives_none(label: str) -> None:
-    assert mobile.parse_interval(label) is None
-
 
 def test_clean_label_removes_isolation_marks() -> None:
     assert mobile.clean_label("⁨3,9⁩mo") == "3,9mo"
@@ -258,10 +161,6 @@ def test_clean_label_removes_isolation_marks() -> None:
 
 
 # ----------------------------------------------------------- question / answer
-
-
-def _card(anki: FakeAnki, cid: int) -> Any:
-    return anki.cards_info([cid])[0]
 
 
 def test_template_fields_skips_non_fields_and_filters() -> None:
@@ -273,47 +172,35 @@ def test_template_fields_skips_non_fields_and_filters() -> None:
     assert mobile.template_fields(tmpl, names) == ["Front", "Back Extra", "Back"]
 
 
-def test_card_sides_basic_shows_back_extra_on_answer(anki: FakeAnki) -> None:
-    cid = anki.add()
-    assert mobile.card_sides(_card(anki, cid), TEMPLATES["Basic"]) == (
-        ["Front"],
-        ["Back", "Back Extra"],
-        None,
-    )
+def test_card_sides_basic_shows_back_extra_on_answer() -> None:
+    card = make_card("Basic", 0, BASIC_FIELDS)
+    assert mobile.card_sides(card, TEMPLATES["Basic"]) == (["Front"], ["Back", "Back Extra"], None)
 
 
-def test_card_sides_reversed_card_uses_template_at_ord(anki: FakeAnki) -> None:
+def test_card_sides_reversed_card_uses_template_at_ord() -> None:
     templates = {
         "Card 1": {"Front": "{{Front}}", "Back": "{{FrontSide}}<hr id=answer>{{Back}}"},
         "Card 2": {"Front": "{{Back}}", "Back": "{{FrontSide}}<hr id=answer>{{Front}}"},
     }
-    cid = anki.add(ord_=1, fields={"Front": "f", "Back": "b"})
-    assert mobile.card_sides(_card(anki, cid), templates) == (["Back"], ["Front"], None)
+    card = make_card("Basic", 1, {"Front": "f", "Back": "b"})
+    assert mobile.card_sides(card, templates) == (["Back"], ["Front"], None)
 
 
-def test_card_sides_answer_drops_fields_already_asked(anki: FakeAnki) -> None:
+def test_card_sides_answer_drops_fields_already_asked() -> None:
     # AnkiBrain-Basic repeats {{Front}} on the back instead of {{FrontSide}}.
     templates = {"T": {"Front": "{{Front}}", "Back": '{{Front}} <hr id="answer">{{Back}}'}}
-    cid = anki.add(fields={"Front": "f", "Back": "b"})
-    assert mobile.card_sides(_card(anki, cid), templates) == (["Front"], ["Back"], None)
+    card = make_card("Basic", 0, {"Front": "f", "Back": "b"})
+    assert mobile.card_sides(card, templates) == (["Front"], ["Back"], None)
 
 
-def test_card_sides_cloze_number_is_ord_plus_one(anki: FakeAnki) -> None:
-    cid = anki.add(model="Cloze", ord_=2)
-    assert mobile.card_sides(_card(anki, cid), TEMPLATES["Cloze"]) == (
-        ["Text"],
-        ["Back Extra"],
-        3,
-    )
+def test_card_sides_cloze_number_is_ord_plus_one() -> None:
+    card = make_card("Cloze", 2, {"Text": "{{c3::a}}", "Back Extra": ""})
+    assert mobile.card_sides(card, TEMPLATES["Cloze"]) == (["Text"], ["Back Extra"], 3)
 
 
-def test_card_sides_without_template_falls_back_to_field_order(anki: FakeAnki) -> None:
-    cid = anki.add(ord_=5)  # an orphan card: no template at this ordinal
-    assert mobile.card_sides(_card(anki, cid), TEMPLATES["Basic"]) == (
-        ["Front"],
-        ["Back", "Back Extra"],
-        None,
-    )
+def test_card_sides_without_template_falls_back_to_field_order() -> None:
+    card = make_card("Basic", 5, BASIC_FIELDS)  # an orphan card: no template at this ordinal
+    assert mobile.card_sides(card, TEMPLATES["Basic"]) == (["Front"], ["Back", "Back Extra"], None)
 
 
 def test_mobile_html_points_pictures_at_mobile_media() -> None:
@@ -328,49 +215,73 @@ def test_mobile_html_points_pictures_at_mobile_media() -> None:
 # ---------------------------------------------------------------------- batch
 
 
-def test_batch_quotas_day0_from_stats_later_days_from_config(anki: FakeAnki) -> None:
-    anki.stats = {"review_count": 3, "new_count": 1, "learn_count": 0}
-    anki.config = {"new": {"perDay": 2}, "rev": {"perDay": 4}}
-    batch = mobile.build_batch(anki, DECK, 4, NOW)
-    assert [(q.review, q.new) for q in batch.quota] == [(3, 1), (4, 2), (4, 2)]
-    assert batch.days == ["2026-10-06", "2026-10-07", "2026-10-08"]
+def build(anki: PhoneAnki) -> mobile.Batch:
+    return mobile.build_batch(anki, DECK, 4, NOW)
+
+
+def test_batch_quotas_use_the_effective_deck_limit(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=4, new=2)
+    batch = build(anki)
+    assert [(q.review, q.new) for q in batch.quota] == [(4, 2), (4, 2), (4, 2)]
+    assert batch.days == [d.isoformat() for d in mobile.window(TODAY)]
     assert batch.rollover_hour == 4
     assert batch.generated_at == ms(NOW)
 
 
-def test_batch_order_and_day_assignment(anki: FakeAnki) -> None:
-    anki.stats = {"review_count": 2, "new_count": 1, "learn_count": 1}
-    anki.config = {"new": {"perDay": 1}, "rev": {"perDay": 2}}
-    r_recent = anki.add(due=50, rel_due=-1)
-    r_overdue = anki.add(due=10, rel_due=-40)
-    r_mid = anki.add(due=30, rel_due=-20)
-    r_backlog = anki.add(due=45, rel_due=-5)
-    r_tomorrow = anki.add(due=101, rel_due=1)
-    r_day3 = anki.add(due=102, rel_due=2)
-    r_later = anki.add(due=200, rel_due=3)  # past the window
-    learn = anki.add(queue=1, due=1759740000, rel_due=0)
-    n_second = anki.add(queue=0, due=8)
-    n_first = anki.add(queue=0, due=7)
-    n_third = anki.add(queue=0, due=9)
-    anki.add(queue=-1, due=1, rel_due=-90)  # suspended
-    anki.add(queue=-2, due=2, rel_due=-90)  # buried
-    anki.add(deck="other", due=1, rel_due=-90)  # another deck
+def test_batch_quotas_this_deck_and_today_only(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=4, new=2, deck_review=6)
+    assert [q.review for q in build(anki).quota] == [6, 6, 6], "This deck overrides the preset"
+    anki.set_limits(DECK, today_review=9)
+    assert [q.review for q in build(anki).quota] == [9, 6, 6], "Today only: day 0 alone"
 
-    batch = mobile.build_batch(anki, DECK, 4, NOW)
-    got = [(c.card_id, c.day, c.kind) for c in batch.cards]
-    assert got == [
-        (learn, 0, "learn"),
-        (r_overdue, 0, "review"),
-        (r_mid, 0, "review"),
-        (n_first, 0, "new"),
+
+def test_batch_day0_quota_counts_what_was_studied_today(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=4, new=2)
+    cid = anki.new_card()
+    anki.answer_card(cid, 3, answered_at=ms(NOW), time_ms=1000)
+    assert [(q.review, q.new) for q in build(anki).quota] == [(3, 2), (4, 2), (4, 2)]
+
+
+def test_batch_day0_is_ankis_study_queue_later_days_are_rebuilt(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=2, new=1)
+    r_recent = anki.new_card(rel_due=-1)
+    r_overdue = anki.new_card(rel_due=-40)
+    r_mid = anki.new_card(rel_due=-20)
+    r_backlog = anki.new_card(rel_due=-5)
+    r_tomorrow = anki.new_card(rel_due=1)
+    r_day3 = anki.new_card(rel_due=2)
+    r_later = anki.new_card(rel_due=3)  # past the window
+    learn = anki.new_card(queue=1)
+    n_second = anki.new_card(queue=0, due=8)
+    n_first = anki.new_card(queue=0, due=7)
+    anki.new_card(queue=0, due=9)
+    anki.new_card(queue=-1)  # suspended
+    anki.new_card(queue=-2)  # buried
+    anki.new_card(deck="other", rel_due=-90)  # another deck
+
+    got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
+    day0 = [(q.card_id, 0, q.kind) for q in anki.study_queue(DECK)]
+    # Anki's review limit also caps new cards: two reviews leave no room for a new one today.
+    assert day0 == [(learn, 0, "learn"), (r_overdue, 0, "review"), (r_mid, 0, "review")]
+    assert got == day0 + [
         (r_backlog, 1, "review"),
         (r_recent, 1, "review"),
-        (n_second, 1, "new"),
+        (n_first, 1, "new"),
         (r_tomorrow, 2, "review"),
         (r_day3, 2, "review"),
-        (n_third, 2, "new"),
+        (n_second, 2, "new"),
     ]
-    assert r_later not in {c.card_id for c in batch.cards}
+    assert r_later not in {c for c, _, _ in got}
+
+
+def test_batch_day0_follows_ankis_subdeck_limits(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=10, new=0)
+    anki.set_limits("courant::maths", deck_review=1)
+    maths = [anki.new_card(deck="courant::maths", rel_due=-5) for _ in range(3)]
+    other = anki.new_card(rel_due=-1)
+    day0 = [c.card_id for c in build(anki).cards if c.day == 0]
+    assert len(set(day0) & set(maths)) == 1, "the sub-deck's own limit"
+    assert other in day0
 
 
 DECK_ORDER = {
@@ -382,55 +293,64 @@ DECK_ORDER = {
 }
 
 
-def test_batch_deck_order_decides_which_cards_are_taken(anki: FakeAnki) -> None:
-    anki.stats = {"review_count": 2, "new_count": 1, "learn_count": 0}
-    anki.config = {"new": {"perDay": 1}, "rev": {"perDay": 2}, **DECK_ORDER}
-    r_b = anki.add(deck="courant::b", due=10, rel_due=-40)  # most overdue, last deck
-    r_a_late = anki.add(deck="courant::A", due=30, rel_due=-20)
-    r_a_early = anki.add(deck="courant::A", due=20, rel_due=-30)
-    r_root = anki.add(deck="courant", due=50, rel_due=-1)
-    n_b = anki.add(deck="courant::b", queue=0, due=1)  # lowest position, last deck
-    n_a = anki.add(deck="courant::A", queue=0, due=5)
-    n_ax = anki.add(deck="courant::A::x", queue=0, due=3)
+def rebuilt_days_only(anki: PhoneAnki, review: int, new: int, **order: int) -> None:
+    """Preset limits for days 1 and 2, nothing left today: day 0 holds learning cards only and
+    the rebuild of days 1 and 2 decides the rest."""
+    anki.set_limits(DECK, review=review, new=new, today_review=0, today_new=0, **order)
 
-    got = [(c.card_id, c.day, c.kind) for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+
+def test_batch_deck_order_decides_which_cards_are_taken(anki: PhoneAnki) -> None:
+    rebuilt_days_only(anki, 2, 1, **DECK_ORDER)
+    r_b = anki.new_card(deck="courant::b", rel_due=-40)  # most overdue, last deck
+    r_a_late = anki.new_card(deck="courant::A", rel_due=-20)
+    r_a_early = anki.new_card(deck="courant::A", rel_due=-30)
+    r_root = anki.new_card(deck="courant", rel_due=-1)
+    anki.new_card(deck="courant::b", queue=0, due=1)  # lowest position, last deck
+    n_a = anki.new_card(deck="courant::A", queue=0, due=5)
+    n_ax = anki.new_card(deck="courant::A::x", queue=0, due=3)
+
+    got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
     assert got == [
-        (r_root, 0, "review"),
-        (r_a_early, 0, "review"),
-        (n_a, 0, "new"),
-        (r_a_late, 1, "review"),
-        (r_b, 1, "review"),
-        (n_ax, 1, "new"),
-        (n_b, 2, "new"),
+        (r_root, 1, "review"),
+        (r_a_early, 1, "review"),
+        (n_a, 1, "new"),
+        (r_a_late, 2, "review"),
+        (r_b, 2, "review"),
+        (n_ax, 2, "new"),
     ]
 
 
-def test_batch_interday_learning_by_deck_order(anki: FakeAnki) -> None:
-    anki.stats = {"review_count": 0, "new_count": 0, "learn_count": 2}
-    anki.config = {"new": {"perDay": 0}, "rev": {"perDay": 0}, **DECK_ORDER}
-    i_b = anki.add(deck="courant::b", queue=3, due=1, rel_due=0)
-    i_a = anki.add(deck="courant::a", queue=3, due=2, rel_due=0)
-    got = [c.card_id for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
-    assert got == [i_a, i_b]
+def test_batch_interday_learning_by_deck_order(anki: PhoneAnki) -> None:
+    rebuilt_days_only(anki, 2, 0, **DECK_ORDER)
+    i_b = anki.new_card(deck="courant::b", queue=3, rel_due=1)
+    i_a = anki.new_card(deck="courant::a", queue=3, rel_due=1)
+    assert [(c.card_id, c.day) for c in build(anki).cards] == [(i_a, 1), (i_b, 1)]
 
 
-def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: FakeAnki) -> None:
-    anki.stats = {"review_count": 4, "new_count": 2, "learn_count": 2}
-    anki.config = {
-        "new": {"perDay": 0},
-        "rev": {"perDay": 0},
-        **DECK_ORDER,
-        "newMix": 0,
-        "interdayLearningMix": 0,
-    }
-    r1, r2, r3, r4 = (anki.add(due=d, rel_due=-5) for d in (1, 2, 3, 4))
-    n1, n2 = (anki.add(queue=0, due=d) for d in (1, 2))
-    interday = anki.add(queue=3, due=0, rel_due=0)
-    intraday = anki.add(queue=1, due=1759740000, rel_due=0)
+def test_interday_learning_takes_the_review_limit_before_reviews(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=2, new=0, today_review=1)
+    review = anki.new_card(rel_due=-5)
+    interday = [anki.new_card(queue=3, rel_due=d) for d in (-1, 0, 1)]
 
-    got = [(c.card_id, c.kind) for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+    got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
+    # Day 0 is Anki's queue: v3 counts the interday card against the review limit of 1.
+    # Days 1 and 2 do the same with the limit of 2: interday learning first, then reviews.
     assert got == [
-        (intraday, "learn"),
+        (interday[0], 0, "learn"),
+        (interday[1], 1, "learn"),
+        (interday[2], 1, "learn"),
+        (review, 2, "review"),
+    ]
+
+
+def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnki) -> None:
+    rebuilt_days_only(anki, 5, 2, **(DECK_ORDER | {"newMix": 0, "interdayLearningMix": 0}))
+    r1, r2, r3, r4 = (anki.new_card(rel_due=d) for d in (-9, -8, -7, -6))
+    n1, n2 = (anki.new_card(queue=0, due=d) for d in (1, 2))
+    interday = anki.new_card(queue=3, rel_due=1)
+
+    got = [(c.card_id, c.kind) for c in build(anki).cards if c.day == 1]
+    assert got == [
         (r1, "review"),
         (n1, "new"),
         (r2, "review"),
@@ -444,31 +364,21 @@ def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: FakeAnki
 @pytest.mark.parametrize(
     "order",
     [
-        {},
-        {
-            "newGatherPriority": 1,
-            "newSortOrder": 1,
-            "reviewOrder": 0,
-            "newMix": 1,
-            "interdayLearningMix": 2,
-        },
+        PLAIN_ORDER,
         {"newGatherPriority": 0, "newSortOrder": 0, "reviewOrder": 1},
     ],
 )
-def test_batch_order_defaults_when_options_absent_or_other(
-    anki: FakeAnki, order: dict[str, int]
-) -> None:
-    anki.stats = {"review_count": 2, "new_count": 1, "learn_count": 1}
-    anki.config = {"new": {"perDay": 0}, "rev": {"perDay": 0}, **order}
-    r_b = anki.add(deck="courant::b", due=10, rel_due=-40)
-    r_a = anki.add(deck="courant::a", due=20, rel_due=-30)
-    anki.add(deck="courant", due=50, rel_due=-1)
-    n_b = anki.add(deck="courant::b", queue=0, due=1)
-    anki.add(deck="courant::a", queue=0, due=5)
-    i_b = anki.add(deck="courant::b", queue=3, due=1, rel_due=0)
-    i_a = anki.add(deck="courant::a", queue=3, due=2, rel_due=0)
+def test_batch_order_defaults_when_options_other(anki: PhoneAnki, order: dict[str, int]) -> None:
+    rebuilt_days_only(anki, 4, 1, **order)
+    r_b = anki.new_card(deck="courant::b", rel_due=-40)
+    r_a = anki.new_card(deck="courant::a", rel_due=-30)
+    anki.new_card(deck="courant", rel_due=-1)
+    n_b = anki.new_card(deck="courant::b", queue=0, due=1)
+    anki.new_card(deck="courant::a", queue=0, due=5)
+    i_b = anki.new_card(deck="courant::b", queue=3, rel_due=0)
+    i_a = anki.new_card(deck="courant::a", queue=3, rel_due=1)
 
-    got = [c.card_id for c in mobile.build_batch(anki, DECK, 4, NOW).cards]
+    got = [c.card_id for c in build(anki).cards if c.day == 1]
     assert got == [i_b, i_a, r_b, r_a, n_b]
 
 
@@ -486,36 +396,63 @@ def test_intersperse_spreads_evenly(one: str, two: str, mixed: str) -> None:
     assert "".join(mobile.intersperse(one, two)) == mixed
 
 
-def test_batch_card_content(anki: FakeAnki) -> None:
-    cid = anki.add(
+def test_batch_card_content(anki: PhoneAnki) -> None:
+    nid = anki.add(
+        DECK,
         model="Cloze",
-        ord_=1,
-        flags=2,
+        flags=(0, 2),
         fields={"Text": '{{c1::A}} {{c2::B}} <img src="paste-1.png">', "Back Extra": "why"},
+        queue=2,
+        card_type=2,
+        interval=10,
+        factor=2500,
+        reps=3,
+        rel_due=0,
+        last_review_days=10,
     )
-    batch = mobile.build_batch(anki, DECK, 4, NOW)
-    card = batch.cards[0]
-    assert card.card_id == cid
+    cid = anki.card_ids_of(nid)[1]
+    batch = build(anki)
+    card = next(c for c in batch.cards if c.card_id == cid)
     assert (card.model, card.ord, card.cloze, card.flag) == ("Cloze", 1, 2, 2)
     assert [f.name for f in card.question] == ["Text"]
     assert 'data-n="2"' in card.question[0].html
     assert [(f.name, f.html) for f in card.answer] == [("Back Extra", "why")]
     assert card.media == ["paste-1.png"]
     assert batch.media == ["paste-1.png"]
-    assert card.outcomes == [600, 24 * DAY, round(3 * MONTH), round(3.9 * MONTH)]
-    assert card.outcome_labels == ["<10m", "24j", "3mo", "3,9mo"]
 
 
-def test_batch_card_with_unreadable_outcomes(anki: FakeAnki) -> None:
-    anki.add(labels=["<10m", "???"])
-    card = mobile.build_batch(anki, DECK, 4, NOW).cards[0]
-    assert card.outcomes == [600, None, None, None]
-    assert card.outcome_labels == ["<10m", "???", "", ""]
+def test_batch_outcomes_are_the_schedulers_raw_seconds(anki: PhoneAnki) -> None:
+    cid = anki.new_card(interval=10)
+    card = build(anki).cards[0]
+    assert card.card_id == cid
+    again, hard, good, easy = card.outcomes
+    assert again == 600, "relearning step: 10 minutes"
+    assert hard is not None and good is not None and easy is not None
+    assert all(o % 86_400 == 0 for o in (hard, good, easy)), "review outcomes: whole days"
+    assert hard < good < easy
+    assert len(card.outcome_labels) == 4 and all(card.outcome_labels)
+    assert "⁨" not in "".join(card.outcome_labels), "isolation marks removed"
 
 
-def test_batch_is_read_only(anki: FakeAnki) -> None:
-    anki.add()
-    mobile.build_batch(anki, DECK, 4, NOW)
+def test_batch_gives_the_review_order_of_each_card(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=10, new=0, **DECK_ORDER)
+    overdue = anki.new_card(deck="courant::b", rel_due=-3)
+    tomorrow = anki.new_card(deck="courant::A", rel_due=1)
+    learn = anki.new_card(queue=1)
+    batch = build(anki)
+    by_id = {c.card_id: c for c in batch.cards}
+    assert batch.review_order == "deck"
+    assert by_id[overdue].due_day == (TODAY - timedelta(days=3)).isoformat()
+    assert by_id[tomorrow].due_day == (TODAY + timedelta(days=1)).isoformat()
+    assert by_id[learn].due_day is None, "intraday learning: due in seconds, no day"
+    assert by_id[learn].deck_rank < by_id[tomorrow].deck_rank < by_id[overdue].deck_rank
+    anki.set_limits(DECK, reviewOrder=0)
+    assert build(anki).review_order == "due"
+
+
+def test_batch_is_read_only(anki: PhoneAnki) -> None:
+    anki.new_card()
+    build(anki)
     assert anki.writes() == []
 
 
@@ -530,78 +467,113 @@ def act(action_id: str, kind: Any, cid: int, at: datetime = NOW) -> Action:
     return Action(id=action_id, kind=kind, card_id=cid, at=ms(at))
 
 
-def run(anki: FakeAnki, actions: list[Action], log: MobileLog) -> mobile.SyncResult:
+def run(anki: PhoneAnki, actions: list[Action], log: MobileLog) -> mobile.SyncResult:
     return mobile.sync(anki, actions, log, deck=DECK, rollover_hour=4, now=lambda: NOW)
 
 
-def test_sync_replays_oldest_first(anki: FakeAnki, log: MobileLog) -> None:
-    a, b, c = anki.add(), anki.add(), anki.add()
-    t = NOW - timedelta(hours=1)
+def answers_in_history(anki: PhoneAnki) -> list[tuple[int, int]]:
+    """(card id, ease) of the answers in Anki's review history, oldest first; set-due-date
+    rows (ease 0) left out."""
+    return [(cid, ease) for _, cid, ease, _, _ in anki.revlog() if ease]
+
+
+def test_sync_replays_oldest_first(anki: PhoneAnki, log: MobileLog) -> None:
+    a, b, c = anki.new_card(), anki.new_card(), anki.new_card()
+    t = NOW - timedelta(minutes=10)
     actions = [
         answer("x3", c, t + timedelta(minutes=3), ease=4),
         answer("x1", a, t + timedelta(minutes=1), ease=1),
         answer("x2", b, t + timedelta(minutes=2), ease=2),
     ]
     result = run(anki, actions, log)
-    replayed = [p["answers"][0] for name, p in anki.calls if name == "answerCards"]
-    assert [(r["cardId"], r["ease"]) for r in replayed] == [(a, 1), (b, 2), (c, 4)]
+    assert answers_in_history(anki) == [(a, 1), (b, 2), (c, 4)]
     assert result.applied == ["x1", "x2", "x3"]
     assert result.dropped == []
 
 
-def test_sync_same_instant_keeps_sent_order(anki: FakeAnki, log: MobileLog) -> None:
-    a = anki.add()
+def test_sync_replay_keeps_the_answers_instant_and_time(anki: PhoneAnki, log: MobileLog) -> None:
+    cid = anki.new_card()
+    at = NOW - timedelta(minutes=7)
+    run(anki, [answer("a", cid, at, time_ms=6500)], log)
+    [(instant, card_id, ease, _, taken)] = anki.revlog()
+    assert (instant, card_id, ease, taken) == (ms(at), cid, 3, 6500)
+
+
+def test_sync_same_instant_keeps_sent_order(anki: PhoneAnki, log: MobileLog) -> None:
+    a = anki.new_card()
     run(anki, [act("f", "flag", a), act("u", "unflag", a)], log)
     assert anki.cards[a]["flags"] == 0
     run(anki, [act("u2", "unflag", a), act("f2", "flag", a)], log)
     assert anki.cards[a]["flags"] == 2
 
 
-@pytest.mark.parametrize(
-    ("days_ago", "interval", "expected"),
-    [
-        (2, 10, "8"),  # due on answer day + 10 = today + 8
-        (3, 1, "0"),  # answer day + 1 is already past: clamped to today
-        (1, 1, "0"),
-        (5, 30, "25"),
-    ],
-)
+@pytest.mark.parametrize(("days_ago", "interval"), [(1, 10), (2, 10), (5, 30), (4, 1)])
 def test_sync_redates_late_review(
-    anki: FakeAnki, log: MobileLog, days_ago: int, interval: int, expected: str
+    anki: PhoneAnki, log: MobileLog, days_ago: int, interval: int
 ) -> None:
-    cid = anki.add()
-    anki.replay[cid] = (interval, 2)
+    cid = anki.new_card(interval=interval, rel_due=-days_ago)
     run(anki, [answer("a", cid, NOW - timedelta(days=days_ago))], log)
-    assert ("setDueDate", {"cards": [cid], "days": expected}) in anki.calls
+    card = anki.cards[cid]
+    expected = max(0, card["interval"] - days_ago)  # answer day + interval, clamped to today
+    assert card["due"] - anki.anki_today() == expected
+    assert "set_due_date" in anki.calls
 
 
-def test_sync_redating_uses_anki_day_not_calendar_day(anki: FakeAnki, log: MobileLog) -> None:
-    cid = anki.add()
-    anki.replay[cid] = (10, 2)
+def good_days(anki: PhoneAnki, cid: int) -> int:
+    seconds = anki.answer_outcomes([cid])[cid].seconds[2]
+    assert seconds is not None
+    return seconds // 86_400
+
+
+def test_late_replay_counts_on_its_own_day(anki: PhoneAnki, log: MobileLog) -> None:
+    """An answer given two days before the sync: Anki's history holds its instant and time,
+    the card gets the interval its own day would have given, re-dated to that day, and today's
+    counters are untouched."""
+    lag = 2
+    cid = anki.new_card(interval=10, rel_due=0)
+    anki.set_card(cid, last_review_days=10)
+    on_its_day = good_days(anki, cid)  # the card as it stood on the answer's day
+    anki.set_card(cid, rel_due=-lag, last_review_days=10 + lag)
+    counted_to_today = good_days(anki, cid)  # elapsed days counted up to the sync
+
+    at = NOW - timedelta(days=lag)
+    run(anki, [answer("a", cid, at, time_ms=6500)], log)
+
+    card = anki.cards[cid]
+    assert card["interval"] == on_its_day
+    assert on_its_day < counted_to_today
+    assert card["due"] - anki.anki_today() == max(0, on_its_day - lag)
+    [(instant, card_id, ease, _, taken)] = [row for row in anki.revlog() if row[2]]
+    assert (instant, card_id, ease, taken) == (ms(at), cid, 3, 6500)
+    assert anki.studied_today(DECK) == (0, 0)
+
+
+def test_sync_redating_uses_anki_day_not_calendar_day() -> None:
     # 02:00 today is still yesterday's Anki day (rollover 4): one day late.
-    run(anki, [answer("a", cid, datetime(2026, 10, 6, 2, 0))], log)
-    assert ("setDueDate", {"cards": [cid], "days": "9"}) in anki.calls
+    answered = mobile.anki_day(datetime(2026, 10, 6, 2, 0), 4)
+    assert mobile.redate_days(10, answered, date(2026, 10, 6)) == 9
+    assert mobile.redate_days(10, date(2026, 10, 6), date(2026, 10, 6)) is None
 
 
-def test_sync_no_redating_for_today_or_learning(anki: FakeAnki, log: MobileLog) -> None:
-    today = anki.add()
-    anki.replay[today] = (10, 2)
-    lapsed = anki.add()
-    anki.replay[lapsed] = (1, 1)  # « again »: relearning, queue 1
+def test_sync_no_redating_for_today_or_learning(anki: PhoneAnki, log: MobileLog) -> None:
+    today = anki.new_card()
+    lapsed = anki.new_card()
     run(
         anki,
         [
-            answer("t", today, NOW - timedelta(hours=2)),
+            answer("t", today, NOW - timedelta(minutes=2)),
             answer("l", lapsed, NOW - timedelta(days=2), ease=1),
         ],
         log,
     )
-    assert [n for n, _ in anki.calls if n == "setDueDate"] == []
-    assert [n for n, _ in anki.calls if n == "answerCards"] == ["answerCards"] * 2
+    assert "set_due_date" not in anki.calls
+    assert anki.calls.count("answer_card") == 2
+    assert anki.cards[lapsed]["queue"] == 1, "« again »: relearning, Anki's delay kept"
+    assert anki.cards[today]["due"] - anki.anki_today() == anki.cards[today]["interval"]
 
 
-def test_sync_flag_unflag_suspend(anki: FakeAnki, log: MobileLog) -> None:
-    a, b, c = anki.add(), anki.add(flags=2), anki.add()
+def test_sync_flag_unflag_suspend(anki: PhoneAnki, log: MobileLog) -> None:
+    a, b, c = anki.new_card(), anki.new_card(flags=2), anki.new_card()
     result = run(anki, [act("1", "flag", a), act("2", "unflag", b), act("3", "suspend", c)], log)
     assert anki.cards[a]["flags"] == 2
     assert anki.cards[b]["flags"] == 0
@@ -610,13 +582,13 @@ def test_sync_flag_unflag_suspend(anki: FakeAnki, log: MobileLog) -> None:
     assert c not in {card.card_id for card in result.batch.cards}
 
 
-def test_sync_dropped_actions(anki: FakeAnki, log: MobileLog) -> None:
-    moved = anki.add()
-    suspended = anki.add()
-    edited = anki.add()
-    anki.cards[moved]["deckName"] = "elsewhere"
-    anki.cards[suspended]["queue"] = -1
-    anki.cards[edited]["fields"]["Front"]["value"] = "rewritten on the Mac"
+def test_sync_dropped_actions(anki: PhoneAnki, log: MobileLog) -> None:
+    moved = anki.new_card()
+    suspended = anki.new_card()
+    edited = anki.new_card()
+    anki.change_deck([moved], "elsewhere")
+    anki.suspend([suspended])
+    anki.set_fields(anki.cards[edited]["note"], Front="rewritten on the Mac")
     gone = 999_999
     result = run(
         anki,
@@ -634,20 +606,19 @@ def test_sync_dropped_actions(anki: FakeAnki, log: MobileLog) -> None:
         ("s", "suspended"),
     ]
     assert result.applied == ["e"]
-    answered = [p["answers"][0]["cardId"] for n, p in anki.calls if n == "answerCards"]
-    assert answered == [edited]
+    assert answers_in_history(anki) == [(edited, 3)]
     assert anki.cards[suspended]["flags"] == 0
 
 
-def test_sync_subdeck_is_in_deck(anki: FakeAnki, log: MobileLog) -> None:
-    cid = anki.add(deck="courant::04-maths")
+def test_sync_subdeck_is_in_deck(anki: PhoneAnki, log: MobileLog) -> None:
+    cid = anki.new_card(deck="courant::04-maths")
     assert run(anki, [act("f", "flag", cid)], log).applied == ["f"]
     assert mobile.drop_reason(None, DECK) == "card_missing"
     assert mobile.in_deck("courantX", DECK) is False
 
 
-def test_sync_suspend_then_answer_same_card_drops_answer(anki: FakeAnki, log: MobileLog) -> None:
-    cid = anki.add()
+def test_sync_suspend_then_answer_same_card_drops_answer(anki: PhoneAnki, log: MobileLog) -> None:
+    cid = anki.new_card()
     result = run(
         anki,
         [act("s", "suspend", cid, NOW - timedelta(minutes=2)), answer("a", cid, NOW)],
@@ -657,8 +628,8 @@ def test_sync_suspend_then_answer_same_card_drops_answer(anki: FakeAnki, log: Mo
     assert [(d.id, d.reason) for d in result.dropped] == [("a", "suspended")]
 
 
-def test_sync_retry_is_idempotent(anki: FakeAnki, log: MobileLog) -> None:
-    a = anki.add()
+def test_sync_retry_is_idempotent(anki: PhoneAnki, log: MobileLog) -> None:
+    a = anki.new_card()
     gone = 424242
     actions = [answer("1", a, NOW), answer("2", gone, NOW)]
     first = run(anki, actions, log)
@@ -670,37 +641,77 @@ def test_sync_retry_is_idempotent(anki: FakeAnki, log: MobileLog) -> None:
     assert len(log.reviews()) == 2  # logged once each
 
 
-def test_sync_duplicate_id_in_one_request_applies_once(anki: FakeAnki, log: MobileLog) -> None:
-    a = anki.add()
+def test_sync_duplicate_id_in_one_request_applies_once(anki: PhoneAnki, log: MobileLog) -> None:
+    a = anki.new_card()
     result = run(anki, [answer("1", a, NOW), answer("1", a, NOW)], log)
     assert result.applied == ["1"]
-    assert [n for n, _ in anki.calls].count("answerCards") == 1
+    assert anki.calls.count("answer_card") == 1
 
 
-def test_sync_failure_midway_keeps_what_was_done(anki: FakeAnki, log: MobileLog) -> None:
-    a, b = anki.add(), anki.add()
+def test_sync_failure_midway_keeps_what_was_done(anki: PhoneAnki, log: MobileLog) -> None:
+    a, b = anki.new_card(), anki.new_card()
     actions = [act("f", "flag", a, NOW - timedelta(minutes=1)), answer("x", b, NOW)]
-    anki.fail_on = "answerCards"
-    with pytest.raises(AnkiConnectError):
+    anki.fail_on["answer_card"] = 1
+    with pytest.raises(AnkiError):
         run(anki, actions, log)
     assert set(log.processed()) == {"f"}
-    anki.fail_on = None
     anki.calls.clear()
     result = run(anki, actions, log)
     assert result.applied == ["f", "x"]
-    assert [n for n, _ in anki.writes()] == ["answerCards"]
+    assert anki.writes() == ["answer_card"]
 
 
-def test_sync_rejects_answer_without_ease(anki: FakeAnki, log: MobileLog) -> None:
-    a = anki.add()
+def test_sync_failure_midway_reports_the_first_error(anki: PhoneAnki, log: MobileLog) -> None:
+    """A late replay was counted, then the sync stops: the give-back still runs, and when it
+    fails too the error raised is the one that stopped the sync."""
+    a, b = anki.new_card(rel_due=-3), anki.new_card()
+    late = NOW - timedelta(days=2)
+    anki.fail_on["answer_card"] = 2
+    gave_back: list[str] = []
+
+    def broken(deck: str, *, new: int = 0, review: int = 0) -> None:
+        gave_back.append(deck)
+        raise AnkiError("give-back: boom")
+
+    anki.extend_limits = broken  # ty: ignore[invalid-assignment]
+    with pytest.raises(AnkiError, match="answer_card: boom"):
+        run(anki, [answer("a", a, late), answer("b", b, NOW)], log)
+    assert gave_back == [DECK]
+
+
+def test_failed_give_back_is_done_by_the_retry(anki: PhoneAnki, log: MobileLog) -> None:
+    """The late replays are recorded, then the give-back fails: the retry skips the replays
+    but still gives back what they counted, and a third sync gives nothing twice."""
+    anki.set_limits(DECK, review=5, new=2)
+    cards = [anki.new_card(rel_due=-3) for _ in range(2)]
+    actions = [answer(str(i), c, NOW - timedelta(days=2)) for i, c in enumerate(cards)]
+    anki.fail_on["extend_limits"] = 1
+    with pytest.raises(AnkiError):
+        run(anki, actions, log)
+    assert set(log.processed()) == {"0", "1"}
+    assert anki.studied_today(DECK) == (2, 0)
+
+    anki.calls.clear()
+    assert run(anki, actions, log).applied == ["0", "1"]
+    assert anki.calls.count("answer_card") == 0
+    assert anki.studied_today(DECK) == (0, 0)
+
+    anki.calls.clear()
+    run(anki, actions, log)
+    assert anki.calls.count("extend_limits") == 0
+    assert anki.studied_today(DECK) == (0, 0)
+
+
+def test_sync_rejects_answer_without_ease(anki: PhoneAnki, log: MobileLog) -> None:
+    a = anki.new_card()
     bad = Action(id="1", kind="answer", card_id=a, at=ms(NOW))
     with pytest.raises(ValueError):
         run(anki, [bad], log)
     assert anki.writes() == []
 
 
-def test_review_log_entries(anki: FakeAnki, log: MobileLog) -> None:
-    a = anki.add()
+def test_review_log_entries(anki: PhoneAnki, log: MobileLog) -> None:
+    a = anki.new_card()
     at = NOW - timedelta(minutes=5)
     run(
         anki,
@@ -734,8 +745,8 @@ def test_review_log_entries(anki: FakeAnki, log: MobileLog) -> None:
     ]
 
 
-def test_review_log_records_was_new_before_replay(anki: FakeAnki, log: MobileLog) -> None:
-    new = anki.add(queue=0, due=3)
+def test_review_log_records_was_new_before_replay(anki: PhoneAnki, log: MobileLog) -> None:
+    new = anki.new_card(queue=0, due=3)
     run(anki, [answer("n", new, NOW - timedelta(days=1))], log)
     assert anki.cards[new]["type"] != 0  # the replay graduated it
     assert log.reviews()[0]["was_new"] is True
@@ -743,61 +754,66 @@ def test_review_log_records_was_new_before_replay(anki: FakeAnki, log: MobileLog
 
 # ------------------------------------------------------------- late replays
 
-YESTERDAY = NOW - timedelta(days=1)
 
-
-def entry(cid: int, answered: datetime, **extra: Any) -> dict[str, Any]:
-    base = {
-        "card_id": cid,
-        "answered_at": ms(answered),
-        "synced_at": ms(NOW - timedelta(hours=1)),
-        "status": "applied",
-        "was_new": False,
-    }
-    return base | extra
-
-
-def test_late_replays_counts_earlier_day_answers_synced_today() -> None:
-    reviews = [
-        entry(1, YESTERDAY),
-        entry(1, YESTERDAY - timedelta(days=1)),  # same card twice: once
-        entry(2, YESTERDAY, was_new=True),
-        entry(3, YESTERDAY - timedelta(days=1), was_new=True),
-        entry(3, YESTERDAY, was_new=False),  # new at its first replay: stays new
-        {k: v for k, v in entry(4, YESTERDAY).items() if k != "was_new"},  # old line: review
-        entry(5, NOW - timedelta(hours=2)),  # answered today: Anki counts it rightly
-        entry(6, YESTERDAY, synced_at=ms(YESTERDAY)),  # synced on an earlier day
-        entry(7, YESTERDAY, status="dropped"),  # never reached Anki
-        entry(8, datetime(2026, 10, 6, 2, 0)),  # 02:00 is still yesterday's Anki day
-    ]
-    late = mobile.late_replays(reviews, 4, date(2026, 10, 6))
-    assert (late.review, late.new) == (3, 2)
-
-
-def test_sync_adds_late_replays_to_today_quota(anki: FakeAnki, log: MobileLog) -> None:
-    reviewed = [anki.add(rel_due=-3) for _ in range(3)]
-    fresh = anki.add(queue=0, due=1)
-    for _ in range(4):
-        anki.add(rel_due=-2)  # backlog still due today
-    for i in range(3):
-        anki.add(queue=0, due=10 + i)
-    # After the replays Anki says nearly nothing is left today.
-    anki.stats = {"review_count": 1, "new_count": 0, "learn_count": 0}
+def test_sync_gives_back_the_limits_late_replays_used_up(anki: PhoneAnki, log: MobileLog) -> None:
+    anki.set_limits(DECK, review=5, new=2)
+    reviewed = [anki.new_card(rel_due=-3) for _ in range(3)]
+    fresh = anki.new_card(queue=0, due=1)
+    today = anki.new_card(rel_due=-1)
     actions = [answer(f"r{i}", c, NOW - timedelta(days=2)) for i, c in enumerate(reviewed)]
     actions.append(answer("n", fresh, NOW - timedelta(days=1)))
+    actions.append(answer("t", today, NOW - timedelta(minutes=1)))
     batch = run(anki, actions, log).batch
-    assert (batch.quota[0].review, batch.quota[0].new) == (4, 1)
-    day0 = [c.kind for c in batch.cards if c.day == 0]
-    assert day0.count("new") == 1
+    assert anki.studied_today(DECK) == (1, 0), "only today's answer counts today"
+    assert (batch.quota[0].review, batch.quota[0].new) == (4, 2)
 
 
-def test_late_replays_capped_by_per_day_never_below_stats(anki: FakeAnki, log: MobileLog) -> None:
-    anki.config = {"new": {"perDay": 1}, "rev": {"perDay": 3}}
-    cards = [anki.add() for _ in range(4)]
-    anki.stats = {"review_count": 2, "new_count": 2, "learn_count": 0}
-    actions = [answer(str(i), c, YESTERDAY) for i, c in enumerate(cards)]
-    batch = run(anki, actions, log).batch
-    assert (batch.quota[0].review, batch.quota[0].new) == (3, 2)
+def test_late_replay_into_a_deck_last_studied_on_an_earlier_day(
+    anki: PhoneAnki, log: MobileLog
+) -> None:
+    """The deck's counter still holds an earlier day's count: Anki resets it on today's first
+    answer, and the give-back must lower it by what the replay counted, not by the old count."""
+    with anki.action() as col:
+        col.crt -= 10 * 86_400  # the collection is ten days old, so Anki's today is day 10
+    cid = anki.new_card(rel_due=-3)
+    with anki.action() as col:
+        raw = col.decks.by_name(DECK)
+        assert raw is not None
+        raw["revToday"] = [col.sched.today - 4, 15]
+        col.decks.save(raw)
+    run(anki, [answer("a", cid, NOW - timedelta(days=2))], log)
+    assert anki.studied_today(DECK) == (0, 0)
+
+
+@pytest.mark.parametrize("all_parent_limits", [False, True])
+def test_late_replays_in_subdecks_give_back_every_parent(
+    anki: PhoneAnki, log: MobileLog, all_parent_limits: bool
+) -> None:
+    with anki.action() as col:
+        col.set_config("applyAllParentLimits", all_parent_limits)
+    maths = [anki.new_card(deck="courant::maths", rel_due=-3) for _ in range(2)]
+    root = anki.new_card(rel_due=-3)
+    late = NOW - timedelta(days=2)
+    run(anki, [answer(str(i), c, late) for i, c in enumerate([*maths, root])], log)
+    assert anki.studied_today("courant::maths") == (0, 0)
+    assert anki.studied_today(DECK) == (0, 0)
+
+
+def test_limits_to_give_back_per_deck_or_summed_over_parents() -> None:
+    counted = {
+        "courant::maths": mobile.DayQuota(review=24, new=0),
+        "courant": mobile.DayQuota(review=46, new=2),
+    }
+    on = mobile.limits_to_give_back(counted, all_parent_limits=True)
+    assert {d: (q.review, q.new) for d, q in on.items()} == {
+        "courant::maths": (24, 0),
+        "courant": (46, 2),
+    }
+    off = mobile.limits_to_give_back(counted, all_parent_limits=False)
+    assert {d: (q.review, q.new) for d, q in off.items()} == {
+        "courant::maths": (24, 0),
+        "courant": (70, 2),
+    }
 
 
 def test_log_survives_a_truncated_line(log: MobileLog) -> None:
@@ -809,7 +825,7 @@ def test_log_survives_a_truncated_line(log: MobileLog) -> None:
 
 
 @pytest.fixture
-def http(anki: FakeAnki, log: MobileLog) -> TestClient:
+def http(anki: PhoneAnki, log: MobileLog) -> TestClient:
     app = FastAPI()
     app.state.anki = anki
     app.state.mobile_deck = DECK
@@ -819,8 +835,10 @@ def http(anki: FakeAnki, log: MobileLog) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_route_batch(http: TestClient, anki: FakeAnki) -> None:
-    cid = anki.add(fields={"Front": 'q <img src="paste-1.png">', "Back": "a", "Back Extra": ""})
+def test_route_batch(http: TestClient, anki: PhoneAnki) -> None:
+    cid = anki.new_card(
+        fields={"Front": 'q <img src="paste-1.png">', "Back": "a", "Back Extra": ""}
+    )
     res = http.get("/api/mobile/batch")
     assert res.status_code == 200
     body = res.json()
@@ -832,6 +850,7 @@ def test_route_batch(http: TestClient, anki: FakeAnki) -> None:
         "quota",
         "cards",
         "media",
+        "review_order",
     }
     assert body["quota"][0] == {"review": 20, "new": 5}
     card = body["cards"][0]
@@ -843,8 +862,8 @@ def test_route_batch(http: TestClient, anki: FakeAnki) -> None:
     assert anki.writes() == []
 
 
-def test_route_sync(http: TestClient, anki: FakeAnki, log: MobileLog) -> None:
-    cid = anki.add()
+def test_route_sync(http: TestClient, anki: PhoneAnki, log: MobileLog) -> None:
+    cid = anki.new_card()
     actions = [
         {"id": "a1", "kind": "answer", "card_id": cid, "at": ms(NOW), "ease": 3, "time_ms": 900},
         {"id": "f1", "kind": "flag", "card_id": 31337, "at": ms(NOW)},
@@ -858,19 +877,13 @@ def test_route_sync(http: TestClient, anki: FakeAnki, log: MobileLog) -> None:
     assert log.reviews()[0]["time_ms"] == 900
 
 
-def test_route_batch_later_same_day_keeps_late_replays(
-    http: TestClient, anki: FakeAnki, log: MobileLog
+def test_route_batch_later_same_day_keeps_the_given_back_limits(
+    http: TestClient, anki: PhoneAnki
 ) -> None:
-    now = datetime.now()
-    synced = ms(now)
-    answered = ms(now - timedelta(days=2))
-    log.review_log.write_text(
-        json.dumps(
-            {"card_id": 1, "answered_at": answered, "synced_at": synced, "status": "applied"}
-        )
-        + "\n"
-    )
-    anki.stats = {"review_count": 0, "new_count": 5, "learn_count": 0}
+    anki.set_limits(DECK, review=1)
+    cid = anki.new_card(rel_due=-2)
+    late = {"id": "a", "kind": "answer", "card_id": cid, "at": ms(NOW - timedelta(days=2))}
+    assert http.post("/api/mobile/sync", json={"actions": [late | {"ease": 3}]}).status_code == 200
     assert http.get("/api/mobile/batch").json()["quota"][0] == {"review": 1, "new": 5}
 
 
@@ -884,18 +897,24 @@ def test_route_batch_later_same_day_keeps_late_replays(
     ],
 )
 def test_route_sync_rejects_malformed_actions(
-    http: TestClient, anki: FakeAnki, action: dict[str, Any]
+    http: TestClient, anki: PhoneAnki, action: dict[str, Any]
 ) -> None:
     assert http.post("/api/mobile/sync", json={"actions": [action]}).status_code == 422
     assert anki.writes() == []
 
 
-def test_route_sync_anki_unreachable(http: TestClient, anki: FakeAnki) -> None:
-    anki.fail_on = "getDeckStats"
-    assert http.post("/api/mobile/sync", json={"actions": []}).status_code == 503
+def test_route_sync_while_anki_desktop_is_open(http: TestClient, anki: PhoneAnki) -> None:
+    assert anki.path is not None
+    desktop = Collection(str(anki.path))
+    try:
+        res = http.post("/api/mobile/sync", json={"actions": []})
+    finally:
+        desktop.close()
+    assert res.status_code == 503
+    assert res.json()["detail"] == "Close Anki desktop first"
 
 
-def test_route_media(http: TestClient, anki: FakeAnki) -> None:
+def test_route_media(http: TestClient, anki: PhoneAnki) -> None:
     anki.media["paste-1.png"] = b"\x89PNG"
     res = http.get("/api/mobile/media/paste-1.png")
     assert res.status_code == 200

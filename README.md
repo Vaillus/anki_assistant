@@ -2,19 +2,29 @@
 
 Efficiently review flagged Anki cards: a local web interface that shows, deck by deck,
 the notes to rework, the deck's sources (Obsidian notes, PDFs, web pages) side by side, and a Claude chat that
-proposes one-click edits. Everything is written directly to Anki via
-the [AnkiConnect](https://foosoft.net/projects/anki-connect/) add-on.
+proposes one-click edits. The app opens Anki's collection file itself, through the `anki`
+Python package (the code Anki desktop runs), and syncs it with AnkiWeb after its writes.
 
 Behaviour is described in [`specs/`](specs/00-overview.md) (source of truth).
 
-Prerequisite: Anki running with AnkiConnect installed (port 8765 by default).
+Anki desktop must be **closed** while the app works: Anki opens its collection file with an
+exclusive lock, so the app and Anki desktop take turns. While Anki desktop is open, the app
+answers « Close Anki desktop first » and writes nothing. The `anki` package is pinned to Anki
+desktop's version (`26.9.2`); bump both together.
 
 ## Installation
 
 ```bash
 uv sync
 cp .env.example .env   # then fill in ANTHROPIC_API_KEY for the chat
+uv run anki login      # once: keeps the AnkiWeb key in .env, so the app syncs after its writes
 ```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ANKI_COLLECTION` | the only profile's | Path to `collection.anki2` (e.g. `~/Library/Application Support/Anki2/User 1/collection.anki2`). |
+| `ANKIWEB_HKEY` | unset | The AnkiWeb key `anki login` writes. Unset: no AnkiWeb sync from the app; Anki desktop sends its changes at its next sync. |
+| `ANKIWEB_ENDPOINT` | unset | The AnkiWeb server `anki login` writes when AnkiWeb names one. |
 
 ## Web interface
 
@@ -62,7 +72,7 @@ is `404`. Answers given on the phone are appended to `review_log.jsonl` (gitigno
 ## Desktop launcher
 
 [`scripts/app/install.sh`](scripts/app/) builds **Anki Assistant.app** in `~/Applications`:
-a real app bundle that starts Anki if it is not running, starts the server, and renders the
+a real app bundle that starts the server and renders the
 UI in its own window — no tab strip, no address bar, its own Dock icon and running dot.
 See [`scripts/app/README.md`](scripts/app/README.md) for details.
 
@@ -73,7 +83,6 @@ scripts/app/launch.sh stop          # stop the server
 ```
 
 ## CLI
-
 
 ```bash
 uv run anki decks                         # list decks
@@ -89,20 +98,28 @@ uv run anki flag 0 1234567890123          # clear the flag
 uv run anki tag 1234567890123 -t review
 ```
 
-`--json` on any command gives machine-readable output.
+`--json` on any command gives machine-readable output. `--collection PATH` opens another
+`collection.anki2` than `ANKI_COLLECTION`'s; the command keeps the AnkiWeb login from `.env`.
+
+Like the web app, the CLI needs Anki desktop closed. A command that wrote (`edit`, `flag`,
+`tag`) waits up to 10 seconds for its AnkiWeb sync before exiting, and says on stderr when
+the sync failed or was still running: its changes then go with the next sync.
+
+```bash
+uv run anki login                         # once: AnkiWeb key into .env (never the password)
+```
 
 ## Python
 
 ```python
 from anki_assistant import AnkiClient
 
-anki = AnkiClient()
+anki = AnkiClient()  # the only profile's collection; Anki desktop closed
 for card in anki.flagged_cards("My Deck"):
     print(card.flag_name, card.plain_fields())
 
 anki.update_note_fields(card.note_id, {"Back": "corrected"})
 anki.clear_flag([card.card_id])
-anki.invoke("anyAnkiConnectAction", param=1)  # generic passthrough
 ```
 
 ## Deck sources

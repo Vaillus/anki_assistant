@@ -1,7 +1,7 @@
 [project]
 name = "anki-assistant"
 version = "0.2.0"
-description = "Review flagged Anki cards efficiently: AnkiConnect client, deck sources, local web UI with Claude."
+description = "Review flagged Anki cards efficiently: Anki's collection through the anki library, deck sources, local web UI with Claude."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.27",
     "pypdf>=5.0",
     "python-dotenv>=1.0",
+    "anki==26.9.2",
 ]
 
 [project.scripts]

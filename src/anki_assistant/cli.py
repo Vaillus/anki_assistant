@@ -306,6 +306,23 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+SYNC_WAIT_SECONDS = 10
+
+
+def _wait_for_sync(client: AnkiClient) -> None:
+    """A command that wrote has no server to run its AnkiWeb sync after it: wait for it a few
+    seconds, and say on stderr when it failed or is still running at exit."""
+    synced = client.wait_for_sync(SYNC_WAIT_SECONDS)
+    if not synced:
+        print(
+            f"AnkiWeb sync still running after {SYNC_WAIT_SECONDS} s: exiting; "
+            "the changes go with the next sync",
+            file=sys.stderr,
+        )
+    elif client.last_sync is not None and not client.last_sync.ok:
+        print(f"{client.last_sync.message}; the changes go with the next sync", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_dotenv()
@@ -314,8 +331,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.func is cmd_source:  # sources.json only: Anki's file is not needed
             args.func(client, args)
         else:
-            with client.action():
-                args.func(client, args)
+            try:
+                with client.action():
+                    args.func(client, args)
+            finally:
+                _wait_for_sync(client)
     except AnkiError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

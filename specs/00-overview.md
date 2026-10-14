@@ -71,6 +71,8 @@ The app and Anki desktop sync with AnkiWeb as **one device**: they share one fil
 
 The **AnkiWeb sync** is the sync the app itself runs after an action that wrote (a validation, a flag, a phone sync's replays), so that the other devices get the change within seconds with Anki desktop closed: one `sync_collection` on the still-open collection, then its media, in the background after the reply, then the file is closed. A failed sync (no network, AnkiWeb down) leaves the changes marked; the next sync, the app's or Anki desktop's, sends them, so nothing is lost.
 
+A CLI command that wrote (`anki edit`, `flag`, `tag`) has no server process to run its sync after it: it waits up to 10 seconds for the sync, then exits. A sync that failed, or did not end within those seconds, is reported on stderr; its changes stay marked for the next sync. `--collection` changes only which file the command opens: the command keeps the AnkiWeb login from `.env` and syncs like any other.
+
 The login is not in the file (Anki desktop keeps its own in its profile). The app logs in once with `uv run anki login`, which keeps the key AnkiWeb returns in `.env` as `ANKIWEB_HKEY` (and `ANKIWEB_ENDPOINT` when AnkiWeb names one), never the password. Without `ANKIWEB_HKEY` the app runs no AnkiWeb sync, and Anki desktop sends the app's changes at its next sync.
 
 A **full sync** replaces one side's whole collection with the other's; Anki requires one after a schema change, such as the note-type change a validation or its undo can make. The app reads whether the file's schema changed since the last sync when it opens the file, before writing:

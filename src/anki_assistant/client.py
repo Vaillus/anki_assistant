@@ -174,6 +174,7 @@ class AnkiClient:
         self._col: Collection | None = None
         self._wrote = False
         self._schema_changed_at_open = False
+        self._sync_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------- holding policy
 
@@ -223,11 +224,21 @@ class AnkiClient:
             self._col, self._owner, self._depth, self._wrote = None, None, 0, False
             if wrote and self.auth is not None:
                 at_open = self._schema_changed_at_open
-                threading.Thread(
+                self._sync_thread = threading.Thread(
                     target=self._sync_and_close, args=(col, at_open), daemon=True
-                ).start()
+                )
+                self._sync_thread.start()
             else:
                 self._close(col)
+
+    def wait_for_sync(self, timeout: float) -> bool:
+        """Wait up to `timeout` seconds for the last action's AnkiWeb sync to end (for a
+        process that exits after its action, like the CLI). False: still running."""
+        thread = self._sync_thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
 
     def _close(self, col: Collection) -> None:
         try:

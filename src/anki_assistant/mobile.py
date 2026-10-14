@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 from urllib.parse import unquote
 
 from anki_assistant.client import AnkiClient, Outcomes, _quote
@@ -242,16 +242,17 @@ def _select(
 ) -> list[tuple[Card, int, CardKind]]:
     """The batch's cards, each with its day and kind, in batch order (specs/mobile.md#batch).
 
-    Day 0 is Anki's study queue of the deck. Days 1 and 2 are rebuilt: each day's cards not
-    taken by an earlier day are gathered in the order settings' order, then cut at the quota.
-    Without order settings, every option keeps its default.
+    Every day, day 0 included, is rebuilt: its cards not taken by an earlier day are gathered
+    in the order settings' order, then cut at its quota. Anki's study queue is not used, so
+    sub-deck limits and sibling burying do not apply. Without order settings, every option
+    keeps its default.
     """
     order = order or OrderSettings()
-    queue = anki.study_queue(deck)
+    days = range(len(quotas))
     scope = f"deck:{_quote(deck)} -is:suspended -is:buried"
-    due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in (1, 2)}
+    due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in days}
     new_ids = anki.find_card_ids(f"{scope} is:new")
-    wanted = {q.card_id for q in queue} | due_by[WINDOW_DAYS - 1] | set(new_ids)
+    wanted = set().union(*due_by.values(), new_ids)
     infos = {c.card_id: c for c in anki.cards_info(sorted(wanted))}
 
     def new_key(c: Card) -> tuple[Any, ...]:
@@ -265,11 +266,9 @@ def _select(
 
     new_cards = sorted((infos[c] for c in new_ids if c in infos), key=new_key)
 
-    chosen: list[tuple[Card, int, CardKind]] = [
-        (infos[q.card_id], 0, cast(CardKind, q.kind)) for q in queue if q.card_id in infos
-    ]
-    taken = {card.card_id for card, _, _ in chosen}
-    for day in range(1, len(quotas)):
+    chosen: list[tuple[Card, int, CardKind]] = []
+    taken: set[int] = set()
+    for day in days:
         quota = quotas[day]
         pool = [infos[c] for c in due_by[day] if c in infos and c not in taken]
         intraday = sorted((c for c in pool if c.queue == 1), key=lambda c: c.due)
@@ -336,8 +335,8 @@ def batch_card(
 
 
 def build_batch(anki: AnkiClient, deck: str, rollover_hour: int, now: datetime) -> Batch:
-    """The cards the phone downloads: Anki's study queue for day 0, one daily quota for each
-    later Anki day of the window."""
+    """The cards the phone downloads: each Anki day of the window rebuilt and cut at its
+    daily quota."""
     quotas = daily_quotas(anki, deck)
     order = order_settings(anki.deck_config(deck) or {})
     chosen = _select(anki, deck, quotas, order)

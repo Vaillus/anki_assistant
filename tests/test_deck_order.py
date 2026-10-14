@@ -105,6 +105,16 @@ def test_move_after_and_refused_outside_tree_parent(store: DeckOrderStore):
         do.move(store, t, IDS["courant::00-Thèse"], before=IDS["courant::03-OR::MCNF"])
 
 
+def test_a_drop_on_the_decks_own_place_stores_nothing(store: DeckOrderStore):
+    t = tree(store)
+    deck = IDS["courant::01-AI"]
+    do.move(store, t, deck, before=deck)
+    do.move(store, t, deck, before=IDS["courant::02-code"])
+    do.move(store, t, deck, after=IDS["courant::00-Thèse"])
+    assert store.order == {}
+    assert store.path is not None and not store.path.exists()
+
+
 def test_group_turned_into_label_lifts_its_decks_into_its_place(store: DeckOrderStore):
     t = tree(store)
     group = IDS["courant::01-AI"]

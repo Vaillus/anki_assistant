@@ -475,7 +475,8 @@ def move(
 ) -> None:
     """Place a deck right before `before`, or right after `after`, among the decks of its tree
     parent (specs/review.md#moving-a-deck). Both must share the deck's tree parent: a drop
-    elsewhere is refused (`ValueError`). With neither, the deck goes last."""
+    elsewhere is refused (`ValueError`). With neither, the deck goes last. A drop that leaves
+    the order as it is stores nothing, so the tree parent stays unreordered."""
     parent = tree_parent_of(tree, deck_id)
     siblings = [row.id for row in tree.rows if row.parent_id == parent]
     target = before if before is not None else after
@@ -490,6 +491,8 @@ def move(
     else:
         index = order.index(target) + (1 if after is not None else 0)
         order.insert(index, deck_id)
+    if order == siblings:
+        return
     store.order[parent] = order
     store.save()
 

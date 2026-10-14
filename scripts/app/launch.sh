@@ -53,7 +53,7 @@ case "${1:-start}" in
     ;;
   status)
     web_up && echo "web: up at $APP_URL" || echo "web: down"
-    anki_open && echo "anki desktop: open (the app's actions wait for it to close)" ||
+    anki_open && echo "anki desktop: open (the app's actions fail until it is closed)" ||
       echo "anki desktop: closed"
     exit 0
     ;;

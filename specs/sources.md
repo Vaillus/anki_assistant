@@ -10,7 +10,7 @@ Every source has an **id**: six path-safe characters, generated when the entry i
 
 A source can be **shared**: listed in the corpus of several decks and stored once. What it points to, its page range and its annotation are the same from every deck that lists it, so editing it from one deck changes it for all of them. Removing a shared source from one deck takes it off that deck's corpus only; the source itself goes once no deck lists it.
 
-Corpora live in `sources.json` at the project root (override with `ANKI_SOURCES`). Nothing about sources is stored in Anki. The file holds the vault location, each source once under its id (`sources`), each deck's corpus as the ordered ids of its sources keyed by deck name (`decks`), and the [anchors](#anchors). A file written before sources were shared, with whole entries under each deck, is read as such: an id met again on another deck lists the source already read.
+Corpora live in `sources.json` at the project root (override with `ANKI_SOURCES`). Nothing about sources is stored in Anki. The file holds the vault location, each source once under its id (`sources`), each deck's corpus as the ordered ids of its sources keyed by deck name (`decks`), and the [anchors](#anchors). A file written before sources were shared, with whole entries under each deck, is read as such: an id met again on another deck lists the source already read. When the two entries differ (target, kind, page range or annotation), the first one read is kept and a warning in the server log names the id and both decks.
 
 A source entry has:
 

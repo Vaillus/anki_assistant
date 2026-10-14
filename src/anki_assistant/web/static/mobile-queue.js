@@ -97,9 +97,16 @@
     return { kind: "day", day: day, at: a.at };
   }
 
+  /* An interday learning card: a learning card with a due day (specs/mobile.md#batch-card).
+     It counts against the review limit, as in Anki's v3 scheduler. */
+  function isInterday(card) {
+    return card.kind === "learn" && !!card.due_day;
+  }
+
   /* What the answers given on Anki day `day` used of that day's limits
-     (specs/mobile.md#phone-queue): a card's first answer counts by its batch kind (review or
-     new; a learning card counts nothing); a later answer counts as a review when the previous
+     (specs/mobile.md#phone-queue): a card's first answer counts by its batch kind (a review or
+     an interday learning card as a review, a new card as new, an intraday learning card as
+     nothing); a later answer counts as a review when the previous
      outcome brought the card back on a later day, as nothing when it was a same-day return. */
   function answeredOn(state, day) {
     const used = { review: 0, new: 0 };
@@ -115,7 +122,7 @@
       given.forEach((a, i) => {
         if (ankiDay(a.at, roll) !== day) return;
         if (i === 0) {
-          if (card && card.kind === "review") used.review += 1;
+          if (card && (card.kind === "review" || isInterday(card))) used.review += 1;
           else if (card && card.kind === "new") used.new += 1;
           return;
         }
@@ -146,7 +153,8 @@
        counts   leftToday split like Anki: { new, learn, review }, summing to leftToday
        expired  today is past the window's last day
      Each day shows at most its quota of reviews and of new cards, minus what was answered
-     that day: the share's reviews, the earlier days' reviews not reached and the cards
+     that day: the share's interday learning cards take the review quota first; then the
+     share's reviews, the earlier days' reviews not reached and the cards
      returning that day are sorted in Anki's review order and cut; new cards in batch order.
      `head` (optional card id) is put first when it is in the queue (undo). */
   function buildQueue(state, now, head) {
@@ -187,6 +195,12 @@
     if (quota) {
       const used = answeredOn(state, t);
       const rankOf = new Map((batch.cards || []).map((c, i) => [c.card_id, i]));
+      const interday = share
+        .filter(isInterday)
+        .map((c) => ({ card: c, due: c.due_day, rank: rankOf.get(c.card_id) }));
+      interday.sort(reviewOrder(state));
+      const room = Math.max(0, quota.review - used.review);
+      const learning = interday.slice(0, room);
       const reviews = share
         .filter((c) => c.kind === "review")
         .map((c) => ({ card: c, due: c.due_day || days[c.day], rank: rankOf.get(c.card_id) }))
@@ -194,13 +208,14 @@
       reviews.sort(reviewOrder(state));
       const news = share.filter((c) => c.kind === "new");
       kept = new Set(
-        reviews
-          .slice(0, Math.max(0, quota.review - used.review))
+        learning
+          .concat(reviews.slice(0, room - learning.length))
           .map((r) => r.card.card_id)
           .concat(news.slice(0, Math.max(0, quota.new - used.new)).map((c) => c.card_id))
       );
     }
-    const fits = (c) => kept === null || c.kind === "learn" || kept.has(c.card_id);
+    const fits = (c) =>
+      kept === null || (c.kind === "learn" && !isInterday(c)) || kept.has(c.card_id);
     const shown = share.filter(fits);
     const back = returning.filter((r) => kept === null || kept.has(r.card.card_id));
 

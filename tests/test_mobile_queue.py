@@ -101,3 +101,17 @@ def test_learning_cards_and_same_day_returns_ignore_the_quota() -> None:
     ids, counts = queue_ids(state, at(0, 10))
     assert ids == [4, 1, 2, 3]
     assert counts["learn"] == 4
+
+
+def test_interday_learning_takes_the_review_quota_first() -> None:
+    review = card(1, 0, "review", "2026-10-01")  # most overdue
+    interday = [card(i, 0, "learn", "2026-10-12") for i in (2, 3)]
+    intraday = card(4, 0, "learn")
+    answers = [{"action_id": "x", "card_id": 2, "at": at(0, 9), "ease": 3, "outcome": 864_000}]
+    state = {"batch": batch([review, *interday, intraday]), "answers": answers}
+    state |= {"pending": [], "burials": []}
+    ids, counts = queue_ids(state, at(0, 10))
+    # Quota 2, one used by the interday card answered today: the other interday card takes
+    # the last one, so the overdue review waits; the intraday card is never cut.
+    assert ids == [3, 4]
+    assert counts == {"new": 0, "learn": 2, "review": 0}

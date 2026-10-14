@@ -97,12 +97,57 @@
     return { kind: "day", day: day, at: a.at };
   }
 
+  /* What the answers given on Anki day `day` used of that day's limits
+     (specs/mobile.md#phone-queue): a card's first answer counts by its batch kind (review or
+     new; a learning card counts nothing); a later answer counts as a review when the previous
+     outcome brought the card back on a later day, as nothing when it was a same-day return. */
+  function answeredOn(state, day) {
+    const used = { review: 0, new: 0 };
+    const roll = rollover(state);
+    const byCard = new Map();
+    for (const a of state.answers || []) {
+      if (!byCard.has(a.card_id)) byCard.set(a.card_id, []);
+      byCard.get(a.card_id).push(a);
+    }
+    for (const [cardId, given] of byCard) {
+      given.sort((a, b) => a.at - b.at);
+      const card = cardById(state, cardId);
+      given.forEach((a, i) => {
+        if (ankiDay(a.at, roll) !== day) return;
+        if (i === 0) {
+          if (card && card.kind === "review") used.review += 1;
+          else if (card && card.kind === "new") used.new += 1;
+          return;
+        }
+        const previous = given[i - 1].outcome;
+        if (previous !== null && previous !== undefined && previous >= DAY_S) used.review += 1;
+      });
+    }
+    return used;
+  }
+
+  /* Anki's review order for the cut (specs/mobile.md#phone-queue): due day first, or deck
+     first then due day when the preset sorts reviews deck by deck; ties keep batch order. */
+  function reviewOrder(state) {
+    const byDeck = state.batch && state.batch.review_order === "deck";
+    return (a, b) => {
+      if (byDeck && a.card.deck_rank !== b.card.deck_rank) {
+        return (a.card.deck_rank || 0) - (b.card.deck_rank || 0);
+      }
+      if (a.due !== b.due) return a.due < b.due ? -1 : 1;
+      return a.rank - b.rank;
+    };
+  }
+
   /* The phone queue now.
        queue    cards to show, in order (queue[0] is the current card)
        later    same-day returns not due yet: [{ card, at }], soonest first
        leftToday  queue + the `later` returns due before the next rollover
        counts   leftToday split like Anki: { new, learn, review }, summing to leftToday
        expired  today is past the window's last day
+     Each day shows at most its quota of reviews and of new cards, minus what was answered
+     that day: the share's reviews, the earlier days' reviews not reached and the cards
+     returning that day are sorted in Anki's review order and cut; new cards in batch order.
      `head` (optional card id) is put first when it is in the queue (undo). */
   function buildQueue(state, now, head) {
     const batch = state.batch;
@@ -119,21 +164,47 @@
     const later = [];
     const share = [];
     const returning = [];
-    for (const c of batch.cards || []) {
-      if (!visible(c)) continue;
+    (batch.cards || []).forEach((c, rank) => {
+      if (!visible(c)) return;
       if (answersOf(state, c.card_id).length === 0) {
         if (days[c.day] !== undefined && days[c.day] <= t) share.push(c);
-        continue;
+        return;
       }
       const r = returnOf(state, c);
       if (r.kind === "soon") (r.at <= now ? soon : later).push({ card: c, at: r.at });
-      else if (r.kind === "day" && r.day <= t) returning.push({ card: c, day: r.day, at: r.at });
-    }
+      else if (r.kind === "day" && r.day <= t) {
+        returning.push({ card: c, day: r.day, at: r.at, rank: rank });
+      }
+    });
     soon.sort((a, b) => a.at - b.at);
     later.sort((a, b) => a.at - b.at);
     returning.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.at - b.at));
 
-    let queue = soon.map((s) => s.card).concat(share, returning.map((r) => r.card));
+    /* The day's limits: kept holds the review and new cards that fit. */
+    const k = days.indexOf(t);
+    const quota = k >= 0 && batch.quota ? batch.quota[k] : null;
+    let kept = null;
+    if (quota) {
+      const used = answeredOn(state, t);
+      const rankOf = new Map((batch.cards || []).map((c, i) => [c.card_id, i]));
+      const reviews = share
+        .filter((c) => c.kind === "review")
+        .map((c) => ({ card: c, due: c.due_day || days[c.day], rank: rankOf.get(c.card_id) }))
+        .concat(returning.map((r) => ({ card: r.card, due: r.day, rank: r.rank })));
+      reviews.sort(reviewOrder(state));
+      const news = share.filter((c) => c.kind === "new");
+      kept = new Set(
+        reviews
+          .slice(0, Math.max(0, quota.review - used.review))
+          .map((r) => r.card.card_id)
+          .concat(news.slice(0, Math.max(0, quota.new - used.new)).map((c) => c.card_id))
+      );
+    }
+    const fits = (c) => kept === null || c.kind === "learn" || kept.has(c.card_id);
+    const shown = share.filter(fits);
+    const back = returning.filter((r) => kept === null || kept.has(r.card.card_id));
+
+    let queue = soon.map((s) => s.card).concat(shown, back.map((r) => r.card));
     if (head !== undefined && head !== null) {
       const i = queue.findIndex((c) => c.card_id === head);
       if (i > 0) queue = [queue[i]].concat(queue.slice(0, i), queue.slice(i + 1));
@@ -143,8 +214,8 @@
     const leftToday = queue.length + laterToday;
     /* specs/mobile.md#phone-queue § Left today: same-day returns are learning, returns on a
        later day are reviews, the unanswered share counts by its batch kind. */
-    const counts = { new: 0, learn: soon.length + laterToday, review: returning.length };
-    for (const c of share) {
+    const counts = { new: 0, learn: soon.length + laterToday, review: back.length };
+    for (const c of shown) {
       if (c.kind === "new") counts.new += 1;
       else if (c.kind === "learn") counts.learn += 1;
       else counts.review += 1;
@@ -266,6 +337,7 @@
     flagOf,
     isSuspended,
     returnOf,
+    answeredOn,
     buildQueue,
     newId,
     answer,

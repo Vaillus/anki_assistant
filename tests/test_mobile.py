@@ -418,6 +418,22 @@ def test_batch_outcomes_are_the_schedulers_raw_seconds(anki: PhoneAnki) -> None:
     assert "⁨" not in "".join(card.outcome_labels), "isolation marks removed"
 
 
+def test_batch_gives_the_review_order_of_each_card(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=10, new=0, **DECK_ORDER)
+    overdue = anki.new_card(deck="courant::b", rel_due=-3)
+    tomorrow = anki.new_card(deck="courant::A", rel_due=1)
+    learn = anki.new_card(queue=1)
+    batch = build(anki)
+    by_id = {c.card_id: c for c in batch.cards}
+    assert batch.review_order == "deck"
+    assert by_id[overdue].due_day == (TODAY - timedelta(days=3)).isoformat()
+    assert by_id[tomorrow].due_day == (TODAY + timedelta(days=1)).isoformat()
+    assert by_id[learn].due_day is None, "intraday learning: due in seconds, no day"
+    assert by_id[learn].deck_rank < by_id[tomorrow].deck_rank < by_id[overdue].deck_rank
+    anki.set_limits(DECK, reviewOrder=0)
+    assert build(anki).review_order == "due"
+
+
 def test_batch_is_read_only(anki: PhoneAnki) -> None:
     anki.new_card()
     build(anki)
@@ -760,6 +776,7 @@ def test_route_batch(http: TestClient, anki: PhoneAnki) -> None:
         "quota",
         "cards",
         "media",
+        "review_order",
     }
     assert body["quota"][0] == {"review": 20, "new": 5}
     card = body["cards"][0]

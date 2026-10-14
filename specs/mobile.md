@@ -89,7 +89,8 @@ Each card of a batch carries:
 - its **cloze number** (`ord + 1`) for a cloze note type, `null` otherwise;
 - its flag;
 - the media file names its content references;
-- its four [precomputed outcomes](#precomputed-outcomes).
+- its four [precomputed outcomes](#precomputed-outcomes);
+- its due day and its deck rank, for the [phone queue](#phone-queue)'s review order.
 
 **Question and answer fields** come from the card's template in its note type (for a cloze note type, the single template; otherwise the template at index `ord`):
 
@@ -112,20 +113,27 @@ The phone runs no scheduler. An outcome holds for the card's state at download: 
 
 The **phone queue** is what the phone app shows now. Rules the phone app implements:
 
-1. **Today's share of the batch**, in batch order: the cards whose day's date (`days[day]`) is on or before the phone's today. The phone's today is computed with the batch's `rollover_hour` in the phone's local time. A card already answered on the phone leaves this share.
-2. **Plus returning cards**: a card answered on the phone, once, comes back when its outcome says so:
+1. **Today's share of the batch**, in batch order: the cards whose day's date (`days[day]`) is on or before the phone's today — today's cards and the earlier days' cards not reached. The phone's today is computed with the batch's `rollover_hour` in the phone's local time. A card already answered on the phone leaves this share.
+2. **Plus returning cards**: a **returning card** is a card answered on the phone, once, that comes back when its outcome says so:
    - outcome under one day → at *answered time + outcome*, in the same session, at the queue's head when that time has passed;
-   - outcome of one day or more → on the Anki day *answer's Anki day + round(outcome / 1 day)*, if that day is in the window, at the end of that day's share;
+   - outcome of one day or more → on the Anki day *answer's Anki day + round(outcome / 1 day)*, if that day is in the window, after today's share;
    - otherwise (past the window, second answer, `null` outcome) → not until the next sync.
-3. **Minus buried cards**: a card buried today is hidden until the next Anki day. Burying sends nothing to Anki.
+3. **Cut at the day's limit.** Each day shows at most that day's quota (`quota[k]` for `days[k]`) of reviews and of new cards, minus what was answered on the phone that day, returning and unreached cards included:
+   - the **reviews** of the share and the cards returning on a later day are merged, sorted in **Anki's review order** — due day first, or deck first (by `deck_rank`) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
+   - the **new cards** of the share, in batch order, are kept up to the new quota;
+   - learning cards of the share and same-day returns are learning cards: never cut, as in Anki;
+   - **answered that day**: a card's first answer counts as a review or a new card by its kind (a learning card counts nothing); a later answer counts as a review when the previous outcome brought the card back on a later day, as nothing when it was a same-day return.
+
+   What does not fit moves to the next window day, where it competes again by the same order; past the window's last day it waits for the next sync, still due in Anki.
+4. **Minus buried cards**: a card buried today is hidden until the next Anki day. Burying sends nothing to Anki.
 
 **Left today** is the number of cards the phone app still shows today: the phone queue now, plus the same-day returns whose time falls before the next rollover. It splits like Anki's counts; each card of it is in exactly one part:
 
 | Part | Cards |
 |---|---|
-| **new** | cards of today's share of kind `new` |
+| **new** | cards of today's share of kind `new` kept by the cut |
 | **learning** | same-day returns (outcome under one day: due now or later today), plus cards of today's share of kind `learn` |
-| **review** | cards of today's share of kind `review`, plus cards returning on a later Anki day (outcome of one day or more) whose day has come |
+| **review** | cards of today's share of kind `review` and cards returning on a later Anki day (outcome of one day or more) whose day has come, kept by the cut |
 
 Today's share holds only cards not answered on the phone, and suspended and buried cards are in no part, so the three parts sum to left today.
 
@@ -271,14 +279,16 @@ The page itself is served outside `/api`: `GET /m` (the page), `GET /m/manifest.
       "flag": 0,
       "media": ["paste-1a2b.jpg"],
       "outcomes": [600, 8935200, 15768000, 18658800],
-      "outcome_labels": ["<10m", "3,4mo", "6mo", "7,1mo"]
+      "outcome_labels": ["<10m", "3,4mo", "6mo", "7,1mo"],
+      "due_day": "2026-10-03", "deck_rank": 2
     }
   ],
-  "media": ["paste-1a2b.jpg"]
+  "media": ["paste-1a2b.jpg"],
+  "review_order": "deck"
 }
 ```
 
-`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
+`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `due_day` is the Anki day a review or interday-learning card is due (`null` otherwise); `deck_rank` is the card's deck's place in Anki's deck list among the batch's decks; `review_order` is the preset's review order, `deck` (`reviewOrder` `2`) or `due`. The phone queue sorts reviews with them ([Phone queue](#phone-queue)). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
 
 **Sync** (`POST /api/mobile/sync`), request:
 

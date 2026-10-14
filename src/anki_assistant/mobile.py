@@ -150,6 +150,10 @@ class BatchCard:
     #: Seconds Anki would give for again, hard, good, easy (None when not understood).
     outcomes: list[int | None]
     outcome_labels: list[str]
+    #: The Anki day the card is due (review and interday learning cards), else None.
+    due_day: str | None = None
+    #: The card's deck's place in Anki's deck list, among the batch's decks.
+    deck_rank: int = 0
 
 
 @dataclass
@@ -161,6 +165,8 @@ class Batch:
     quota: list[DayQuota]
     cards: list[BatchCard] = field(default_factory=list)
     media: list[str] = field(default_factory=list)
+    #: The preset's review order: `deck` (deck first, then due day) or `due` (due day).
+    review_order: Literal["due", "deck"] = "due"
 
 
 def daily_quotas(anki: AnkiClient, deck: str) -> list[DayQuota]:
@@ -198,7 +204,12 @@ def order_settings(config: dict[str, Any]) -> OrderSettings:
 
 def _deck_order(card: Card) -> tuple[str, ...]:
     """Anki's deck-list order: parent before children, siblings by name, case ignored."""
-    return tuple(part.casefold() for part in card.deck_name.split("::"))
+    return deck_list_key(card.deck_name)
+
+
+def deck_list_key(deck: str) -> tuple[str, ...]:
+    """Sort key of a deck name in Anki's deck list."""
+    return tuple(part.casefold() for part in deck.split("::"))
 
 
 _T = TypeVar("_T")
@@ -322,13 +333,23 @@ def build_batch(anki: AnkiClient, deck: str, rollover_hour: int, now: datetime) 
     """The cards the phone downloads: Anki's study queue for day 0, one daily quota for each
     later Anki day of the window."""
     quotas = daily_quotas(anki, deck)
-    chosen = _select(anki, deck, quotas, order_settings(anki.deck_config(deck) or {}))
+    order = order_settings(anki.deck_config(deck) or {})
+    chosen = _select(anki, deck, quotas, order)
     templates = _templates(anki, (c.model_name for c, _, _ in chosen))
     outcomes = anki.answer_outcomes([c.card_id for c, _, _ in chosen])
-    cards = [
-        batch_card(c, day, kind, templates.get(c.model_name, {}), outcomes.get(c.card_id))
-        for c, day, kind in chosen
-    ]
+    today = anki_day(now, rollover_hour)
+    anki_today = anki.today() if chosen else 0
+    ranks = {
+        name: rank
+        for rank, name in enumerate(sorted({c.deck_name for c, _, _ in chosen}, key=deck_list_key))
+    }
+    cards = []
+    for c, day, kind in chosen:
+        bc = batch_card(c, day, kind, templates.get(c.model_name, {}), outcomes.get(c.card_id))
+        if c.queue in (2, 3):  # due counted in days
+            bc.due_day = (today + timedelta(days=c.due - anki_today)).isoformat()
+        bc.deck_rank = ranks[c.deck_name]
+        cards.append(bc)
     media: list[str] = []
     for bc in cards:
         media.extend(n for n in bc.media if n not in media)
@@ -336,10 +357,11 @@ def build_batch(anki: AnkiClient, deck: str, rollover_hour: int, now: datetime) 
         deck=deck,
         generated_at=round(now.timestamp() * 1000),
         rollover_hour=rollover_hour,
-        days=[d.isoformat() for d in window(anki_day(now, rollover_hour))],
+        days=[d.isoformat() for d in window(today)],
         quota=list(quotas),
         cards=cards,
         media=media,
+        review_order="deck" if order.review_by_deck else "due",
     )
 
 

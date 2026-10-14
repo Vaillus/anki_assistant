@@ -4,7 +4,8 @@ Mounted by main.py under the `/api` prefix, so paths declared here are without i
 
 NOTE for the frontend: deck names contain `::` and spaces, which do not survive a path segment
 cleanly, so a deck always travels as a query parameter (`?deck=<name>`). Source ids are
-path-safe and go in the path (`/sources/{source_id}/text`).
+path-safe and go in the path (`/sources/{source_id}/text?deck=`). A source is reached through
+the effective corpus of the deck in use (specs/sources.md#looking-a-source-up).
 """
 
 from __future__ import annotations
@@ -329,31 +330,34 @@ def create_vault_note(body: VaultNoteIn, request: Request) -> SourceResponse:
 
 
 @router.patch("/sources/{source_id}/text", response_model=SourceResponse)
-def replace_source_text(source_id: str, body: ReplaceIn, request: Request) -> SourceResponse:
-    """Replace one passage of an obsidian source. 409 when `old` occurs 0 or 2+ times; 400 on
-    a pdf or web source, which are read-only."""
+def replace_source_text(
+    source_id: str, deck: str, body: ReplaceIn, request: Request
+) -> SourceResponse:
+    """Replace one passage of an obsidian source of the deck's corpus. 409 when `old` occurs 0
+    or 2+ times; 400 on a pdf or web source, which are read-only; 404 when the deck's corpus
+    does not list the id."""
     store = _store(request)
-    source = store.by_id(source_id)
+    source = store.find(deck, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail=f"unknown source: {source_id}")
     if source.kind != "obsidian":
         raise HTTPException(status_code=400, detail="only an Obsidian note can be edited")
     try:
-        store.replace_in_note(source_id, body.old, body.new)
+        store.replace_in_note(deck, source_id, body.old, body.new)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return SourceResponse(deck=source.deck, source=_to_view(store, source))
 
 
 @router.post("/sources/{source_id}/open")
-def open_source_file(source_id: str, request: Request) -> dict[str, str]:
+def open_source_file(source_id: str, deck: str, request: Request) -> dict[str, str]:
     """Open a PDF source via its ``zotero://open-pdf`` URI so Zotero's reader shows it directly.
 
     Falls back to opening the file with the default app when the Zotero lookup fails.
     Local-only app, no security concern.
     """
     store = _store(request)
-    source = store.by_id(source_id)
+    source = store.find(deck, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail=f"unknown source: {source_id}")
     if source.kind != "pdf":

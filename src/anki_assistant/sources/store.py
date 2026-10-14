@@ -5,27 +5,32 @@ the ANKI_SOURCES env var):
 
     {
       "vault": {"name": "Vault", "path": "/Users/me/Documents/Vault"},
+      "sources": {
+        "k7q2vd": {"kind": "obsidian", "target": "Allocation sur des angles disjoints"},
+        "m3x8pa": {"kind": "pdf", "target": "~/stone_search.pdf", "pages": "12-19",
+                   "note": "chap. 2"},
+        "w5hc2e": {"kind": "web", "target": "https://fleuret.org/francois/lbdl.html"}
+      },
       "decks": {
-        "courant::00-Thèse": [
-          {"id": "k7q2vd", "kind": "obsidian", "target": "Allocation sur des angles disjoints"},
-          {"id": "m3x8pa", "kind": "pdf", "target": "~/stone_search.pdf", "pages": "12-19",
-           "note": "chap. 2"}
-        ],
-        "courant::01-AI::little book of deep learning": [
-          {"id": "r9wt4n", "kind": "pdf", "target": "~/lbdl.pdf"},
-          {"id": "w5hc2e", "kind": "web", "target": "https://fleuret.org/francois/lbdl.html"}
-        ]
+        "courant::00-Thèse": ["k7q2vd", "m3x8pa"],
+        "courant::01-AI::little book of deep learning": ["w5hc2e"],
+        "courant::01-AI::ML for CO": ["w5hc2e"]
       },
       "anchors": {
         "1739276778640": ["k7q2vd"]
       }
     }
 
-A deck's value is an ordered list of sources: its **corpus**. A deck's effective corpus is its
-own sources followed by each ancestor's (nearest first), so `courant::01-AI::little book of deep
-learning` sees its own sources then those of `courant::01-AI`, then `courant`. For backward
-compatibility with the 0.1 format, a deck value that is a single object (not a list) is read as
-a one-element list and rewritten as a list on next save; an entry without `id` gets one on load.
+`sources` holds each source once, under its id; a deck's value in `decks` is the ordered ids of
+its own sources: its **corpus**. Several decks can list one source, which is then **shared**:
+edited from one deck, it changes for all; it goes once no deck lists it. A deck's effective
+corpus is its own sources followed by each ancestor's (nearest first), so `courant::01-AI::little
+book of deep learning` sees its own sources then those of `courant::01-AI`, then `courant`. A
+source is looked up by deck and id (`find`), through that effective corpus.
+
+Older files are read too: a deck value holding whole entries (before sharing), or a single
+object (0.1). An id met again on another deck lists the source first read (a differing copy is
+logged as a warning); an entry without `id` gets one on load. The next save writes the format above.
 
 `anchors` maps an Anki note id (JSON key, so a string) to the ids of the sources the note was
 made from. Nothing is written into Anki: only this file knows a note is anchored.
@@ -301,12 +306,19 @@ class Source:
 
 
 class SourceStore:
-    """Read/write the deck -> corpus mapping and the note -> sources anchors."""
+    """Read/write the sources, the deck -> corpus mapping and the note -> sources anchors.
+
+    A source is stored once, under its id (`sources`); a deck's own corpus is the ordered ids
+    it lists (`lists`), so several decks can list one **shared** source (specs/sources.md).
+    """
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_store_path()
         self.vault = Vault()
-        self.corpora: dict[str, list[Source]] = {}
+        #: source id -> the source, stored once whichever decks list it
+        self.sources: dict[str, Source] = {}
+        #: deck name -> the ids of its own sources, in order
+        self.lists: dict[str, list[str]] = {}
         #: note id (as a string, it is a JSON key) -> source ids, in the order the user added them
         self.anchor_map: dict[str, list[str]] = {}
         self.load()
@@ -316,14 +328,37 @@ class SourceStore:
             return
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         self.vault = Vault.from_dict(raw.get("vault", {}))
-        corpora: dict[str, list[Source]] = {}
-        for deck, entry in raw.get("decks", {}).items():
-            if isinstance(entry, list):
-                corpora[deck] = [Source.from_dict(deck, item) for item in entry]
-            else:
-                # 0.1 format: a single object instead of a list.
-                corpora[deck] = [Source.from_dict(deck, entry)]
-        self.corpora = corpora
+        sources: dict[str, Source] = {}
+        for sid, entry in raw.get("sources", {}).items():
+            sources[str(sid)] = Source.from_dict("", {**entry, "id": sid})
+        lists: dict[str, list[str]] = {}
+        for deck, value in raw.get("decks", {}).items():
+            # Before sharing, a deck held whole entries; 0.1 held a single object.
+            items = value if isinstance(value, list) else [value]
+            ids: list[str] = []
+            for item in items:
+                if isinstance(item, dict):
+                    src = Source.from_dict(deck, item)
+                    first = sources.setdefault(src.id, src)
+                    if replace(first, deck=deck) != src:
+                        log.warning(
+                            "source %s differs on %s from %s; the first read is kept",
+                            src.id,
+                            deck,
+                            first.deck or "sources",
+                        )
+                    sid = src.id
+                else:
+                    sid = str(item)
+                    if sid not in sources:
+                        log.warning("%s: unknown source id %s dropped", deck, sid)
+                        continue
+                if sid not in ids:
+                    ids.append(sid)
+            if ids:
+                lists[deck] = ids
+        self.sources = sources
+        self.lists = lists
         self.anchor_map = {
             str(note_id): [str(sid) for sid in ids]
             for note_id, ids in raw.get("anchors", {}).items()
@@ -333,10 +368,11 @@ class SourceStore:
     def save(self) -> None:
         payload = {
             "vault": self.vault.to_dict(),
-            "decks": {
-                deck: [src.to_dict() for src in sources]
-                for deck, sources in sorted(self.corpora.items())
+            "sources": {
+                sid: {k: v for k, v in src.to_dict().items() if k != "id"}
+                for sid, src in sorted(self.sources.items())
             },
+            "decks": {deck: list(ids) for deck, ids in sorted(self.lists.items())},
             "anchors": {
                 note_id: list(ids) for note_id, ids in sorted(self.anchor_map.items()) if ids
             },
@@ -348,6 +384,30 @@ class SourceStore:
 
     # -------------------------------------------------------------- accessors
 
+    def _listed(self, deck: str) -> list[Source]:
+        """The deck's own sources, each as listed on `deck` (`Source.deck`)."""
+        return [replace(self.sources[sid], deck=deck) for sid in self.lists.get(deck, [])]
+
+    @property
+    def corpora(self) -> dict[str, list[Source]]:
+        """Every deck's own corpus, as listed. A view: write through `set_corpus`."""
+        return {deck: self._listed(deck) for deck in self.lists}
+
+    @corpora.setter
+    def corpora(self, value: dict[str, list[Source]]) -> None:
+        """Replace every corpus at once; an id met again lists the source first given."""
+        self.sources, self.lists = {}, {}
+        for deck, entries in value.items():
+            ids: list[str] = []
+            for src in entries:
+                if not src.id:
+                    src = replace(src, id=new_source_id())
+                self.sources.setdefault(src.id, replace(src, deck=deck))
+                if src.id not in ids:
+                    ids.append(src.id)
+            if ids:
+                self.lists[deck] = ids
+
     def corpus(self, deck: str) -> list[Source]:
         """The deck's own sources, then each ancestor's (nearest first)."""
         result: list[Source] = []
@@ -355,36 +415,46 @@ class SourceStore:
         parts = deck.split("::")
         for cut in range(len(parts), 0, -1):
             ancestor = "::".join(parts[:cut])
-            for src in self.corpora.get(ancestor, []):
+            for src in self._listed(ancestor):
                 if src.id not in seen_ids:
                     result.append(src)
                     seen_ids.add(src.id)
         return result
+
+    def find(self, deck: str, source_id: str) -> Source | None:
+        """The source `source_id` as the deck reaches it, through its effective corpus; None when
+        that corpus does not list it, even if another deck does (specs/sources.md)."""
+        return next((src for src in self.corpus(deck) if src.id == source_id), None)
 
     def get(self, deck: str, inherit: bool = True) -> Source | None:
         """First source of the deck's corpus (inheritance included unless `inherit=False`).
 
         Kept for the CLI, which only ever shows/edits one source per deck.
         """
-        corpus = self.corpus(deck) if inherit else list(self.corpora.get(deck, []))
+        corpus = self.corpus(deck) if inherit else self._listed(deck)
         return corpus[0] if corpus else None
 
     def set_corpus(self, deck: str, entries: list[Source]) -> tuple[list[Source], int]:
         """Replace the deck's own corpus with `entries`. An empty list deletes the entry.
 
-        Entries without an id get one. Anchors to a source id that no longer exists anywhere
-        afterwards are dropped; the count of dropped anchors is returned with the new corpus.
+        An entry without an id is a new source and gets one; an entry with a known id lists
+        that shared source and rewrites its fields, for every deck that lists it. A source no
+        deck lists any more goes, and so do the anchors to it; the count of dropped anchors is
+        returned with the new corpus.
         """
+        ids: list[str] = []
         for source in entries:
-            if not source.id:
-                source.id = new_source_id()
-        if entries:
-            self.corpora[deck] = list(entries)
+            sid = source.id or new_source_id()
+            self.sources[sid] = replace(source, id=sid)
+            if sid not in ids:
+                ids.append(sid)
+        if ids:
+            self.lists[deck] = ids
         else:
-            self.corpora.pop(deck, None)
-        removed = self._drop_anchors_to_unknown_sources()
+            self.lists.pop(deck, None)
+        removed = self._forget_unlisted()
         self.save()
-        return list(self.corpora.get(deck, [])), removed
+        return self._listed(deck), removed
 
     def set(
         self, deck: str, target: str, kind: Kind | None = None, pages: str = "", note: str = ""
@@ -397,16 +467,27 @@ class SourceStore:
         source = Source(
             deck=deck, kind=kind or detect_kind(target), target=target, pages=pages, note=note
         )
-        self.set_corpus(deck, [source])
-        return source
+        (stored,), _ = self.set_corpus(deck, [source])
+        return stored
 
     def unset(self, deck: str) -> bool:
         """Remove the corpus written on this exact deck (not an ancestor's)."""
-        removed = deck in self.corpora
+        removed = deck in self.lists
         if removed:
-            self.corpora.pop(deck, None)
-            self.save()
+            self.set_corpus(deck, [])
         return removed
+
+    def share(self, deck: str, with_decks: Iterable[str]) -> None:
+        """List the deck's own sources on each of `with_decks`, after that deck's own, then take
+        them off `deck`: shared, never copied, ids kept (a group turned into a label)."""
+        group_ids = self.lists.pop(deck, [])
+        if not group_ids:
+            return
+        for other in with_decks:
+            own = self.lists.get(other, [])
+            self.lists[other] = own + [sid for sid in group_ids if sid not in own]
+        self._forget_unlisted()
+        self.save()
 
     def coverage(self, deck_names: list[str]) -> dict[str, Source | None]:
         """Every deck mapped to its effective first source (inherited included), or None."""
@@ -424,17 +505,18 @@ class SourceStore:
             if not src.exists(self.vault)
         ]
 
-    def by_id(self, source_id: str) -> Source | None:
-        """The source carrying this id, whichever deck declares it; None when unknown."""
-        for sources in self.corpora.values():
-            for src in sources:
-                if src.id == source_id:
-                    return src
-        return None
-
     # `AbstractSet`, not `set`: inside this class `set` is the method above.
     def _known_ids(self) -> AbstractSet[str]:
-        return {src.id for sources in self.corpora.values() for src in sources}
+        return set(self.sources)
+
+    def _forget_unlisted(self) -> int:
+        """Drop the sources no deck lists any more, then the anchors to them. Returns how many
+        anchors went."""
+        listed = {sid for ids in self.lists.values() for sid in ids}
+        for sid in list(self.sources):
+            if sid not in listed:
+                del self.sources[sid]
+        return self._drop_anchors_to_unknown_sources()
 
     # ---------------------------------------------------------------- anchors
 
@@ -505,17 +587,15 @@ class SourceStore:
     def add_source(self, deck: str, source: Source) -> Source:
         """Append `source` to the deck's own corpus and save.
 
-        An inherited corpus is materialised on `deck` first — ids kept, so anchors survive —
+        An inherited corpus is listed on `deck` first — shared, not copied, so anchors survive —
         which is the rule of the Source tab's form; this is what `POST /api/sources` and
         `create_note` share. The entry is validated as on load (kind, url, pages); a missing id
-        gets one. Returns the stored entry, written on `deck`.
+        gets one. Returns the stored entry, listed on `deck`.
         """
         entry = Source.from_dict(deck, source.to_dict())
-        own = self.corpora.get(deck)
-        if own is None:
-            own = [replace(inherited, deck=deck) for inherited in self.corpus(deck)]
+        own = self._listed(deck) if deck in self.lists else self.corpus(deck)
         self.set_corpus(deck, [*own, entry])
-        return entry
+        return replace(self.sources[entry.id], deck=deck)
 
     # ---------------------------------------------------------- vault writes
 
@@ -541,15 +621,15 @@ class SourceStore:
             deck, Source(deck=deck, kind="obsidian", target=target, id=source_id or "")
         )
 
-    def replace_in_note(self, source_id: str, old: str, new: str) -> None:
+    def replace_in_note(self, deck: str, source_id: str, old: str, new: str) -> None:
         """Replace `old` with `new` in an obsidian source's file; `old` must occur exactly once.
 
-        KeyError for an unknown id; ValueError for a pdf or web source, or when `old` occurs 0
-        or 2+ times (the message says which). The bounded, reviewable replacement is the whole
-        safety story of writing into the vault — and what makes undoing it a swap of `old` and
-        `new`.
+        KeyError for an id the deck's corpus does not list; ValueError for a pdf or web source,
+        or when `old` occurs 0 or 2+ times (the message says which). The bounded, reviewable
+        replacement is the whole safety story of writing into the vault — and what makes undoing
+        it a swap of `old` and `new`.
         """
-        source = self.by_id(source_id)
+        source = self.find(deck, source_id)
         if source is None:
             raise KeyError(f"unknown source: {source_id}")
         if source.kind != "obsidian":

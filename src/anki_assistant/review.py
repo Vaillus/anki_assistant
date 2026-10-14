@@ -11,11 +11,13 @@ flag, and resolving a note clears the flag on all of them. Flag colours carry no
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from anki_assistant import deck_order
 from anki_assistant.client import AnkiClient
+from anki_assistant.deck_order import DeckOrderStore, DeckTree, LabelInfo, LabelMark
 from anki_assistant.models import Card, Note, strip_html
 from anki_assistant.sources import SourceStore
 from anki_assistant.web.render import render_field
@@ -23,8 +25,10 @@ from anki_assistant.web.render import render_field
 REASON_FIELD = "Back Extra"
 
 __all__ = [
+    "DeckListing",
     "DeckNotes",
     "DeckSummary",
+    "GroupEffects",
     "FlaggedCard",
     "NoteNotFound",
     "NoteView",
@@ -33,7 +37,9 @@ __all__ = [
     "create",
     "create_deck",
     "delete",
+    "deck_listing",
     "edit",
+    "group_label_effects",
     "get_note",
     "get_notes",
     "keep",
@@ -43,6 +49,7 @@ __all__ = [
     "priority_notes",
     "search_notes",
     "split",
+    "turn_group_into_label",
 ]
 
 
@@ -55,7 +62,9 @@ class NoteNotFound(LookupError):
 
 @dataclass
 class DeckSummary:
-    """One row of column 1: a deck with its flagged-note counts and its corpus kinds."""
+    """One row of column 1, in the app's tree: a deck with its flagged-note counts, its corpus
+    kinds and its label. `leaf` is its own name, number prefix hidden; `depth` its depth in the
+    app's tree; `parent_id` its tree parent's deck id (0 at the top level)."""
 
     name: str
     leaf: str
@@ -63,6 +72,32 @@ class DeckSummary:
     flagged_own: int
     flagged_total: int
     source_kinds: list[str] = field(default_factory=list)
+    id: int = 0
+    parent_id: int = 0
+    label: LabelMark | None = None
+    #: « Transformer en étiquette » is offered on this deck.
+    can_group: bool = False
+    #: Why turning it into a label is refused (a deck under it carries a label), or None.
+    group_refused: str | None = None
+
+
+@dataclass
+class DeckListing:
+    """Column 1: every row of the app's tree, in order, and the labels."""
+
+    decks: list[DeckSummary]
+    labels: list[LabelInfo]
+
+
+@dataclass
+class GroupEffects:
+    """What turning a group into a label would do (specs/review.md#labels)."""
+
+    refused: str | None
+    own_cards: int
+    misc: str
+    misc_exists: bool
+    sources: int
 
 
 @dataclass
@@ -180,9 +215,29 @@ def delete_deck(client: AnkiClient, name: str) -> None:
     client.delete_deck(name, cards_too=True)
 
 
-def list_decks(client: AnkiClient, store: SourceStore) -> list[DeckSummary]:
-    """Every deck with its flagged-**note** counts, own and rolled up over its sub-decks."""
-    names = client.deck_names()
+def app_tree(client: AnkiClient, order: DeckOrderStore | None) -> DeckTree:
+    """The app's tree of the collection's decks (specs/review.md#deck-tree-column-1); with no
+    store, Anki's deck order and no label."""
+    return deck_order.build_tree(client.all_decks(), order or DeckOrderStore.in_memory())
+
+
+def _protected(protected: Iterable[str | None]) -> set[str]:
+    return {name for name in protected if name}
+
+
+def deck_listing(
+    client: AnkiClient,
+    store: SourceStore,
+    order: DeckOrderStore | None = None,
+    *,
+    protected: Iterable[str | None] = (),
+) -> DeckListing:
+    """Every deck of the app's tree, in order, with its flagged-**note** counts (own and rolled
+    up over its sub-decks), its label and whether it can turn into a label. `protected`: the
+    decks never turned into a label (the study deck, the mobile deck)."""
+    order = order or DeckOrderStore.in_memory()
+    tree = app_tree(client, order)
+    never = _protected(protected)
     own: dict[str, set[int]] = defaultdict(set)
     for card in client.flagged_cards():
         own[card.deck_name].add(card.note_id)
@@ -195,28 +250,113 @@ def list_decks(client: AnkiClient, store: SourceStore) -> list[DeckSummary]:
         for cut in range(1, len(parts) + 1):
             total["::".join(parts[:cut])] |= note_ids
 
-    return [
+    decks = [
         DeckSummary(
-            name=name,
-            leaf=name.split("::")[-1],
-            depth=name.count("::"),
-            flagged_own=len(own.get(name, ())),
-            flagged_total=len(total.get(name, ())),
-            source_kinds=_source_kinds(store, name),
+            name=row.name,
+            leaf=row.leaf,
+            depth=row.depth,
+            flagged_own=len(own.get(row.name, ())),
+            flagged_total=len(total.get(row.name, ())),
+            source_kinds=_source_kinds(store, row.name),
+            id=row.id,
+            parent_id=row.parent_id,
+            label=row.label,
+            can_group=row.has_subdecks and row.label is None and row.name not in never,
+            group_refused=(
+                deck_order.group_refusal(tree, order, row.id, never)
+                if row.has_subdecks and row.label is None and row.name not in never
+                else None
+            ),
         )
-        for name in names
+        for row in tree.rows
     ]
+    return DeckListing(decks=decks, labels=tree.labels)
 
 
-def list_notes(client: AnkiClient, deck: str) -> DeckNotes:
-    """Notes of `deck` and its sub-decks, flagged first then by creation order (note id)."""
+def list_decks(
+    client: AnkiClient,
+    store: SourceStore,
+    order: DeckOrderStore | None = None,
+    *,
+    protected: Iterable[str | None] = (),
+) -> list[DeckSummary]:
+    """The rows of `deck_listing`."""
+    return deck_listing(client, store, order, protected=protected).decks
+
+
+def group_label_effects(
+    client: AnkiClient,
+    store: SourceStore,
+    order: DeckOrderStore,
+    deck_id: int,
+    *,
+    protected: Iterable[str | None] = (),
+) -> GroupEffects:
+    """What turning the group `deck_id` into a label would do: the cards it holds itself, the
+    `misc` sub-deck they would go to, the sources of its own corpus."""
+    tree = app_tree(client, order)
+    name = _tree_name(tree, deck_id)
+    misc = f"{name}::{deck_order.MISC}"
+    return GroupEffects(
+        refused=deck_order.group_refusal(tree, order, deck_id, _protected(protected)),
+        own_cards=len(client.own_card_ids(name)),
+        misc=misc,
+        misc_exists=misc in tree.by_name,
+        sources=len(store.lists.get(name, [])),
+    )
+
+
+def _tree_name(tree: DeckTree, deck_id: int) -> str:
+    for name, did in tree.by_name.items():
+        if did == deck_id:
+            return name
+    raise KeyError(f"No deck with id {deck_id}")
+
+
+def turn_group_into_label(
+    client: AnkiClient,
+    store: SourceStore,
+    order: DeckOrderStore,
+    deck_id: int,
+    *,
+    protected: Iterable[str | None] = (),
+) -> str:
+    """Turn a group into a label (specs/review.md#labels): its own cards move to its `misc`
+    sub-deck (created with the group's preset when missing), its corpus is shared with each of
+    its sub-decks and taken off it, then the label is recorded. Returns the label id;
+    raises `LabelRefused` when the deck cannot turn."""
+    tree = app_tree(client, order)
+    name = _tree_name(tree, deck_id)
+    refused = deck_order.group_refusal(tree, order, deck_id, _protected(protected))
+    if refused:
+        raise deck_order.LabelRefused(refused)
+    sub_decks = [row.id for row in tree.rows if row.parent_id == deck_id]
+    children = [n for n in tree.by_name if n.rsplit("::", 1)[0] == name and "::" in n]
+    misc = f"{name}::{deck_order.MISC}"
+    misc_created: int | None = None
+    own_cards = client.own_card_ids(name)
+    if own_cards:
+        if misc not in tree.by_name:
+            misc_created = client.create_deck(misc, preset_of=name)
+            children.append(misc)
+        client.change_deck(own_cards, misc)
+    store.share(name, children)
+    return deck_order.turn_into_label(
+        order, tree, deck_id, sub_decks=sub_decks, misc_created=misc_created
+    )
+
+
+def list_notes(client: AnkiClient, deck: str, order: DeckOrderStore | None = None) -> DeckNotes:
+    """Notes of `deck` and its sub-decks: flagged first, then by their deck's place in the app's
+    tree read top to bottom, then by creation order (note id)."""
     cards_by_note: dict[int, list[Card]] = defaultdict(list)
     for card in client.cards_in_deck(deck):
         cards_by_note[card.note_id].append(card)
 
     notes = client.notes_info(list(cards_by_note))
     views = [_build_view(note, cards_by_note.get(note.note_id, [])) for note in notes]
-    views.sort(key=lambda v: (not v.flagged, v.note_id))
+    tree = app_tree(client, order)
+    views.sort(key=lambda v: (not v.flagged, tree.position(v.deck), v.note_id))
     return DeckNotes(
         deck=deck,
         total=len(views),
@@ -265,8 +405,11 @@ def _due_within_budget(
     return {c.card_id for c in flagged_due_cards if c.card_id in within}
 
 
-def priority_notes(client: AnkiClient, *, study_deck: str | None = None) -> PriorityResult:
-    """Flagged notes matching urgency criteria: buried, new, or due within budget."""
+def priority_notes(
+    client: AnkiClient, *, study_deck: str | None = None, order: DeckOrderStore | None = None
+) -> PriorityResult:
+    """Flagged notes matching urgency criteria: buried, new, or due within budget; by their
+    deck's place in the app's tree, then by creation order."""
     buried_ids = client.find_card_ids("-flag:0 is:buried")
     new_ids = client.find_card_ids("-flag:0 is:new")
     due_flagged_ids = client.find_card_ids("-flag:0 is:due -is:new -is:buried")
@@ -304,12 +447,13 @@ def priority_notes(client: AnkiClient, *, study_deck: str | None = None) -> Prio
             cards_by_note[card.note_id].append(card)
 
     views = [_build_view(note, cards_by_note[note.note_id]) for note in notes]
-    views.sort(key=lambda v: v.note_id)
+    tree = app_tree(client, order)
+    views.sort(key=lambda v: (tree.position(v.deck), v.note_id))
     return PriorityResult(count=len(views), notes=views)
 
 
 def priority_count(client: AnkiClient, *, study_deck: str | None = None) -> int:
-    """Exact count for the deck tree badge (same logic as priority_notes)."""
+    """Exact count for the deck tree badge (same criteria as priority_notes)."""
     return priority_notes(client, study_deck=study_deck).count
 
 

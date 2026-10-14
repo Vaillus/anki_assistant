@@ -133,26 +133,37 @@ function newDeckInput() {
   );
 }
 
+/* A row of the app's tree (specs/review.md#deck-tree-column-1): leaf name with its number
+   prefix hidden, its label's color bar and name, draggable among its tree parent's decks. */
 function deckRow(d) {
   const own = d.flagged_own || 0;
   const total = d.flagged_total || 0;
   const kinds = (d.source_kinds || [])
     .map((k) => '<span class="kind ' + esc(k) + '" title="' + esc(k) + '">' + esc(k.charAt(0)) + "</span>")
     .join("");
+  const label = d.label;
+  const color = label ? "var(--om-" + esc(label.color) + ")" : "";
+  const chip =
+    label && label.how !== "covered"
+      ? '<span class="deck-label" style="color:' + color + '">' + esc(label.name) + "</span>"
+      : "";
   return (
     '<div class="deck' +
     (d.name === S.deck ? " sel" : "") +
     (total ? "" : " dim") +
-    '" data-act="deck" data-deck="' +
+    (label ? " labeled" : "") +
+    '" data-act="deck" draggable="true" data-deck="' +
     esc(d.name) +
+    '" data-id="' + d.id + '" data-parent="' + d.parent_id +
     '" title="' +
     esc(d.name) +
     '" style="padding-left:' +
     (12 + (d.depth || 0) * 14) +
-    'px">' +
+    "px" + (label ? ";--label:" + color : "") + '">' +
     '<span class="name">' +
     esc(d.leaf || d.name) +
     "</span>" +
+    chip +
     kinds +
     (own ? '<span class="badge">' + own + "</span>" : "") +
     (total > own ? '<span class="badge sub">' + total + "</span>" : "") +
@@ -164,7 +175,7 @@ function deckRow(d) {
 
 function queueColumn() {
   const isPriority = S.deck === PRIORITY_DECK;
-  const title = isPriority ? "Priority" : (S.deck ? esc(String(S.deck).split("::").pop()) : "Queue");
+  const title = isPriority ? "Priority" : (S.deck ? esc(deckLeaf(S.deck)) : "Queue");
   const head =
     '<div class="col-head"><h2>' + title + "</h2>" +
     (S.notes

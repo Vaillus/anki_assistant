@@ -8,7 +8,9 @@ A deck's **corpus** is an ordered list of **sources**. A source is one document 
 
 Every source has an **id**: six path-safe characters, generated when the entry is created, never changed. [Anchors](#anchors) point to it, so renaming a vault note or moving a PDF keeps them intact.
 
-Corpora live in `sources.json` at the project root (override with `ANKI_SOURCES`). Nothing about sources is stored in Anki. The file holds the vault location, the corpora keyed by deck name, and the [anchors](#anchors).
+A source can be **shared**: listed in the corpus of several decks and stored once. What it points to, its page range and its annotation are the same from every deck that lists it, so editing it from one deck changes it for all of them. Removing a shared source from one deck takes it off that deck's corpus only; the source itself goes once no deck lists it.
+
+Corpora live in `sources.json` at the project root (override with `ANKI_SOURCES`). Nothing about sources is stored in Anki. The file holds the vault location, each source once under its id (`sources`), each deck's corpus as the ordered ids of its sources keyed by deck name (`decks`), and the [anchors](#anchors). A file written before sources were shared, with whole entries under each deck, is read as such: an id met again on another deck lists the source already read. When the two entries differ (target, kind, page range or annotation), the first one read is kept and a warning in the server log names the id and both decks.
 
 A source entry has:
 
@@ -23,6 +25,12 @@ The [Source tab](#source-tab) shows the corpus; the chat makes it available to C
 ### Inheritance
 
 A deck's **effective corpus** is its own sources followed by each ancestor's, nearest first: `a::b::c`'s own, then `a::b`'s, then `a`'s. A deck with no own sources sees only the inherited ones. Each source remembers the deck it was written on, so the UI can distinguish own from inherited.
+
+A group turned into a [label](./review.md#labels) never holds a corpus: its sources become shared with each of its sub-decks, listed after each one's own sources, then taken off the group. No source is copied and every id stays, so every anchor stays valid. Every deck under it sees the same sources as before, and editing one of them from a sub-deck's row changes it for every deck that lists it.
+
+### Looking a source up
+
+A source is reached by a deck and its id: opening it, reading its text for the chat, or replacing a passage of it goes through the effective corpus of the deck in use. A deck whose effective corpus does not list the id does not reach the source, even when another deck shares it.
 
 ### Text
 
@@ -66,7 +74,7 @@ Each anchor is qualified against the note's current deck:
 Anchors follow the note through the writes of the workspace ([workspace.md § Validation](./workspace.md#validation)):
 
 - **Note deleted** → its anchors become orphan. They are not removed eagerly (a delete must not fail on a `sources.json` write); « clean up » in the Source tab removes them.
-- **Source removed from a corpus** → every anchor to it is removed. The UI warns first: « 3 notes are anchored to this source ».
+- **Source removed from a corpus** → once no deck lists it any more, every anchor to it is removed. The UI warns first: « 3 notes are anchored to this source ». A shared source removed from one deck only keeps its anchors, each qualified against its note's deck as above.
 - **Note moved to another deck** → each anchor is kept if its source is in the destination's effective corpus, removed otherwise.
 - **Split** → the kept original and the new fragments inherit the original's anchors.
 - **Create** → the new note gets the anchors chosen in the workspace, by default those of the note the workspace was opened on ([workspace.md § Opening and closing](./workspace.md#opening-and-closing)).
@@ -90,7 +98,7 @@ Each source is a row:
 
 **Adding a source.** « + add a source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Apply ».
 
-**Removing a source.** « remove » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
+**Removing a source.** « remove » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list; a shared source stays listed by its other decks. Anchors to the source go only once no deck lists it ([Anchors](#anchors)); then, when notes are anchored to it, the confirmation says how many and that their anchors will be removed.
 
 **Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ differentiability », × removes it) and « ⚓ anchor… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source outside corpus ».
 
@@ -98,14 +106,14 @@ Each source is a row:
 
 ## API
 
-All routes are under `/api`. A deck travels in the query string, never in the path (deck names contain `::` and spaces); a source id is path-safe and goes in the path. A vault write that is refused (existing file, passage absent or ambiguous) answers 409, and 400 on an invalid target; an unknown source id is 404.
+All routes are under `/api`. A deck travels in the query string, never in the path (deck names contain `::` and spaces); a source id is path-safe and goes in the path. A vault write that is refused (existing file, passage absent or ambiguous) answers 409, and 400 on an invalid target; a source id the deck's effective corpus does not list is 404 ([Looking a source up](#looking-a-source-up)).
 
 | Route | Purpose |
 |---|---|
 | `GET /api/sources` | Every deck's own corpus, as stored |
 | `GET /api/sources/corpus?deck=&note_id=` | A deck's effective corpus with source metadata and where each is inherited from; with `note_id`, the note's anchors |
 | `PUT /api/sources?deck=` | Replace the corpus written on a deck (an empty list deletes it); reports how many anchors were dropped |
-| `POST /api/sources?deck=` | Append one source to a deck's own corpus (inherited corpus materialised first); auto-detects kind |
+| `POST /api/sources?deck=` | Append one source to a deck's own corpus (an inherited corpus is listed on the deck first, shared, not copied); auto-detects kind |
 | `GET /api/vault/notes?q=` | Vault note names containing `q`, for the form's autocompletion |
 | `GET /api/vault/pdfs?q=` | PDF paths under the vault whose filename contains `q`, for the form's autocompletion |
 | `GET /api/sources/anchors?note_id=` | A note's anchors, each qualified valid or dangling |
@@ -113,5 +121,5 @@ All routes are under `/api`. A deck travels in the query string, never in the pa
 | `GET /api/sources/anchors/orphans` | Anchored note ids that Anki no longer knows |
 | `POST /api/sources/anchors/prune` | Remove the orphans' anchors |
 | `POST /api/sources/notes` | Create a vault note and add it to a deck's corpus; may anchor notes to it and reuse an id announced beforehand ([chat.md § Proposal tools](./chat.md#proposal-tools)) |
-| `PATCH /api/sources/{source_id}/text` | Replace one passage of a vault note |
-| `POST /api/sources/{source_id}/open` | Open a PDF source in Zotero via `zotero://open-pdf` URI (falls back to default app) |
+| `PATCH /api/sources/{source_id}/text?deck=` | Replace one passage of a vault note of the deck's effective corpus |
+| `POST /api/sources/{source_id}/open?deck=` | Open a PDF source of the deck's effective corpus in Zotero via `zotero://open-pdf` URI (falls back to default app) |

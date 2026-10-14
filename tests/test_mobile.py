@@ -19,8 +19,9 @@ from anki.collection import Collection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anki_assistant import mobile
+from anki_assistant import deck_order, mobile
 from anki_assistant.client import AnkiError
+from anki_assistant.deck_order import DeckOrderStore
 from anki_assistant.mobile import Action, MobileLog
 from anki_assistant.models import Card
 from anki_assistant.web import routes_mobile
@@ -242,7 +243,7 @@ def test_batch_day0_quota_counts_what_was_studied_today(anki: PhoneAnki) -> None
     assert [(q.review, q.new) for q in build(anki).quota] == [(3, 2), (4, 2), (4, 2)]
 
 
-def test_batch_day0_is_ankis_study_queue_later_days_are_rebuilt(anki: PhoneAnki) -> None:
+def test_batch_every_day_is_rebuilt_day0_included(anki: PhoneAnki) -> None:
     anki.set_limits(DECK, review=2, new=1)
     r_recent = anki.new_card(rel_due=-1)
     r_overdue = anki.new_card(rel_due=-40)
@@ -254,34 +255,39 @@ def test_batch_day0_is_ankis_study_queue_later_days_are_rebuilt(anki: PhoneAnki)
     learn = anki.new_card(queue=1)
     n_second = anki.new_card(queue=0, due=8)
     n_first = anki.new_card(queue=0, due=7)
-    anki.new_card(queue=0, due=9)
+    n_third = anki.new_card(queue=0, due=9)
     anki.new_card(queue=-1)  # suspended
     anki.new_card(queue=-2)  # buried
     anki.new_card(deck="other", rel_due=-90)  # another deck
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
-    day0 = [(q.card_id, 0, q.kind) for q in anki.study_queue(DECK)]
-    # Anki's review limit also caps new cards: two reviews leave no room for a new one today.
-    assert day0 == [(learn, 0, "learn"), (r_overdue, 0, "review"), (r_mid, 0, "review")]
-    assert got == day0 + [
+    # Day 0 is cut at its own quota like the next days, not taken from Anki's study queue.
+    # Each day's new quota is independent of its review quota: two reviews fill the review
+    # quota and the day still takes a new card (Anki's study queue would leave no room).
+    assert got == [
+        (learn, 0, "learn"),
+        (r_overdue, 0, "review"),
+        (r_mid, 0, "review"),
+        (n_first, 0, "new"),
         (r_backlog, 1, "review"),
         (r_recent, 1, "review"),
-        (n_first, 1, "new"),
+        (n_second, 1, "new"),
         (r_tomorrow, 2, "review"),
         (r_day3, 2, "review"),
-        (n_second, 2, "new"),
+        (n_third, 2, "new"),
     ]
     assert r_later not in {c for c, _, _ in got}
 
 
-def test_batch_day0_follows_ankis_subdeck_limits(anki: PhoneAnki) -> None:
+def test_batch_day0_ignores_subdeck_limits(anki: PhoneAnki) -> None:
     anki.set_limits(DECK, review=10, new=0)
     anki.set_limits("courant::maths", deck_review=1)
     maths = [anki.new_card(deck="courant::maths", rel_due=-5) for _ in range(3)]
     other = anki.new_card(rel_due=-1)
     day0 = [c.card_id for c in build(anki).cards if c.day == 0]
-    assert len(set(day0) & set(maths)) == 1, "the sub-deck's own limit"
+    assert set(maths) <= set(day0), "only the mobile deck's limit cuts"
     assert other in day0
+    assert len({c.card_id for c in anki.study_queue(DECK)} & set(maths)) == 1, "Anki's does"
 
 
 DECK_ORDER = {
@@ -294,7 +300,8 @@ DECK_ORDER = {
 
 
 def rebuilt_days_only(anki: PhoneAnki, review: int, new: int, **order: int) -> None:
-    """Preset limits for days 1 and 2, nothing left today: day 0 holds learning cards only and
+    """Preset limits for days 1 and 2, nothing left today: day 0 holds intraday learning cards
+    only and
     the rebuild of days 1 and 2 decides the rest."""
     anki.set_limits(DECK, review=review, new=new, today_review=0, today_new=0, **order)
 
@@ -333,7 +340,7 @@ def test_interday_learning_takes_the_review_limit_before_reviews(anki: PhoneAnki
     interday = [anki.new_card(queue=3, rel_due=d) for d in (-1, 0, 1)]
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
-    # Day 0 is Anki's queue: v3 counts the interday card against the review limit of 1.
+    # Day 0 counts the interday card against its review quota of 1, as Anki's v3 does.
     # Days 1 and 2 do the same with the limit of 2: interday learning first, then reviews.
     assert got == [
         (interday[0], 0, "learn"),
@@ -448,6 +455,65 @@ def test_batch_gives_the_review_order_of_each_card(anki: PhoneAnki) -> None:
     assert by_id[learn].deck_rank < by_id[tomorrow].deck_rank < by_id[overdue].deck_rank
     anki.set_limits(DECK, reviewOrder=0)
     assert build(anki).review_order == "due"
+
+
+@pytest.fixture
+def order_store(tmp_path: Path) -> DeckOrderStore:
+    return DeckOrderStore(tmp_path / "deck_order.json")
+
+
+def move_deck(
+    anki: PhoneAnki,
+    store: DeckOrderStore,
+    deck: str,
+    *,
+    before: str | None = None,
+    after: str | None = None,
+) -> None:
+    """Drag `deck` right before or after a deck of its tree parent, as column 1 does."""
+    ids = dict(anki.all_decks())
+    tree = deck_order.build_tree(anki.all_decks(), store)
+    deck_order.move(
+        store,
+        tree,
+        ids[deck],
+        before=ids[before] if before else None,
+        after=ids[after] if after else None,
+    )
+
+
+def test_batch_follows_the_app_deck_order(anki: PhoneAnki, order_store: DeckOrderStore) -> None:
+    anki.set_limits(DECK, review=10, new=1, **DECK_ORDER)
+    r_a = anki.new_card(deck="courant::A", rel_due=-1)
+    r_b = anki.new_card(deck="courant::b", rel_due=-1)
+    n_a = anki.new_card(deck="courant::A", queue=0, due=1)
+    n_b = anki.new_card(deck="courant::b", queue=0, due=2)
+
+    def day0() -> list[int]:
+        batch = mobile.build_batch(anki, DECK, 4, NOW, order_store)
+        return [c.card_id for c in batch.cards if c.day == 0]
+
+    assert day0() == [r_a, r_b, n_a], "nothing reordered: Anki's deck order, case ignored"
+    move_deck(anki, order_store, "courant::b", before="courant::A")
+    assert day0() == [r_b, r_a, n_b], "b placed first takes today's one new card"
+    assert n_a in {q.card_id for q in anki.study_queue(DECK)}, "Anki keeps its own order"
+
+
+def test_batch_deck_rank_follows_the_app_deck_order(
+    anki: PhoneAnki, order_store: DeckOrderStore
+) -> None:
+    anki.set_limits(DECK, review=10, new=0, **DECK_ORDER)
+    root = anki.new_card(rel_due=-1)
+    a = anki.new_card(deck="courant::A", rel_due=-1)
+    ax = anki.new_card(deck="courant::A::x", rel_due=-1)
+    b = anki.new_card(deck="courant::b", rel_due=-1)
+    move_deck(anki, order_store, "courant::A", after="courant::b")
+
+    batch = mobile.build_batch(anki, DECK, 4, NOW, order_store)
+    assert [c.card_id for c in batch.cards] == [root, b, a, ax], "sub-decks follow their deck"
+    assert [c.deck_rank for c in batch.cards] == [0, 1, 2, 3]
+    unordered = {c.card_id: c.deck_rank for c in build(anki).cards}
+    assert [unordered[c] for c in (root, a, ax, b)] == [0, 1, 2, 3], "no store: Anki's order"
 
 
 def test_batch_is_read_only(anki: PhoneAnki) -> None:
@@ -860,6 +926,20 @@ def test_route_batch(http: TestClient, anki: PhoneAnki) -> None:
     assert card["outcomes"][0] == 600
     assert body["media"] == ["paste-1.png"]
     assert anki.writes() == []
+
+
+def test_route_batch_uses_the_apps_deck_order(
+    http: TestClient, anki: PhoneAnki, order_store: DeckOrderStore
+) -> None:
+    anki.set_limits(DECK, review=10, new=0, **DECK_ORDER)
+    a = anki.new_card(deck="courant::a", rel_due=-1)
+    b = anki.new_card(deck="courant::b", rel_due=-1)
+    move_deck(anki, order_store, "courant::b", before="courant::a")
+    assert isinstance(http.app, FastAPI)
+    http.app.state.deck_order = order_store
+    for res in (http.get("/api/mobile/batch"), http.post("/api/mobile/sync", json={})):
+        cards = res.json().get("cards") or res.json()["batch"]["cards"]
+        assert [c["card_id"] for c in cards] == [b, a]
 
 
 def test_route_sync(http: TestClient, anki: PhoneAnki, log: MobileLog) -> None:

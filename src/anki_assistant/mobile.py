@@ -15,10 +15,11 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Literal, TypeVar
 from urllib.parse import unquote
 
 from anki_assistant.client import AnkiClient, Outcomes, _quote
+from anki_assistant.deck_order import DeckOrderStore, anki_key, build_tree
 from anki_assistant.models import Card
 from anki_assistant.web.render import render_field
 
@@ -155,7 +156,7 @@ class BatchCard:
     outcome_labels: list[str]
     #: The Anki day the card is due (review and interday learning cards), else None.
     due_day: str | None = None
-    #: The card's deck's place in Anki's deck list, among the batch's decks.
+    #: The place of the card's deck among the batch's decks, in the app deck order.
     deck_rank: int = 0
 
 
@@ -205,14 +206,17 @@ def order_settings(config: dict[str, Any]) -> OrderSettings:
     )
 
 
-def _deck_order(card: Card) -> tuple[str, ...]:
-    """Anki's deck-list order: parent before children, siblings by name, case ignored."""
-    return deck_list_key(card.deck_name)
+DeckKey = Callable[[str], Any]
 
 
-def deck_list_key(deck: str) -> tuple[str, ...]:
-    """Sort key of a deck name in Anki's deck list."""
-    return tuple(part.casefold() for part in deck.split("::"))
+def deck_order_key(anki: AnkiClient, store: DeckOrderStore | None) -> DeckKey:
+    """Sort key of a deck name in the batch's deck order (specs/mobile.md#deck-order): its
+    place in the app's tree read top to bottom, the decks under each tree parent in the app
+    deck order, each deck's sub-decks right after it. Without a store, nothing is reordered:
+    Anki's deck order, case ignored."""
+    if store is None:
+        return anki_key
+    return build_tree(anki.all_decks(), store).position
 
 
 _T = TypeVar("_T")
@@ -238,38 +242,43 @@ CardKind = Literal["learn", "review", "new"]
 
 
 def _select(
-    anki: AnkiClient, deck: str, quotas: Sequence[DayQuota], order: OrderSettings | None = None
+    anki: AnkiClient,
+    deck: str,
+    quotas: Sequence[DayQuota],
+    order: OrderSettings | None = None,
+    deck_key: DeckKey = anki_key,
 ) -> list[tuple[Card, int, CardKind]]:
     """The batch's cards, each with its day and kind, in batch order (specs/mobile.md#batch).
 
-    Day 0 is Anki's study queue of the deck. Days 1 and 2 are rebuilt: each day's cards not
-    taken by an earlier day are gathered in the order settings' order, then cut at the quota.
-    Without order settings, every option keeps its default.
+    Every day, day 0 included, is rebuilt: its cards not taken by an earlier day are gathered
+    in the order settings' order, then cut at its quota. Anki's study queue is not used, so
+    sub-deck limits and sibling burying do not apply, and the new quota is independent of the
+    review quota (Anki caps new cards by what the reviews left). Without order settings, every
+    option keeps its default. `deck_key` sorts deck names in the deck order.
     """
     order = order or OrderSettings()
-    queue = anki.study_queue(deck)
+    days = range(len(quotas))
     scope = f"deck:{_quote(deck)} -is:suspended -is:buried"
-    due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in (1, 2)}
+    due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in days}
     new_ids = anki.find_card_ids(f"{scope} is:new")
-    wanted = {q.card_id for q in queue} | due_by[WINDOW_DAYS - 1] | set(new_ids)
+    wanted = set().union(*due_by.values(), new_ids)
     infos = {c.card_id: c for c in anki.cards_info(sorted(wanted))}
 
     def new_key(c: Card) -> tuple[Any, ...]:
-        return (_deck_order(c), c.due, c.ord) if order.new_by_deck else (c.due, c.ord)
+        return (deck_key(c.deck_name), c.due, c.ord) if order.new_by_deck else (c.due, c.ord)
 
     def review_key(c: Card) -> tuple[Any, ...]:
-        return (_deck_order(c), c.due, c.card_id) if order.review_by_deck else (c.due, c.card_id)
+        by_due = (c.due, c.card_id)
+        return (deck_key(c.deck_name), *by_due) if order.review_by_deck else by_due
 
     def interday_key(c: Card) -> tuple[Any, ...]:
-        return (_deck_order(c), c.due) if order.review_by_deck else (c.due,)
+        return (deck_key(c.deck_name), c.due) if order.review_by_deck else (c.due,)
 
     new_cards = sorted((infos[c] for c in new_ids if c in infos), key=new_key)
 
-    chosen: list[tuple[Card, int, CardKind]] = [
-        (infos[q.card_id], 0, cast(CardKind, q.kind)) for q in queue if q.card_id in infos
-    ]
-    taken = {card.card_id for card, _, _ in chosen}
-    for day in range(1, len(quotas)):
+    chosen: list[tuple[Card, int, CardKind]] = []
+    taken: set[int] = set()
+    for day in days:
         quota = quotas[day]
         pool = [infos[c] for c in due_by[day] if c in infos and c not in taken]
         intraday = sorted((c for c in pool if c.queue == 1), key=lambda c: c.due)
@@ -335,19 +344,26 @@ def batch_card(
     )
 
 
-def build_batch(anki: AnkiClient, deck: str, rollover_hour: int, now: datetime) -> Batch:
-    """The cards the phone downloads: Anki's study queue for day 0, one daily quota for each
-    later Anki day of the window."""
+def build_batch(
+    anki: AnkiClient,
+    deck: str,
+    rollover_hour: int,
+    now: datetime,
+    deck_order: DeckOrderStore | None = None,
+) -> Batch:
+    """The cards the phone downloads: each Anki day of the window rebuilt and cut at its
+    daily quota, in the deck order of `deck_order` (the app deck order; None: Anki's)."""
     quotas = daily_quotas(anki, deck)
     order = order_settings(anki.deck_config(deck) or {})
-    chosen = _select(anki, deck, quotas, order)
+    deck_key = deck_order_key(anki, deck_order)
+    chosen = _select(anki, deck, quotas, order, deck_key)
     templates = _templates(anki, (c.model_name for c, _, _ in chosen))
     outcomes = anki.answer_outcomes([c.card_id for c, _, _ in chosen])
     today = anki_day(now, rollover_hour)
     anki_today = anki.today() if chosen else 0
     ranks = {
         name: rank
-        for rank, name in enumerate(sorted({c.deck_name for c, _, _ in chosen}, key=deck_list_key))
+        for rank, name in enumerate(sorted({c.deck_name for c, _, _ in chosen}, key=deck_key))
     }
     cards = []
     for c, day, kind in chosen:
@@ -718,10 +734,12 @@ def sync(
     deck: str,
     rollover_hour: int,
     now: Callable[[], datetime] = datetime.now,
+    deck_order: DeckOrderStore | None = None,
 ) -> SyncResult:
-    """One sync (specs/mobile.md#sync): apply the pending actions, then build the next batch."""
+    """One sync (specs/mobile.md#sync): apply the pending actions, then build the next batch
+    in the deck order of `deck_order`."""
     applied, dropped = apply_actions(
         anki, actions, log, deck=deck, rollover_hour=rollover_hour, now=now()
     )
-    batch = build_batch(anki, deck, rollover_hour, now())
+    batch = build_batch(anki, deck, rollover_hour, now(), deck_order)
     return SyncResult(applied=applied, dropped=dropped, batch=batch)

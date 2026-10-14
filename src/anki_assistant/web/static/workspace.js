@@ -242,7 +242,7 @@ async function applySourceProposal(mi, pi) {
       });
       refreshAnchorsOf(input.anchor_note_ids || []);
     } else if (p.kind === "edit_source") {
-      await API.patchSourceText(input.source_id, { old: input.old || "", new: input.new || "" });
+      await API.patchSourceText(S.ws.deck, input.source_id, { old: input.old || "", new: input.new || "" });
     } else if (p.kind === "edit_guidelines") {
       await API.editGuidelines({ old: input.old || "", new: input.new || "" });
     } else {
@@ -300,7 +300,7 @@ async function revertSourceProposal(mi, pi) {
     // Reverting swaps old and new; an appended rule (empty old) is removed by replacing it.
     const swapped = { old: input.new || "", new: input.old || "" };
     if (p.kind === "edit_guidelines") await API.editGuidelines(swapped);
-    else await API.patchSourceText(input.source_id, swapped);
+    else await API.patchSourceText(S.ws.deck, input.source_id, swapped);
     p.applied = false;
     S.busy = false;
     await loadCorpus();

@@ -10,9 +10,17 @@ import mimetypes
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from anki_assistant import review
+from anki_assistant import deck_order, review
 from anki_assistant.client import AnkiClient, SyncStatus
-from anki_assistant.review import DeckNotes, DeckSummary, NoteView, PriorityResult, SplitResult
+from anki_assistant.deck_order import DeckOrderStore, LabelInfo
+from anki_assistant.review import (
+    DeckNotes,
+    DeckSummary,
+    GroupEffects,
+    NoteView,
+    PriorityResult,
+    SplitResult,
+)
 from anki_assistant.sources import SourceStore
 from anki_assistant.web.errors import anki_errors
 from anki_assistant.workspace import anchors_after_move
@@ -30,6 +38,19 @@ def _store(request: Request) -> SourceStore:
 
 def _study_deck(request: Request) -> str | None:
     return request.app.state.study_deck
+
+
+def _order(request: Request) -> DeckOrderStore:
+    """The app deck order and labels (specs/review.md#where-the-app-stores-it)."""
+    order = getattr(request.app.state, "deck_order", None)
+    if order is None:
+        order = request.app.state.deck_order = DeckOrderStore.in_memory()
+    return order
+
+
+def _protected(request: Request) -> list[str | None]:
+    """The decks never turned into a label: the study deck and the mobile deck."""
+    return [_study_deck(request), getattr(request.app.state, "mobile_deck", None)]
 
 
 _anki_errors = anki_errors
@@ -79,6 +100,24 @@ class MoveBody(BaseModel):
     deck: str
 
 
+class DeckMoveBody(BaseModel):
+    deck_id: int
+    before: int | None = None
+    after: int | None = None
+
+
+class DeckLabelBody(BaseModel):
+    deck_id: int
+    #: An existing label; with neither this nor `name`, the label set on the deck comes off.
+    label_id: str | None = None
+    #: A new label's name.
+    name: str | None = None
+
+
+class GroupLabelBody(BaseModel):
+    deck_id: int
+
+
 class LookupBody(BaseModel):
     note_ids: list[int] = Field(default_factory=list)
 
@@ -88,15 +127,86 @@ class LookupBody(BaseModel):
 
 class DecksResponse(BaseModel):
     decks: list[DeckSummary]
+    labels: list[LabelInfo]
     priority_count: int
 
 
 @router.get("/decks")
 def get_decks(request: Request) -> DecksResponse:
     with _anki_errors(_anki(request)):
-        decks = review.list_decks(_anki(request), _store(request))
+        listing = review.deck_listing(
+            _anki(request), _store(request), _order(request), protected=_protected(request)
+        )
         pcount = review.priority_count(_anki(request), study_deck=_study_deck(request))
-    return DecksResponse(decks=decks, priority_count=pcount)
+    return DecksResponse(decks=listing.decks, labels=listing.labels, priority_count=pcount)
+
+
+@router.post("/decks/move", status_code=204)
+def move_deck(request: Request, body: DeckMoveBody) -> Response:
+    """Move a deck among the decks of its tree parent (specs/review.md#moving-a-deck)."""
+    with _anki_errors(_anki(request)):
+        tree = review.app_tree(_anki(request), _order(request))
+    try:
+        deck_order.move(_order(request), tree, body.deck_id, before=body.before, after=body.after)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"No deck with id {body.deck_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
+@router.put("/decks/label")
+def set_deck_label(request: Request, body: DeckLabelBody) -> dict[str, str | None]:
+    """Set a label on a deck, or take off the one set on it (specs/review.md#labels)."""
+    with _anki_errors(_anki(request)):
+        tree = review.app_tree(_anki(request), _order(request))
+    try:
+        if body.label_id is None and not body.name:
+            deck_order.remove_label(_order(request), tree, body.deck_id)
+            return {"label_id": None}
+        lid = deck_order.set_label(
+            _order(request), tree, body.deck_id, label_id=body.label_id, new_name=body.name
+        )
+    except deck_order.LabelRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown deck or label {exc}") from exc
+    return {"label_id": lid}
+
+
+@router.get("/decks/group-label")
+def get_group_label_effects(request: Request, deck_id: int = Query(...)) -> GroupEffects:
+    """What turning a group into a label would do, for the confirmation."""
+    with _anki_errors(_anki(request)):
+        try:
+            return review.group_label_effects(
+                _anki(request),
+                _store(request),
+                _order(request),
+                deck_id,
+                protected=_protected(request),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/decks/group-label")
+def post_group_label(request: Request, body: GroupLabelBody) -> dict[str, str]:
+    """Turn a group into a label (specs/review.md#labels)."""
+    with _anki_errors(_anki(request)):
+        try:
+            lid = review.turn_group_into_label(
+                _anki(request),
+                _store(request),
+                _order(request),
+                body.deck_id,
+                protected=_protected(request),
+            )
+        except deck_order.LabelRefused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"label_id": lid}
 
 
 @router.post("/decks", status_code=201)
@@ -119,13 +229,15 @@ def delete_deck(request: Request, name: str = Query(...)) -> Response:
 @router.get("/notes/priority")
 def get_priority_notes(request: Request) -> PriorityResult:
     with _anki_errors(_anki(request)):
-        return review.priority_notes(_anki(request), study_deck=_study_deck(request))
+        return review.priority_notes(
+            _anki(request), study_deck=_study_deck(request), order=_order(request)
+        )
 
 
 @router.get("/notes")
 def get_notes(request: Request, deck: str = Query(...)) -> DeckNotes:
     with _anki_errors(_anki(request)):
-        return review.list_notes(_anki(request), deck)
+        return review.list_notes(_anki(request), deck, _order(request))
 
 
 @router.post("/notes/lookup")

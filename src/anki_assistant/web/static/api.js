@@ -73,6 +73,11 @@ const API = {
   decks: () => jfetch("/api/decks"),
   createDeck: (name) => jfetch("/api/decks", jsonBody("POST", { name })),
   deleteDeck: (name) => jfetch("/api/decks?name=" + q(name), { method: "DELETE" }),
+  // the app's tree (specs/review.md#deck-tree-column-1)
+  moveDeck: (body) => jfetch("/api/decks/move", jsonBody("POST", body)),
+  setDeckLabel: (body) => jfetch("/api/decks/label", jsonBody("PUT", body)),
+  groupLabelEffects: (deckId) => jfetch("/api/decks/group-label?deck_id=" + deckId),
+  groupLabel: (deckId) => jfetch("/api/decks/group-label", jsonBody("POST", { deck_id: deckId })),
   notes: (deck) => jfetch("/api/notes?deck=" + q(deck)),
   priorityNotes: () => jfetch("/api/notes/priority"),
   note: (id) => jfetch("/api/notes/" + id),
@@ -98,8 +103,10 @@ const API = {
   vaultPdfs: (query) => jfetch("/api/vault/pdfs?q=" + q(query)),
   anchors: (noteId) => jfetch("/api/sources/anchors?note_id=" + noteId),
   createSourceNote: (body) => jfetch("/api/sources/notes", jsonBody("POST", body)),
-  openSourceFile: (id) => jfetch("/api/sources/" + q(id) + "/open", { method: "POST" }),
-  patchSourceText: (id, body) => jfetch("/api/sources/" + q(id) + "/text", jsonBody("PATCH", body)),
+  openSourceFile: (deck, id) =>
+    jfetch("/api/sources/" + q(id) + "/open?deck=" + q(deck), { method: "POST" }),
+  patchSourceText: (deck, id, body) =>
+    jfetch("/api/sources/" + q(id) + "/text?deck=" + q(deck), jsonBody("PATCH", body)),
 
   // chat
   chatStatus: () => jfetch("/api/chat/status"),

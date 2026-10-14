@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from anki_assistant import mobile
 from anki_assistant.client import anki_client_from_env
+from anki_assistant.deck_order import DeckOrderStore
 from anki_assistant.sources import SourceStore
 from anki_assistant.web.gate import TailnetGate
 
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="anki-assistant")
     app.state.anki = anki_client_from_env()
     app.state.store = SourceStore()
+    app.state.deck_order = DeckOrderStore()
     app.state.study_deck = os.environ.get("STUDY_DECK") or None
     app.state.last_validation = None  # snapshot of the last workspace validation (undo)
     app.state.mobile_deck = os.environ.get("MOBILE_DECK") or mobile.DEFAULT_DECK

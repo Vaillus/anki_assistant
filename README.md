@@ -36,10 +36,23 @@ Three columns: decks with their flagged-note count, the selected deck's queue, a
 Source / Chat panel. The selected note exposes the decisions: Keep, Edit, Split,
 Create, Move, Delete, Skip. Details in [`specs/review.md`](specs/review.md).
 
+The deck column shows the **app's tree**: the collection's decks arranged by the app,
+Anki's deck names untouched. Siblings start in Anki's deck order (case ignored), number
+prefixes such as `01-` hidden. Drag a row among the decks of its tree parent to reorder
+them. From a row's right-click menu, set a **label** (a name and a color) on a deck, or
+turn a group such as `courant::01-AI` into one: the group's row leaves the tree and its
+sub-decks take its place, each carrying the label `AI`; its own cards move to a `misc`
+sub-deck in Anki and its corpus is shared with its sub-decks. The order and the labels
+live in `deck_order.json` (gitignored, overridable with `ANKI_DECK_ORDER`), keyed by deck
+id; Anki desktop and AnkiMobile never see them. Note lists, the priority queue and the
+phone app follow the same order.
+
 ## Phone app
 
 The phone app (`/m`) reviews one deck on the iPhone, offline, and replays the answers into
-Anki at the next sync. Details in [`specs/mobile.md`](specs/mobile.md).
+Anki at the next sync. It builds every day of its batch itself, today included, in the app's
+deck order, so its day can differ from Anki desktop's. Details in
+[`specs/mobile.md`](specs/mobile.md).
 
 `uv run anki-web` also serves the phone app alone on a second port, `5071` (the **phone
 port**), both bound to `127.0.0.1`. [Tailscale](https://tailscale.com) exposes the phone
@@ -143,6 +156,10 @@ a PDF, everything else is treated as a vault note. `--kind` forces the choice.
 
 A sub-deck with no entry of its own inherits the source from its closest parent deck:
 mapping `courant::01-AI::little book of deep learning` therefore covers its sub-decks `::1` through `::6`.
+
+A source is stored once under its id and can be **shared**: listed in the corpus of
+several decks (as when a group is turned into a label), so editing it from one deck
+changes it for all. The app looks a source up by deck and id, through that deck's corpus.
 
 The `cards` and `flagged` commands display the deck's source at the top of the output.
 

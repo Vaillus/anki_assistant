@@ -196,7 +196,7 @@ def read_tools_for(
             raise ValueError("missing source_id")
         pages_override = str(inp.get("pages") or "").strip()
         if pages_override:
-            source = store.by_id(source_id)
+            source = store.find(deck, source_id)
             if source is None:
                 raise KeyError(f"unknown source: {source_id}")
             if source.kind != "pdf":
@@ -277,7 +277,8 @@ def post_chat(request: Request, body: ChatRequest) -> StreamingResponse:
         ]
 
     def load_source(source_id: str) -> Attached:
-        source = store.by_id(source_id)
+        """A source of the workspace deck's corpus (specs/sources.md#looking-a-source-up)."""
+        source = store.find(body.deck, source_id)
         if source is None:
             raise KeyError(f"unknown source: {source_id}")
         return source, source.text(store.vault)

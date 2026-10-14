@@ -37,7 +37,7 @@ def _write_pdf(path: Path, n_pages: int) -> None:
 # --------------------------------------------------------------------- store
 
 
-def test_legacy_single_object_read_and_rewritten_as_list(tmp_path: Path) -> None:
+def test_legacy_single_object_read_and_rewritten_as_ids(tmp_path: Path) -> None:
     store_path = tmp_path / "sources.json"
     store_path.write_text(
         json.dumps(
@@ -57,12 +57,88 @@ def test_legacy_single_object_read_and_rewritten_as_list(tmp_path: Path) -> None
 
     store.save()
     raw = json.loads(store_path.read_text(encoding="utf-8"))
-    assert isinstance(raw["decks"]["a::b"], list)
-    (entry,) = raw["decks"]["a::b"]
     # An entry without id gets one on load and it is written back (specs/sources.md).
-    assert len(entry.pop("id")) == 6
-    assert entry == {"kind": "obsidian", "target": "note"}
+    (sid,) = raw["decks"]["a::b"]
+    assert len(sid) == 6
+    assert raw["sources"] == {sid: {"kind": "obsidian", "target": "note"}}
     assert raw["anchors"] == {}
+
+
+def test_entries_written_per_deck_are_read_as_one_shared_source(tmp_path: Path) -> None:
+    """A file from before sharing, a group's sources copied on two sub-decks with one id."""
+    store_path = tmp_path / "sources.json"
+    copy = {"id": "wwwwww", "kind": "web", "target": "https://w.example"}
+    store_path.write_text(
+        json.dumps({"decks": {"g::a": [copy], "g::b": [{**copy, "note": "edited"}]}}),
+        encoding="utf-8",
+    )
+    store = SourceStore(path=store_path)
+    a, b = store.find("g::a", "wwwwww"), store.find("g::b", "wwwwww")
+    assert a is not None and b is not None
+    assert (a.deck, b.deck) == ("g::a", "g::b"), "each listed on its deck"
+    assert a.note == b.note == "", "the source first read"
+    store.save()
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    assert raw["sources"] == {"wwwwww": {"kind": "web", "target": "https://w.example"}}
+    assert raw["decks"] == {"g::a": ["wwwwww"], "g::b": ["wwwwww"]}
+
+
+def test_differing_copies_of_an_id_keep_the_first_and_warn(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An older file listing one id on two decks with different pages (specs/sources.md)."""
+    store_path = tmp_path / "sources.json"
+    pdf = {"id": "ffffff", "kind": "pdf", "target": "~/lbdl.pdf"}
+    store_path.write_text(
+        json.dumps({"decks": {"g::a": [pdf], "g::b": [{**pdf, "pages": "10-20"}], "g::c": [pdf]}}),
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="anki_assistant.sources.store"):
+        store = SourceStore(path=store_path)
+    b = store.find("g::b", "ffffff")
+    assert b is not None and b.pages == "", "the first read is kept"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, "an identical copy (g::c) warns nothing"
+    assert "ffffff" in warnings[0] and "g::a" in warnings[0] and "g::b" in warnings[0]
+
+
+def test_a_shared_source_is_stored_once_and_edited_for_every_deck(tmp_path: Path) -> None:
+    store = SourceStore(path=tmp_path / "sources.json")
+    w = Source(deck="g", kind="web", target="https://w.example", id="wwwwww")
+    own = Source(deck="g::a", kind="obsidian", target="A", id="aaaaaa")
+    store.set_corpus("g", [w])
+    store.set_corpus("g::a", [own])
+    store.share("g", ["g::a", "g::b"])
+
+    assert "g" not in store.lists
+    assert [s.id for s in store.corpus("g::a")] == ["aaaaaa", "wwwwww"], "after its own"
+    assert [s.id for s in store.corpus("g::b")] == ["wwwwww"]
+    raw = json.loads(store.path.read_text(encoding="utf-8"))
+    assert list(raw["sources"]) == ["aaaaaa", "wwwwww"], "stored once"
+
+    # Edited from one deck, read the same from the other.
+    store.set_corpus(
+        "g::a", [own, Source(deck="g::a", kind="web", target=w.target, id=w.id, note="chap. 2")]
+    )
+    found = store.find("g::b", "wwwwww")
+    assert found is not None and found.note == "chap. 2" and found.deck == "g::b"
+
+
+def test_removing_a_shared_source_from_one_deck_keeps_it_for_the_others(tmp_path: Path) -> None:
+    store = SourceStore(path=tmp_path / "sources.json")
+    w = Source(deck="a", kind="obsidian", target="w", id="wwwwww")
+    store.set_corpus("a", [w])
+    store.set_corpus("b", [w])
+    store.set_anchors(1, ["wwwwww"])
+
+    _, removed = store.set_corpus("a", [])
+    assert removed == 0 and store.find("b", "wwwwww") is not None
+    assert store.find("a", "wwwwww") is None, "not listed by a: a does not reach it"
+    assert store.anchors(1) == ["wwwwww"]
+
+    _, removed = store.set_corpus("b", [])
+    assert removed == 1, "no deck lists it: the source goes, and its anchors"
+    assert store.sources == {}
 
 
 def test_inheritance_accumulates_own_then_ancestors(tmp_path: Path) -> None:
@@ -593,16 +669,18 @@ def _store_with_vault(tmp_path: Path) -> SourceStore:
     return store
 
 
-def test_set_corpus_assigns_ids_and_by_id_finds_them_across_decks(tmp_path: Path) -> None:
+def test_set_corpus_assigns_ids_and_find_goes_through_the_decks_corpus(tmp_path: Path) -> None:
     store = SourceStore(path=tmp_path / "sources.json")
     store.set_corpus("a", [Source(deck="a", kind="obsidian", target="x")])
     store.set_corpus("b", [Source(deck="b", kind="obsidian", target="y", id="fixed1")])
     (x,) = store.corpus("a")
     assert len(x.id) == 6 and x.id.islower()
-    assert store.by_id(x.id) is x
-    fixed = store.by_id("fixed1")
+    assert store.find("a", x.id) == x
+    assert store.find("a::sub", x.id) == x, "inherited"
+    fixed = store.find("b", "fixed1")
     assert fixed is not None and fixed.target == "y"
-    assert store.by_id("nope") is None
+    assert store.find("a", "fixed1") is None, "listed by b only"
+    assert store.find("a", "nope") is None
 
 
 def test_anchors_round_trip_and_reload(tmp_path: Path) -> None:
@@ -700,16 +778,16 @@ def test_replace_in_note_requires_exactly_one_match(tmp_path: Path) -> None:
         ],
     )
 
-    store.replace_in_note("note00", "beta", "BETA")
+    store.replace_in_note("a", "note00", "beta", "BETA")
     assert path.read_text(encoding="utf-8") == "alpha BETA alpha gamma"
     with pytest.raises(ValueError, match="ambiguous"):
-        store.replace_in_note("note00", "alpha", "x")
+        store.replace_in_note("a", "note00", "alpha", "x")
     with pytest.raises(ValueError, match="not found"):
-        store.replace_in_note("note00", "delta", "x")
+        store.replace_in_note("a", "note00", "delta", "x")
     with pytest.raises(ValueError, match="Obsidian"):
-        store.replace_in_note("pdf000", "a", "b")
+        store.replace_in_note("a", "pdf000", "a", "b")
     with pytest.raises(KeyError):
-        store.replace_in_note("nope00", "a", "b")
+        store.replace_in_note("a", "nope00", "a", "b")
 
 
 # --------------------------------------------------------------------- routes
@@ -799,7 +877,10 @@ def test_api_post_source_appends_with_detected_kind_anchors_and_id(
     )
     assert put.status_code == 200 and put.json()["sources"][0]["id"] == "chat00"
     # A web source is read-only.
-    assert api.patch("/api/sources/chat00/text", json={"old": "a", "new": "b"}).status_code == 400
+    assert (
+        api.patch("/api/sources/chat00/text?deck=a::b", json={"old": "a", "new": "b"}).status_code
+        == 400
+    )
 
 
 def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
@@ -825,13 +906,24 @@ def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
 
 def test_api_replace_source_text_maps_errors(tmp_path: Path) -> None:
     api, _ = _api(tmp_path)
-    ok = api.patch("/api/sources/note00/text", json={"old": "unique", "new": "modifié"})
+    ok = api.patch("/api/sources/note00/text?deck=a", json={"old": "unique", "new": "modifié"})
     assert ok.status_code == 200
     assert ok.json()["source"]["text"] == ""
     assert (
-        api.patch("/api/sources/note00/text", json={"old": "unique", "new": "x"}).status_code == 409
+        api.patch("/api/sources/note00/text?deck=a", json={"old": "unique", "new": "x"}).status_code
+        == 409
     )
-    assert api.patch("/api/sources/nope00/text", json={"old": "a", "new": "b"}).status_code == 404
+    assert (
+        api.patch("/api/sources/nope00/text?deck=a", json={"old": "a", "new": "b"}).status_code
+        == 404
+    )
+    # A deck whose corpus does not list the id does not reach it.
+    assert (
+        api.patch(
+            "/api/sources/note00/text?deck=other", json={"old": "unique", "new": "x"}
+        ).status_code
+        == 404
+    )
     # undo = the same call with old and new swapped
-    back = api.patch("/api/sources/note00/text", json={"old": "modifié", "new": "unique"})
+    back = api.patch("/api/sources/note00/text?deck=a", json={"old": "modifié", "new": "unique"})
     assert back.json()["source"]["text"] == ""

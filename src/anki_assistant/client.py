@@ -214,9 +214,9 @@ class AnkiClient:
             self._lock.release()
             raise
         self._col, self._owner, self._depth, self._wrote = col, me, 1, False
-        if self.auth is not None:
-            self._schema_changed_at_open = bool(col.schema_changed())
         try:
+            if self.auth is not None:
+                self._schema_changed_at_open = bool(col.schema_changed())
             yield col
         finally:
             wrote = self._wrote

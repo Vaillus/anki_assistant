@@ -94,6 +94,22 @@ def test_a_failed_sync_is_recorded_and_releases_the_file(spy: SyncSpy) -> None:
     assert spy.deck_names() == ["a"], "the write stays"
 
 
+def test_a_failure_right_after_open_releases_the_file(
+    spy: SyncSpy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(self: Collection) -> bool:
+        raise RuntimeError("schema unreadable")
+
+    monkeypatch.setattr(Collection, "schema_changed", broken)
+    with pytest.raises(RuntimeError):
+        spy.deck_names()
+    monkeypatch.undo()
+    later = threading.Thread(target=spy.deck_names, daemon=True)
+    later.start()
+    later.join(2)
+    assert not later.is_alive(), "the next action got the file"
+
+
 def test_no_login_no_sync(tmp_path: Path) -> None:
     client = AnkiClient(new_collection(tmp_path / "collection.anki2"))
     client.create_deck("a")

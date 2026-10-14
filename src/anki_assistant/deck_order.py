@@ -604,12 +604,14 @@ def turn_into_label(
 ) -> str:
     """Record a group as a label (its own cards and corpus already moved by the caller): its
     sub-decks (`sub_decks`, in their order under it) take its place among the decks of its
-    tree parent; a `misc` sub-deck just created for its cards shows first among them."""
+    tree parent; a `misc` sub-deck just created for its cards shows first among them. The
+    tree parent's list is stored when it had one, when a misc deck was created, or when the
+    group's own decks were reordered, so that order survives the group's list."""
     parent = tree_parent_of(tree, group_id)
     lifted = list(sub_decks)
     if misc_created is not None:
         lifted = [misc_created] + [d for d in lifted if d != misc_created]
-    if parent in store.order or misc_created is not None:
+    if parent in store.order or misc_created is not None or group_id in store.order:
         siblings = [row.id for row in tree.rows if row.parent_id == parent]
         at = siblings.index(group_id)
         store.order[parent] = siblings[:at] + lifted + siblings[at + 1 :]

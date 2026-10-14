@@ -138,6 +138,31 @@ def test_group_turned_into_label_lifts_its_decks_into_its_place(store: DeckOrder
     assert under(t, "courant")[-2:] == ["OR", "ML for CO"]
 
 
+def test_group_turned_into_label_keeps_its_decks_reordered_order(store: DeckOrderStore):
+    t = tree(store)
+    group = IDS["courant::01-AI"]
+    do.move(
+        store,
+        t,
+        IDS["courant::01-AI::RL doesn't work yet"],
+        before=IDS["courant::01-AI::little book of deep learning"],
+    )
+    t = tree(store)
+    subs = [r.id for r in t.rows if r.parent_id == group]
+    assert IDS["courant"] not in store.order, "courant was never reordered"
+    do.turn_into_label(store, t, group, sub_decks=subs)
+    t = tree(store)
+    assert under(t, "courant")[:6] == [
+        "Thèse",
+        "RL doesn't work yet",
+        "little book of deep learning",
+        "ML for CO",
+        "On the measure of intelligence",
+        "code",
+    ]
+    assert group not in store.order
+
+
 def test_misc_created_for_a_groups_cards_shows_first(store: DeckOrderStore):
     names = [*NAMES, "courant::03-OR::misc"]
     IDS["courant::03-OR::misc"] = 500

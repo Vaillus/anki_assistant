@@ -309,10 +309,31 @@ class AnkiClient:
         with self._use() as col:
             return {d.name: int(d.id) for d in col.decks.all_names_and_ids()}
 
-    def create_deck(self, name: str) -> int:
-        """Create a deck (and any intermediate parents). Returns the deck id."""
+    def decks(self) -> list[tuple[str, int]]:
+        """Every deck as (full name, deck id), the empty Default deck left out."""
+        with self._use() as col:
+            return [
+                (d.name, int(d.id)) for d in col.decks.all_names_and_ids(skip_empty_default=True)
+            ]
+
+    def create_deck(self, name: str, *, preset_of: str | None = None) -> int:
+        """Create a deck (and any intermediate parents). Returns the deck id. `preset_of`: a
+        deck whose options group (preset) the new deck takes."""
         with self._use(write=True) as col:
-            return int(col.decks.id(name, create=True) or 0)
+            did = col.decks.id(name, create=True)
+            if preset_of is not None:
+                source = col.decks.get(self._deck_id(col, preset_of)) or {}
+                deck = col.decks.get(did) if did else None
+                if deck is not None and "conf" in source:
+                    deck["conf"] = source["conf"]
+                    col.decks.save(deck)
+            return int(did or 0)
+
+    def own_card_ids(self, deck: str) -> list[int]:
+        """Ids of the cards that sit directly in `deck`, not in one of its sub-decks."""
+        with self._use() as col:
+            query = f"deck:{_quote(deck)} -deck:{_quote(deck + '::*')}"
+            return [int(c) for c in col.find_cards(query)]
 
     def delete_deck(self, name: str, *, cards_too: bool = False) -> None:
         """Delete a deck and its sub-decks. When *cards_too* is False, cards move to Default."""

@@ -494,12 +494,19 @@ class AnkiClient:
         return out
 
     def answer_card(
-        self, card_id: int, ease: int, *, answered_at: int, time_ms: int
+        self, card_id: int, ease: int, *, answered_at: int, time_ms: int, days_late: int = 0
     ) -> Replay | None:
         """Replay one answer (ease 1 again .. 4 easy) given at `answered_at` (ms since epoch)
         after `time_ms` on the card: a timestamped replay. Anki's review history and the card's
-        last-review time get that instant and duration. Returns None when the card does not
-        exist."""
+        last-review time get that instant and duration.
+
+        `days_late` > 0 says the answer's Anki day was that many days before today. The
+        scheduler counts elapsed days up to today, so the card then gets the state of the
+        answer's day instead: the scheduler is asked with the card's due date and last-review
+        time moved forward by the lag, the card is put back as it was, and it is answered with
+        that state (Anki accepts a new state from the caller when the current one matches the
+        card). Two extra card writes, outside Anki's undo list. Returns None when the card does
+        not exist."""
         rating = _RATINGS.get(ease)
         if rating is None:
             raise ValueError("ease must be between 1 and 4")
@@ -509,12 +516,24 @@ class AnkiClient:
             except anki.errors.NotFoundError:
                 return None
             states: SchedulingStates = col._backend.get_scheduling_states(card_id)
+            new_states = states
+            if days_late > 0 and card.queue in (2, 3):  # due counted in days
+                due, last_review = card.due, card.last_review_time
+                card.due = due + days_late
+                if last_review:
+                    card.last_review_time = last_review + days_late * _DAY_SECONDS
+                col.update_card(card, skip_undo_entry=True)
+                try:
+                    new_states = col._backend.get_scheduling_states(card_id)
+                finally:
+                    card.due, card.last_review_time = due, last_review
+                    col.update_card(card, skip_undo_entry=True)
             deck_before = col.decks.get(card.did) or {}
             _sched(col).answer_card(
                 CardAnswer(
                     card_id=card_id,
                     current_state=states.current,
-                    new_state=_button_state(states, rating),
+                    new_state=_button_state(new_states, rating),
                     rating=rating,
                     answered_at_millis=answered_at,
                     milliseconds_taken=max(0, time_ms),

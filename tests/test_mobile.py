@@ -28,7 +28,6 @@ from tests.anki_fixture import TempAnki
 
 DECK = "courant"
 NOW = datetime.now().replace(microsecond=0)
-FIXED = datetime(2026, 10, 6, 9, 0)  # Anki day 2026-10-06 with the default rollover
 TODAY = mobile.anki_day(NOW, 4)
 
 TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
@@ -486,6 +485,35 @@ def test_sync_redates_late_review(
     expected = max(0, card["interval"] - days_ago)  # answer day + interval, clamped to today
     assert card["due"] - anki.anki_today() == expected
     assert "set_due_date" in anki.calls
+
+
+def good_days(anki: PhoneAnki, cid: int) -> int:
+    seconds = anki.answer_outcomes([cid])[cid].seconds[2]
+    assert seconds is not None
+    return seconds // 86_400
+
+
+def test_late_replay_counts_on_its_own_day(anki: PhoneAnki, log: MobileLog) -> None:
+    """An answer given two days before the sync: Anki's history holds its instant and time,
+    the card gets the interval its own day would have given, re-dated to that day, and today's
+    counters are untouched."""
+    lag = 2
+    cid = anki.new_card(interval=10, rel_due=0)
+    anki.set_card(cid, last_review_days=10)
+    on_its_day = good_days(anki, cid)  # the card as it stood on the answer's day
+    anki.set_card(cid, rel_due=-lag, last_review_days=10 + lag)
+    counted_to_today = good_days(anki, cid)  # elapsed days counted up to the sync
+
+    at = NOW - timedelta(days=lag)
+    run(anki, [answer("a", cid, at, time_ms=6500)], log)
+
+    card = anki.cards[cid]
+    assert card["interval"] == on_its_day
+    assert on_its_day < counted_to_today
+    assert card["due"] - anki.anki_today() == max(0, on_its_day - lag)
+    [(instant, card_id, ease, _, taken)] = [row for row in anki.revlog() if row[2]]
+    assert (instant, card_id, ease, taken) == (ms(at), cid, 3, 6500)
+    assert anki.studied_today(DECK) == (0, 0)
 
 
 def test_sync_redating_uses_anki_day_not_calendar_day() -> None:

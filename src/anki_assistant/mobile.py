@@ -480,10 +480,14 @@ def _apply(anki: AnkiClient, action: Action, rollover_hour: int, today: date) ->
     Anki counted as studied today for it."""
     cid = action.card_id
     if action.kind == "answer":
-        replayed = anki.answer_card(
-            cid, action.ease or 0, answered_at=action.at, time_ms=action.time_ms
-        )
         answered = anki_day(from_epoch_ms(action.at), rollover_hour)
+        replayed = anki.answer_card(
+            cid,
+            action.ease or 0,
+            answered_at=action.at,
+            time_ms=action.time_ms,
+            days_late=max(0, (today - answered).days),
+        )
         if answered >= today or replayed is None:
             return None  # answered today: Anki's due date already counts from today
         if replayed.card.queue == 2:  # learning cards keep Anki's delays

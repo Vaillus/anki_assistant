@@ -24,6 +24,7 @@ uv run anki login      # once: keeps the AnkiWeb key in .env, so the app syncs a
 |---|---|---|
 | `ANKI_COLLECTION` | the only profile's | Path to `collection.anki2` (e.g. `~/Library/Application Support/Anki2/User 1/collection.anki2`). |
 | `ANKIWEB_HKEY` | unset | The AnkiWeb key `anki login` writes. Unset: no AnkiWeb sync from the app; Anki desktop sends its changes at its next sync. |
+| `ANKIWEB_ENDPOINT` | unset | The AnkiWeb server `anki login` writes when AnkiWeb names one. |
 
 ## Web interface
 
@@ -83,7 +84,6 @@ scripts/app/launch.sh stop          # stop the server
 
 ## CLI
 
-
 ```bash
 uv run anki decks                         # list decks
 uv run anki cards "My Deck" -n 10         # cards from a deck
@@ -98,7 +98,16 @@ uv run anki flag 0 1234567890123          # clear the flag
 uv run anki tag 1234567890123 -t review
 ```
 
-`--json` on any command gives machine-readable output.
+`--json` on any command gives machine-readable output. `--collection PATH` opens another
+`collection.anki2` than `ANKI_COLLECTION`'s; the command keeps the AnkiWeb login from `.env`.
+
+Like the web app, the CLI needs Anki desktop closed. A command that wrote (`edit`, `flag`,
+`tag`) waits up to 10 seconds for its AnkiWeb sync before exiting, and says on stderr when
+the sync failed or was still running: its changes then go with the next sync.
+
+```bash
+uv run anki login                         # once: AnkiWeb key into .env (never the password)
+```
 
 ## Python
 

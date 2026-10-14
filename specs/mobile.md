@@ -45,18 +45,20 @@ An **interday learning card** is a learning or relearning card whose current ste
 
 The **studied-today counter** is the per-deck count of reviews and new cards Anki has recorded as studied on the current Anki day, which it checks against the daily limit. A [late replay](#sync) does not count in it: the sync gives back the room it used up.
 
-A **batch** is the cards the phone downloads at a sync: for each day of the window, the cards Anki would show that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
+A **batch** is the cards the phone downloads at a sync: for each day of the window, the cards to study that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
 
-**Day 0** is Anki's **study queue** of the mobile deck: the ordered cards Anki's scheduler would show today, as Anki builds it — its limits, sub-deck limits, sibling burying and every display-order option applied, and Anki's own kinds (new, learning, review). It is exact: Anki desktop and AnkiMobile would show the same cards today.
+Anki's **study queue** of a deck is the ordered cards Anki's scheduler would show today, as Anki builds it: its limits, sub-deck limits, sibling burying and every display-order option applied, in Anki's deck order. Anki desktop and AnkiMobile show it; the phone app does not.
 
-**Days 1 and 2 are rebuilt** by the app: Anki builds its study queue for the current day only, so the app works out a later day from the cards' due dates and the deck's limits. A rebuilt day is a guess at what Anki would show that day; it misses what Anki applies while building a day's queue and the app does not repeat:
+**Every day of the batch is rebuilt** by the app, day 0 included: the app works out each day from the cards' due dates, the mobile deck's daily quota and the [deck order](#deck-order) the app stores. Days 1 and 2 have to be rebuilt, since Anki builds its study queue for the current day only. Day 0 is rebuilt the same way so that the whole batch follows the app's deck order. A rebuilt day misses what Anki applies while building its study queue and the app does not repeat:
 
-| | Day 0 | Days 1 and 2 |
+| | Anki's study queue (Anki desktop, AnkiMobile) | A day of the batch (0, 1 or 2) |
 |---|---|---|
-| Which cards | Anki's study queue | due by that day, not taken by an earlier day |
-| Review and new limit | the effective deck limit of the deck and of each sub-deck, minus what Anki counts as studied today | the deck's effective limit without « Today only »; sub-deck limits ignored |
-| Order | Anki's: every display-order option, sibling burying | the four display-order options below |
+| Which cards | Anki's scheduler's | due by that day, not taken by an earlier day |
+| Review and new limit | the effective deck limit of the deck and of each sub-deck, minus what Anki counts as studied today | the day's daily quota (table above); sub-deck limits ignored |
+| Order | every display-order option, sibling burying, Anki's deck order | the four display-order options below, in the app's [deck order](#deck-order); no sibling burying |
 | Suspended and buried cards | left out by Anki | left out by the search filter `-is:suspended -is:buried` (Anki's `is:new` and `prop:due` match them too) |
+
+So day 0 on the phone can differ from what Anki desktop shows today: in another order, and, when a quota cuts partway through the mobile deck, with new cards Anki desktop would not show today and without some it would. Once the phone's answers sync, Anki counts them as studied today, and Anki desktop's study queue for the rest of the day shrinks with them.
 
 A rebuilt day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (its preset). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value keeps the default given for that option.
 
@@ -67,7 +69,7 @@ A rebuilt day's cards are gathered in order, then cut at the quota, so the order
 | `interdayLearningMix` | `0` (Mix with reviews) | interday learning before the reviews |
 | `newMix` | `0` (Mix with reviews) | new cards after the reviews |
 
-**Deck order** is Anki's deck-list order: a parent before its sub-decks, siblings by name with case ignored. **Review order** and **new order** are the orders the first two rows give.
+<a id="deck-order"></a>**Deck order** is the [app deck order](./review.md#deck-tree-column-1): the app's deck tree read top to bottom, the decks under each tree parent in the order the app stores and each deck's sub-decks right after it. With nothing reordered, it is Anki's deck order (a parent before its sub-decks, siblings by name with case ignored). It sets a study order only when the mobile deck's preset honours one of the first two rows; a [label](./review.md#deck-tree-column-1) changes no study order, only a deck's place does. Anki desktop and AnkiMobile never see it: they keep Anki's deck order. **Review order** and **new order** are the orders the first two rows give.
 
 Within each rebuilt day:
 
@@ -123,7 +125,7 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
    - otherwise (past the window, second answer, `null` outcome) → not until the next sync.
 3. **Cut at the day's limit.** Each day shows at most that day's quota (`quota[k]` for `days[k]`) of reviews and of new cards, minus what was answered on the phone that day, returning and unreached cards included:
    - the **interday learning cards** of the share come first, in Anki's review order, and use up the review quota before the reviews, as in Anki;
-   - the **reviews** of the share and the cards returning on a later day are merged, sorted in **Anki's review order** — due day first, or deck first (by `deck_rank`) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to what the interday learning cards left of the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
+   - the **reviews** of the share and the cards returning on a later day are merged, sorted in the batch's **review order** — due day first, or deck first (by `deck_rank`, the [deck order](#deck-order)) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to what the interday learning cards left of the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
    - the **new cards** of the share, in batch order, are kept up to the new quota;
    - intraday learning cards of the share and same-day returns are never cut, as in Anki;
    - **answered that day**: a card's first answer counts as a review for a review or interday learning card, as a new card for a new card, as nothing for an intraday learning card; a later answer counts as a review when the previous outcome brought the card back on a later day, as nothing when it was a same-day return.
@@ -292,7 +294,7 @@ The page itself is served outside `/api`: `GET /m` (the page), `GET /m/manifest.
 }
 ```
 
-`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `due_day` is the Anki day a review or interday-learning card is due (`null` otherwise); `deck_rank` is the card's deck's place in Anki's deck list among the batch's decks; `review_order` is the preset's review order, `deck` (`reviewOrder` `2`) or `due`. The phone queue sorts reviews with them ([Phone queue](#phone-queue)). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
+`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `due_day` is the Anki day a review or interday-learning card is due (`null` otherwise); `deck_rank` is the place of the card's deck among the batch's decks in the [deck order](#deck-order) (the app's tree read top to bottom); `review_order` is the preset's review order, `deck` (`reviewOrder` `2`) or `due`. The phone queue sorts reviews with them ([Phone queue](#phone-queue)). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
 
 **Sync** (`POST /api/mobile/sync`), request:
 

@@ -309,7 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     load_dotenv()
-    client = AnkiClient(args.collection) if args.collection else anki_client_from_env()
+    client = anki_client_from_env(collection=args.collection)
     try:
         if args.func is cmd_source:  # sources.json only: Anki's file is not needed
             args.func(client, args)

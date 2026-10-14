@@ -158,3 +158,7 @@ def test_client_from_env(tmp_path: Path) -> None:
     assert plain.path == Path(path) and plain.auth is None
     synced = anki_client_from_env({"ANKI_COLLECTION": path, "ANKIWEB_HKEY": "k"})
     assert synced.auth is not None and synced.auth.hkey == "k"
+    other = str(tmp_path / "other.anki2")
+    chosen = anki_client_from_env({"ANKI_COLLECTION": path, "ANKIWEB_HKEY": "k"}, collection=other)
+    assert chosen.path == Path(other), "--collection wins over ANKI_COLLECTION"
+    assert chosen.auth is not None and chosen.auth.hkey == "k", "and keeps the AnkiWeb key"

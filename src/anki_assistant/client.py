@@ -834,13 +834,16 @@ def _card(card: AnkiCard, note: AnkiNote, deck_name: str) -> Card:
     )
 
 
-def anki_client_from_env(env: Mapping[str, str] | None = None) -> AnkiClient:
-    """The client the app and the CLI use: collection from `ANKI_COLLECTION` (else the only
-    profile's), AnkiWeb login from `ANKIWEB_HKEY` (and `ANKIWEB_ENDPOINT`), when set."""
+def anki_client_from_env(
+    env: Mapping[str, str] | None = None, *, collection: str | Path | None = None
+) -> AnkiClient:
+    """The client the app and the CLI use: collection from `collection`, else `ANKI_COLLECTION`,
+    else the only profile's; AnkiWeb login from `ANKIWEB_HKEY` (and `ANKIWEB_ENDPOINT`), when
+    set, whichever the collection."""
     env = os.environ if env is None else env
     hkey = (env.get("ANKIWEB_HKEY") or "").strip()
     auth = SyncAuth(hkey=hkey, endpoint=env.get("ANKIWEB_ENDPOINT") or None) if hkey else None
-    return AnkiClient(env.get("ANKI_COLLECTION") or None, auth=auth)
+    return AnkiClient(collection or env.get("ANKI_COLLECTION") or None, auth=auth)
 
 
 __all__ = [

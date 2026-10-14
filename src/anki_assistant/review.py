@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 from anki_assistant import deck_order
@@ -302,7 +302,7 @@ def group_label_effects(
         own_cards=len(client.own_card_ids(name)),
         misc=misc,
         misc_exists=misc in tree.by_name,
-        sources=len(store.corpora.get(name, [])),
+        sources=len(store.lists.get(name, [])),
     )
 
 
@@ -322,8 +322,8 @@ def turn_group_into_label(
     protected: Iterable[str | None] = (),
 ) -> str:
     """Turn a group into a label (specs/review.md#labels): its own cards move to its `misc`
-    sub-deck (created with the group's preset when missing), its corpus is copied onto each of
-    its sub-decks and removed from it, then the label is recorded. Returns the label id;
+    sub-deck (created with the group's preset when missing), its corpus is shared with each of
+    its sub-decks and taken off it, then the label is recorded. Returns the label id;
     raises `LabelRefused` when the deck cannot turn."""
     tree = app_tree(client, order)
     name = _tree_name(tree, deck_id)
@@ -340,15 +340,7 @@ def turn_group_into_label(
             misc_created = client.create_deck(misc, preset_of=name)
             children.append(misc)
         client.change_deck(own_cards, misc)
-    group_sources = store.corpora.get(name)
-    if group_sources:
-        for child in children:
-            own = list(store.corpora.get(child, []))
-            ids = {src.id for src in own}
-            copies = [replace(src, deck=child) for src in group_sources if src.id not in ids]
-            store.corpora[child] = own + copies
-        del store.corpora[name]
-        store.save()
+    store.share(name, children)
     return deck_order.turn_into_label(
         order, tree, deck_id, sub_decks=sub_decks, misc_created=misc_created
     )

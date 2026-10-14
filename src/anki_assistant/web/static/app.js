@@ -487,7 +487,7 @@ function deckLabel(body) {
 }
 
 /* Turn a group into a label, after one confirmation stating what moves in Anki and what is
-   copied (specs/review.md#labels). */
+   shared (specs/review.md#labels). */
 async function groupLabel(row) {
   let fx;
   try {
@@ -512,7 +512,7 @@ async function groupLabel(row) {
   }
   if (fx.sources) {
     lines.push(
-      "Ses " + fx.sources + " sources sont copiées sur chacun de ses sous-paquets, puis retirées de " +
+      "Ses " + fx.sources + " sources sont partagées avec chacun de ses sous-paquets, puis retirées de " +
         row.leaf + ".",
     );
   }

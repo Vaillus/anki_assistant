@@ -5,6 +5,7 @@ touches the user's collection.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -112,7 +113,7 @@ def test_deck_tree_rows_in_ankis_order_case_ignored_prefix_hidden(anki: TempAnki
     assert ai.can_group and ai.group_refused is None
 
 
-def test_turning_a_group_into_a_label_files_its_cards_and_copies_its_corpus(
+def test_turning_a_group_into_a_label_files_its_cards_and_shares_its_corpus(
     anki: TempAnki, tmp_path: Path
 ):
     own = anki.add("c::04-maths", flags=(1,))
@@ -152,6 +153,10 @@ def test_turning_a_group_into_a_label_files_its_cards_and_copies_its_corpus(
     assert "c::04-maths" not in store.corpora
     assert [s.id for s in store.corpora["c::04-maths::probas"]] == ["pppppp", "wwwwww"]
     assert [s.id for s in store.corpora["c::04-maths::misc"]] == ["wwwwww"]
+    assert sorted(store.sources) == ["pppppp", "wwwwww"], "stored once"
+    store.set_corpus("c::04-maths::misc", [replace(group_src, note="edited")])
+    shared = store.find("c::04-maths::probas", "wwwwww")
+    assert shared is not None and shared.note == "edited", "one source, not a copy"
     rows = review.list_decks(anki, store, order)
     assert [(r.leaf, r.depth) for r in rows] == [
         ("c", 0),

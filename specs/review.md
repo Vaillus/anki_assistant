@@ -29,14 +29,14 @@ A deck's **tree parent** is the deck the app's tree shows it under: its Anki par
 The **app deck order** is the order of the decks under each tree parent, stored by the app. The tree is read top to bottom: the decks under each tree parent in the app deck order, each deck's sub-decks right after it. **Anki's deck order** is the order in which Anki lists sibling decks: by each `::` part of the name, case ignored, a parent before its sub-decks.
 
 - A tree parent whose decks were never reordered lists them in Anki's deck order, a group turned into a label replaced by its decks, in their order.
-- A tree parent whose decks were reordered stores the list of its decks. A deck it does not hold yet (created in Anki, in the app or on another device, or put under this parent in Anki) goes after the stored ones, in Anki's deck order. A deck deleted in Anki is ignored.
+- A tree parent whose decks were reordered stores the list of its decks. A deck it does not hold yet (created in Anki, in the app or on another device, or put under this parent in Anki) goes after the stored ones, in Anki's deck order. A deck deleted in Anki, or put under another tree parent, leaves the list, so one put back later lands like a created deck.
 - The order is keyed by **deck id** (Anki's number for a deck, stable across renames and syncs), so a deck renamed in Anki desktop keeps its place.
 
 ### Moving a deck
 
 A **move** drags a deck row to a new place among the decks of its tree parent; its sub-decks move with it. The drop line decides the place: the line right above a deck of the same tree parent places the dragged deck before it; the line below the last row of that tree parent's decks (the last deck's own sub-decks included) places it after the last one. A line anywhere else (among another deck's sub-decks, or under another tree parent) refuses the drop, and the row goes back.
 
-A move rewrites the one list of the app deck order stored under that tree parent, and is saved at once. Deck names, Anki's collection and every other list stay as they are. In the flagged-only view the dropped deck lands right before the visible deck under the line (after the last visible one at the end), and hidden decks keep their order.
+A move rewrites the one list of the app deck order stored under that tree parent, and is saved at once. A drop that leaves the order as it is (on the deck's own place) stores nothing. Deck names, Anki's collection and every other list stay as they are. In the flagged-only view the dropped deck lands right before the visible deck under the line (after the last visible one at the end), and hidden decks keep their order.
 
 ### Number prefixes
 

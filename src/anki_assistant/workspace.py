@@ -5,7 +5,7 @@ Spec: specs/workspace.md.
 Pure functions over an `AnkiClient` and a `SourceStore`, no FastAPI: `web/routes_workspace.py`
 is the HTTP shell, the tests drive this module with the fake client of `tests/test_review.py`.
 
-AnkiConnect has no transactions, so "all or nothing" is emulated:
+Anki keeps no transaction across these writes, so "all or nothing" is emulated:
 
 1. the plan is validated before anything is written;
 2. every existing note of the plan is read once into a `Snapshot`;
@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient, AnkiConnectError
+from anki_assistant.client import AnkiClient, AnkiError
 from anki_assistant.models import strip_html
 from anki_assistant.review import REASON_FIELD, NoteNotFound
 from anki_assistant.sources import SourceStore
@@ -311,7 +311,7 @@ def check_fields(client: AnkiClient, plan: ApplyPlan, snap: Snapshot) -> dict[st
     for model in sorted(set(targets.values())):
         try:
             fields_of[model] = list(client.model_field_names(model))
-        except AnkiConnectError as exc:
+        except AnkiError as exc:
             errors.append(f"note type « {model} »: {exc}")
     for card in plan.cards:
         model = targets.get(card.wid)

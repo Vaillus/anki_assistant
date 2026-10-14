@@ -1,28 +1,31 @@
-"""Error mapping shared by the /api routes: unknown note -> 404, Anki unreachable -> 503,
-any other AnkiConnect failure -> 502 (specs/review.md#api)."""
+"""Error mapping shared by the /api routes: unknown note -> 404, collection held by Anki desktop
+-> 503, any other Anki failure -> 502 (specs/review.md#api)."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from typing import Any
 
 from fastapi import HTTPException
 
-from anki_assistant.client import AnkiConnectError
+from anki_assistant.client import AnkiError, CollectionLocked
 from anki_assistant.review import NoteNotFound
-
-# `AnkiClient.invoke` wraps a URLError with this prefix; it is the one AnkiConnect failure that
-# means "Anki is not running" rather than "Anki refused the request".
-UNREACHABLE_PREFIX = "Cannot reach"
 
 
 @contextmanager
-def anki_errors() -> Iterator[None]:
+def anki_errors(anki: Any = None) -> Iterator[None]:
+    """Map Anki failures to HTTP errors. Given the request's `AnkiClient`, also hold the
+    collection for the whole block: one action, one open of the file."""
     try:
-        yield
+        with ExitStack() as stack:
+            action = getattr(anki, "action", None)
+            if action is not None:
+                stack.enter_context(action())
+            yield
     except NoteNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except AnkiConnectError as exc:
-        message = str(exc)
-        status = 503 if message.startswith(UNREACHABLE_PREFIX) else 502
-        raise HTTPException(status_code=status, detail=message) from exc
+    except CollectionLocked as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AnkiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

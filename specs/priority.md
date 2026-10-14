@@ -18,7 +18,7 @@ Buried and new flagged cards are always included. Due flagged cards are budget-f
 
 ## Budget filtering
 
-The **study deck** (`STUDY_DECK` env var, e.g. `courant`) is the root deck the user reviews from. Its `review_count` from `getDeckStats` is the remaining reviews for today. All due cards under it are sorted by `(deck_name, due)` — deck alphabetical first (Anki's deck-order presentation), most overdue first within each deck. Flagged due cards whose position exceeds the budget are excluded.
+The **study deck** (`STUDY_DECK` env var, e.g. `courant`) is the root deck the user reviews from. The **budget** is its effective deck limit for reviews minus what Anki counts as studied today. The **effective deck limit** is the daily limit Anki actually applies to a deck: the deck's « Today only » value when set for today, else its « This deck » value, else its preset's. All due cards under it are sorted by `(deck_name, due)` — deck alphabetical first (Anki's deck-order presentation), most overdue first within each deck. Flagged due cards whose position exceeds the budget are excluded.
 
 ## Deck tree row
 

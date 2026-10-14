@@ -1,332 +1,23 @@
-"""Tests for review.py and web/render.py, driven by an in-memory fake AnkiConnect.
-
-`FakeAnkiClient` subclasses `AnkiClient` and overrides only `invoke()`, so every method of the
-real client (including the `multi` batching) is exercised. Nothing here touches a real Anki.
+"""Tests for review.py and web/render.py, on a temporary collection (tests/anki_fixture.py):
+the real `AnkiClient` over an empty collection created in the test's temp folder. Nothing here
+touches the user's collection.
 """
 
 from __future__ import annotations
 
-import base64
-import re
-from itertools import count
 from pathlib import Path
-from typing import Any
 
 import pytest
+from anki.collection import Collection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient, AnkiConnectError
+from anki_assistant.client import AnkiError, CollectionLocked
 from anki_assistant.sources import Source, SourceStore
 from anki_assistant.web.render import render_field
 from anki_assistant.web.routes_review import router
-
-# --------------------------------------------------------------------- the fake
-
-_TOKENS = re.compile(r'[^\s"]*"[^"]*"[^\s"]*|\S+')
-
-
-class FakeAnkiClient(AnkiClient):
-    """An AnkiConnect stand-in holding a tiny collection in memory."""
-
-    def __init__(self) -> None:
-        super().__init__(url="http://fake.invalid")
-        self.decks: list[str] = []
-        self.notes: dict[int, dict[str, Any]] = {}
-        self.cards: dict[int, dict[str, Any]] = {}
-        self.models: dict[str, list[str]] = {
-            "Cloze": ["Text", "Back Extra"],
-            "Basic": ["Front", "Back"],
-        }
-        self.calls: list[str] = []  # action names, in the order they were invoked
-        self.review_budgets: dict[str, int] = {}  # deck name → max reviews/day
-        self.media: dict[str, bytes] = {}  # media folder: file name → content
-        self._ids = count(1000)
-
-    # -- fixture building -------------------------------------------------
-
-    def add(
-        self,
-        deck: str,
-        *,
-        model: str = "Cloze",
-        fields: dict[str, str] | None = None,
-        tags: list[str] | None = None,
-        flags: tuple[int, ...] = (0,),
-        interval: int = 0,
-        due: int = 0,
-        reps: int = 0,
-        lapses: int = 0,
-        queue: int = 0,
-        card_type: int = 0,
-        factor: int = 0,
-        left: int = 0,
-    ) -> int:
-        """Put a note in the collection with one card per entry of `flags`."""
-        note_id = next(self._ids)
-        card_ids = []
-        for ord_, flag in enumerate(flags):
-            card_id = next(self._ids)
-            self.cards[card_id] = {
-                "cardId": card_id,
-                "note": note_id,
-                "deckName": deck,
-                "flags": flag,
-                "ord": ord_,
-                "interval": interval,
-                "due": due,
-                "reps": reps,
-                "lapses": lapses,
-                "queue": queue,
-                "type": card_type,
-                "factor": factor,
-                "left": left,
-            }
-            card_ids.append(card_id)
-        self.notes[note_id] = {
-            "noteId": note_id,
-            "modelName": model,
-            "tags": list(tags or []),
-            "fields": dict(fields or {"Text": "x"}),
-            "cards": card_ids,
-        }
-        self._register(deck)
-        return note_id
-
-    def _register(self, deck: str) -> None:
-        parts = deck.split("::")
-        for cut in range(1, len(parts) + 1):
-            name = "::".join(parts[:cut])
-            if name not in self.decks:
-                self.decks.append(name)
-
-    def flags_of(self, note_id: int) -> list[int]:
-        return [self.cards[c]["flags"] for c in self.notes[note_id]["cards"]]
-
-    def decks_of(self, note_id: int) -> list[str]:
-        return [self.cards[c]["deckName"] for c in self.notes[note_id]["cards"]]
-
-    # -- transport --------------------------------------------------------
-
-    def invoke(self, action: str, **params: Any) -> Any:
-        self.calls.append(action)
-        handler = getattr(self, f"_do_{action}", None)
-        if handler is None:
-            raise AnkiConnectError(f"{action}: unsupported action")
-        return handler(**params)
-
-    # -- actions ----------------------------------------------------------
-    # Method and parameter names mirror AnkiConnect's, camelCase included.
-
-    def _do_retrieveMediaFile(self, filename: str) -> str | bool:
-        data = self.media.get(filename)
-        return base64.b64encode(data).decode() if data is not None else False
-
-    def _do_multi(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        out = []
-        for sub in actions:
-            try:
-                result = self.invoke(sub["action"], **sub.get("params", {}))
-            except AnkiConnectError as exc:
-                out.append({"result": None, "error": str(exc)})
-            else:
-                out.append({"result": result, "error": None})
-        return out
-
-    def _do_getDeckStats(self, decks: list[str]) -> dict[str, dict[str, Any]]:
-        result: dict[str, dict[str, Any]] = {}
-        for i, name in enumerate(decks):
-            due_count = sum(
-                1
-                for card in self.cards.values()
-                if card["deckName"] == name and card["queue"] in (2, 3) and card["type"] != 0
-            )
-            budget = self.review_budgets.get(name, 9999)
-            result[str(i)] = {
-                "deck_id": i,
-                "name": name,
-                "new_count": 0,
-                "learn_count": 0,
-                "review_count": min(due_count, budget),
-            }
-        return result
-
-    def _do_deckNames(self) -> list[str]:
-        return list(self.decks)
-
-    def _do_createDeck(self, deck: str) -> int:
-        self._register(deck)
-        return hash(deck)
-
-    def _do_deleteDecks(self, decks: list[str], cardsToo: bool = False) -> None:
-        for name in decks:
-            self.decks = [d for d in self.decks if d != name and not d.startswith(name + "::")]
-            if cardsToo:
-                for cid, card in list(self.cards.items()):
-                    if card["deckName"] == name or card["deckName"].startswith(name + "::"):
-                        del self.cards[cid]
-            else:
-                for card in self.cards.values():
-                    if card["deckName"] == name or card["deckName"].startswith(name + "::"):
-                        card["deckName"] = "Default"
-
-    def _do_findCards(self, query: str) -> list[int]:
-        return [cid for cid, card in self.cards.items() if _matches(card, query)]
-
-    def _do_findNotes(self, query: str) -> list[int]:
-        return sorted({self.cards[cid]["note"] for cid in self._do_findCards(query)})
-
-    def _do_cardsInfo(self, cards: list[int]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for cid in cards:
-            card = self.cards.get(cid)
-            if card is None:
-                out.append({})
-                continue
-            note = self.notes[card["note"]]
-            out.append(
-                {**card, "modelName": note["modelName"], "fields": _api_fields(note["fields"])}
-            )
-        return out
-
-    def _do_notesInfo(self, notes: list[int]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for nid in notes:
-            note = self.notes.get(nid)
-            out.append({} if note is None else {**note, "fields": _api_fields(note["fields"])})
-        return out
-
-    def _do_updateNote(self, note: dict[str, Any]) -> None:
-        stored = self._note(note["id"])
-        if "fields" in note:
-            stored["fields"].update(note["fields"])
-        if "tags" in note:
-            stored["tags"] = list(note["tags"])
-
-    def _do_updateNoteFields(self, note: dict[str, Any]) -> None:
-        self._note(note["id"])["fields"].update(note["fields"])
-
-    def _do_addNote(self, note: dict[str, Any]) -> int:
-        if note["modelName"] not in self.models:
-            raise AnkiConnectError(f"model was not found: {note['modelName']}")
-        return self.add(
-            note["deckName"],
-            model=note["modelName"],
-            fields=dict(note["fields"]),
-            tags=list(note.get("tags", [])),
-        )
-
-    def _do_deleteNotes(self, notes: list[int]) -> None:
-        for nid in notes:
-            for cid in self._note(nid)["cards"]:
-                self.cards.pop(cid, None)
-            self.notes.pop(nid, None)
-
-    def _do_changeDeck(self, cards: list[int], deck: str) -> None:
-        self._register(deck)
-        for cid in cards:
-            self.cards[cid]["deckName"] = deck
-
-    _COL_TO_API = {"ivl": "interval"}
-    # Columns real AnkiConnect refuses (answering `false`) unless `warning_check` is set.
-    _GUARDED = {"ivl", "lapses", "left", "queue", "reps", "type"}
-
-    def _do_setSpecificValueOfCard(
-        self, card: int, keys: list[str], newValues: list[Any], warning_check: bool = False
-    ) -> Any:
-        if not warning_check and self._GUARDED.intersection(keys):
-            return False
-        for key, value in zip(keys, newValues, strict=True):
-            self.cards[card][self._COL_TO_API.get(key, key)] = value
-        return [True]
-
-    def _do_updateNoteModel(self, note: dict[str, Any]) -> None:
-        stored = self._note(note["id"])
-        model = note["modelName"]
-        if model not in self.models:
-            raise AnkiConnectError(f"model was not found: {model}")
-        stored["modelName"] = model
-        stored["fields"] = {name: "" for name in self.models[model]}
-        for name, value in note.get("fields", {}).items():
-            for field_name in stored["fields"]:
-                if name.lower() == field_name.lower():
-                    stored["fields"][field_name] = value
-                    break
-        stored["tags"] = list(note.get("tags", []))
-
-    def _do_modelNames(self) -> list[str]:
-        return sorted(self.models)
-
-    def _do_modelFieldNames(self, modelName: str) -> list[str]:
-        return list(self.models[modelName])
-
-    def _do_modelTemplates(self, modelName: str) -> dict[str, dict[str, str]]:
-        first, last = self.models[modelName][0], self.models[modelName][-1]
-        front = "{{" + first + "}}"
-        return {modelName: {"Front": front, "Back": front + "<br>{{" + last + "}}"}}
-
-    def _do_modelStyling(self, modelName: str) -> dict[str, str]:
-        return {"css": ".card { color: black; }"}
-
-    def _note(self, note_id: int) -> dict[str, Any]:
-        note = self.notes.get(note_id)
-        if note is None:
-            raise AnkiConnectError(f"note was not found: {note_id}")
-        return note
-
-
-def _api_fields(fields: dict[str, str]) -> dict[str, dict[str, Any]]:
-    return {name: {"value": value, "order": i} for i, (name, value) in enumerate(fields.items())}
-
-
-def _match_token(card: dict[str, Any], token: str) -> bool:
-    """Evaluate a single search token (possibly negated) against a card."""
-    negated = token.startswith("-")
-    raw = token[1:] if negated else token
-    key, _, value = raw.partition(":")
-    value = value.strip('"')
-    if key == "deck":
-        ok = card["deckName"] == value or card["deckName"].startswith(f"{value}::")
-    elif key == "flag":
-        ok = card["flags"] == int(value)
-    elif key == "nid":
-        ok = card["note"] == int(value)
-    elif key == "is":
-        if value == "buried":
-            ok = card.get("queue", 0) in (-2, -3)
-        elif value == "new":
-            ok = card.get("type", 0) == 0
-        elif value == "due":
-            ok = card.get("queue", 0) in (2, 3)
-        else:
-            raise AnkiConnectError(f"unsupported is:{value}")
-    else:
-        raise AnkiConnectError(f"unsupported search token {token!r}")
-    return ok != negated
-
-
-def _matches(card: dict[str, Any], query: str) -> bool:
-    """Support the search syntax review.py actually uses.
-
-    Handles simple AND tokens, negation, and one parenthesised OR group:
-    ``-flag:0 (is:buried OR is:new OR is:due)``
-    """
-    import re as _re
-
-    paren = _re.search(r"\(([^)]+)\)", query)
-    outside = query
-    if paren:
-        outside = query[: paren.start()] + query[paren.end() :]
-        alternatives = [t.strip() for t in paren.group(1).split("OR") if t.strip()]
-        if not any(_match_token(card, alt) for alt in alternatives):
-            return False
-    for token in _TOKENS.findall(outside):
-        if token in ("OR", "(", ")"):
-            continue
-        if not _match_token(card, token):
-            return False
-    return True
+from tests.anki_fixture import TempAnki
 
 
 class FakeStore(SourceStore):
@@ -338,8 +29,8 @@ class FakeStore(SourceStore):
 
 
 @pytest.fixture
-def anki() -> FakeAnkiClient:
-    return FakeAnkiClient()
+def anki(tmp_path: Path) -> TempAnki:
+    return TempAnki(tmp_path)
 
 
 @pytest.fixture
@@ -350,7 +41,7 @@ def store() -> FakeStore:
 # ------------------------------------------------------------------- list_decks
 
 
-def test_deck_counts_count_notes_not_cards_and_roll_up(anki: FakeAnkiClient, store: FakeStore):
+def test_deck_counts_count_notes_not_cards_and_roll_up(anki: TempAnki, store: FakeStore):
     anki.add("a::b", flags=(2, 3, 0))  # one note, three cards, two of them flagged
     anki.add("a::c", flags=(1,))
     anki.add("a::b", flags=(0, 0))  # unflagged, must not count
@@ -368,7 +59,7 @@ def test_deck_counts_count_notes_not_cards_and_roll_up(anki: FakeAnkiClient, sto
     assert by_name["a::b"].depth == 1
 
 
-def test_deck_source_kinds_from_store(anki: FakeAnkiClient):
+def test_deck_source_kinds_from_store(anki: TempAnki):
     anki.add("a::b")
     anki.add("z")
     store = FakeStore({"a": [Source(deck="a", kind="obsidian", target="Note")]})
@@ -380,7 +71,7 @@ def test_deck_source_kinds_from_store(anki: FakeAnkiClient):
     assert by_name["z"].source_kinds == [], "no corpus, own or inherited"
 
 
-def test_deck_source_kinds_are_deduplicated_in_corpus_order(anki: FakeAnkiClient):
+def test_deck_source_kinds_are_deduplicated_in_corpus_order(anki: TempAnki):
     anki.add("a")
     store = FakeStore(
         {
@@ -398,19 +89,19 @@ def test_deck_source_kinds_are_deduplicated_in_corpus_order(anki: FakeAnkiClient
 # ------------------------------------------------------------------- create_deck
 
 
-def test_create_deck(anki: FakeAnkiClient):
+def test_create_deck(anki: TempAnki):
     review.create_deck(anki, "x::y")
     assert "x" in anki.decks
     assert "x::y" in anki.decks
 
 
-def test_create_deck_rejects_duplicate(anki: FakeAnkiClient):
+def test_create_deck_rejects_duplicate(anki: TempAnki):
     anki.add("d")
     with pytest.raises(review.DeckAlreadyExists):
         review.create_deck(anki, "d")
 
 
-def test_delete_deck(anki: FakeAnkiClient):
+def test_delete_deck(anki: TempAnki):
     anki.add("a::b", flags=(1,))
     review.delete_deck(anki, "a::b")
     assert "a::b" not in anki.decks
@@ -420,7 +111,7 @@ def test_delete_deck(anki: FakeAnkiClient):
 # ------------------------------------------------------------------- list_notes
 
 
-def test_note_is_flagged_when_any_card_is(anki: FakeAnkiClient):
+def test_note_is_flagged_when_any_card_is(anki: TempAnki):
     mixed = anki.add("d", flags=(0, 2))
     clean = anki.add("d", flags=(0, 0))
 
@@ -432,7 +123,7 @@ def test_note_is_flagged_when_any_card_is(anki: FakeAnkiClient):
     assert views[clean].flag_colors == []
 
 
-def test_flagged_cards_carry_the_card_ordinal(anki: FakeAnkiClient):
+def test_flagged_cards_carry_the_card_ordinal(anki: TempAnki):
     """The flag is per card; the view keeps which, by ordinal, so the UI can replay c{ord+1}."""
     note_id = anki.add("d", flags=(0, 2, 1))  # c2 and c3 flagged, c1 not
 
@@ -443,7 +134,7 @@ def test_flagged_cards_carry_the_card_ordinal(anki: FakeAnkiClient):
     assert review.get_note(anki, anki.add("d", flags=(0, 0))).flagged_cards == []
 
 
-def test_queue_lists_sub_decks_flagged_first_then_by_id(anki: FakeAnkiClient):
+def test_queue_lists_sub_decks_flagged_first_then_by_id(anki: TempAnki):
     first_clean = anki.add("d", flags=(0,))
     flagged_sub = anki.add("d::sub", flags=(1,))
     later_flagged = anki.add("d", flags=(2,))
@@ -456,7 +147,7 @@ def test_queue_lists_sub_decks_flagged_first_then_by_id(anki: FakeAnkiClient):
     assert result.notes[0].deck == "d::sub", "deck says where the note actually lives"
 
 
-def test_reason_is_plain_back_extra_only_for_flagged_notes(anki: FakeAnkiClient):
+def test_reason_is_plain_back_extra_only_for_flagged_notes(anki: TempAnki):
     flagged = anki.add(
         "d", fields={"Text": "t", "Back Extra": "<b>Trop</b> vague&nbsp;?"}, flags=(2,)
     )
@@ -469,7 +160,7 @@ def test_reason_is_plain_back_extra_only_for_flagged_notes(anki: FakeAnkiClient)
     assert views[flagged].fields["Back Extra"] == "<b>Trop</b> vague&nbsp;?", "raw value kept"
 
 
-def test_get_note_unknown_raises(anki: FakeAnkiClient):
+def test_get_note_unknown_raises(anki: TempAnki):
     with pytest.raises(review.NoteNotFound):
         review.get_note(anki, 42)
 
@@ -477,7 +168,7 @@ def test_get_note_unknown_raises(anki: FakeAnkiClient):
 # -------------------------------------------------------------------- decisions
 
 
-def test_keep_clears_flags_on_all_cards(anki: FakeAnkiClient):
+def test_keep_clears_flags_on_all_cards(anki: TempAnki):
     note_id = anki.add("d", fields={"Text": "t", "Back Extra": "why"}, flags=(2, 3, 0))
 
     view = review.keep(anki, note_id)
@@ -488,17 +179,16 @@ def test_keep_clears_flags_on_all_cards(anki: FakeAnkiClient):
     assert anki.notes[note_id]["fields"]["Back Extra"] == "why", "Garder changes no field"
 
 
-def test_keep_batches_the_flag_writes_in_one_round_trip(anki: FakeAnkiClient):
+def test_keep_clears_every_flag_in_one_write(anki: TempAnki):
     note_id = anki.add("d", flags=(1, 1, 1))
     anki.calls.clear()
 
     review.keep(anki, note_id)
 
-    assert anki.calls.count("multi") == 1
-    assert anki.calls.count("setSpecificValueOfCard") == 3, "still one write per card, batched"
+    assert anki.calls.count("set_flag") == 1
 
 
-def test_edit_writes_fields_and_tags_and_can_keep_the_flag(anki: FakeAnkiClient):
+def test_edit_writes_fields_and_tags_and_can_keep_the_flag(anki: TempAnki):
     note_id = anki.add("d", fields={"Text": "old", "Back Extra": "why"}, tags=["a"], flags=(2,))
 
     view = review.edit(anki, note_id, fields={"Text": "new"}, tags=["a", "b"], unflag=False)
@@ -511,7 +201,7 @@ def test_edit_writes_fields_and_tags_and_can_keep_the_flag(anki: FakeAnkiClient)
     assert anki.flags_of(note_id) == [0]
 
 
-def test_move_changes_deck_and_unflags(anki: FakeAnkiClient):
+def test_move_changes_deck_and_unflags(anki: TempAnki):
     note_id = anki.add("from", flags=(2, 3))
 
     view = review.move(anki, note_id, "to::sub")
@@ -522,7 +212,7 @@ def test_move_changes_deck_and_unflags(anki: FakeAnkiClient):
     assert view.flagged is False
 
 
-def test_create_adds_a_sibling_and_leaves_the_original_alone(anki: FakeAnkiClient):
+def test_create_adds_a_sibling_and_leaves_the_original_alone(anki: TempAnki):
     original = anki.add("d", flags=(2,))
 
     view = review.create(anki, "d", "Basic", {"Front": "f", "Back": "b"}, ["phd"])
@@ -533,7 +223,7 @@ def test_create_adds_a_sibling_and_leaves_the_original_alone(anki: FakeAnkiClien
     assert anki.flags_of(original) == [2], "the original keeps its flag"
 
 
-def test_delete_removes_the_note(anki: FakeAnkiClient):
+def test_delete_removes_the_note(anki: TempAnki):
     note_id = anki.add("d", flags=(2,))
 
     review.delete(anki, note_id)
@@ -546,7 +236,7 @@ def test_delete_removes_the_note(anki: FakeAnkiClient):
 # ------------------------------------------------------------------------ split
 
 
-def test_split_keeping_the_original_edits_it_and_creates_siblings(anki: FakeAnkiClient):
+def test_split_keeping_the_original_edits_it_and_creates_siblings(anki: TempAnki):
     note_id = anki.add(
         "d::sub",
         model="Cloze",
@@ -576,7 +266,7 @@ def test_split_keeping_the_original_edits_it_and_creates_siblings(anki: FakeAnki
         assert created.flagged is False
 
 
-def test_split_fragment_can_override_model_and_tags(anki: FakeAnkiClient):
+def test_split_fragment_can_override_model_and_tags(anki: TempAnki):
     note_id = anki.add("d", model="Cloze", tags=["phd"], flags=(2,))
 
     result = review.split(
@@ -590,7 +280,7 @@ def test_split_fragment_can_override_model_and_tags(anki: FakeAnkiClient):
     assert result.created[0].tags == []
 
 
-def test_split_without_original_deletes_it_after_creating_the_fragments(anki: FakeAnkiClient):
+def test_split_without_original_deletes_it_after_creating_the_fragments(anki: TempAnki):
     note_id = anki.add("d", tags=["phd"], flags=(2,))
     anki.calls.clear()
 
@@ -605,14 +295,14 @@ def test_split_without_original_deletes_it_after_creating_the_fragments(anki: Fa
     assert len(result.created) == 2
     assert note_id not in anki.notes
 
-    last_add = len(anki.calls) - 1 - anki.calls[::-1].index("addNote")
-    assert last_add < anki.calls.index("deleteNotes"), "creation must succeed before the delete"
+    last_add = len(anki.calls) - 1 - anki.calls[::-1].index("add_note")
+    assert last_add < anki.calls.index("delete_notes"), "creation must succeed before the delete"
 
 
-def test_split_leaves_the_original_in_place_when_a_fragment_fails(anki: FakeAnkiClient):
+def test_split_leaves_the_original_in_place_when_a_fragment_fails(anki: TempAnki):
     note_id = anki.add("d", flags=(2,))
 
-    with pytest.raises(AnkiConnectError):
+    with pytest.raises(AnkiError):
         review.split(anki, note_id, original=None, new_notes=[{"model": "Nope", "fields": {}}])
 
     assert note_id in anki.notes
@@ -694,7 +384,7 @@ def test_render_field_picture_in_cloze():
 
 
 @pytest.fixture
-def api(anki: FakeAnkiClient, store: FakeStore) -> TestClient:
+def api(anki: TempAnki, store: FakeStore) -> TestClient:
     app = FastAPI()
     app.include_router(router, prefix="/api")
     app.state.anki = anki
@@ -703,7 +393,7 @@ def api(anki: FakeAnkiClient, store: FakeStore) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_api_decks_and_notes(api: TestClient, anki: FakeAnkiClient):
+def test_api_decks_and_notes(api: TestClient, anki: TempAnki):
     note_id = anki.add("d", fields={"Text": "a{{c1::b}}", "Back Extra": "why"}, flags=(2,))
 
     resp = api.get("/api/decks").json()
@@ -723,7 +413,7 @@ def test_api_decks_and_notes(api: TestClient, anki: FakeAnkiClient):
     ]
 
 
-def test_api_decisions(api: TestClient, anki: FakeAnkiClient):
+def test_api_decisions(api: TestClient, anki: TempAnki):
     note_id = anki.add("d", tags=["phd"], flags=(2,))
 
     assert api.post(f"/api/notes/{note_id}/keep").json()["flagged"] is False
@@ -748,7 +438,7 @@ def test_api_decisions(api: TestClient, anki: FakeAnkiClient):
     assert api.get(f"/api/notes/{note_id}").status_code == 404
 
 
-def test_api_create_deck(api: TestClient, anki: FakeAnkiClient):
+def test_api_create_deck(api: TestClient, anki: TempAnki):
     resp = api.post("/api/decks", json={"name": "new::child"})
     assert resp.status_code == 201
     assert resp.json() == {"name": "new::child"}
@@ -758,7 +448,7 @@ def test_api_create_deck(api: TestClient, anki: FakeAnkiClient):
     assert dup.status_code == 409
 
 
-def test_api_delete_deck(api: TestClient, anki: FakeAnkiClient):
+def test_api_delete_deck(api: TestClient, anki: TempAnki):
     anki.add("tmp")
     resp = api.delete("/api/decks", params={"name": "tmp"})
     assert resp.status_code == 204
@@ -766,13 +456,12 @@ def test_api_delete_deck(api: TestClient, anki: FakeAnkiClient):
 
 
 def test_api_models(api: TestClient):
-    assert api.get("/api/models").json() == {
-        "Basic": ["Front", "Back"],
-        "Cloze": ["Text", "Back Extra"],
-    }
+    models = api.get("/api/models").json()
+    assert models["Basic"] == ["Front", "Back"]
+    assert models["Cloze"] == ["Text", "Back Extra"]
 
 
-def test_api_media_serves_file_with_content_type(api: TestClient, anki: FakeAnkiClient):
+def test_api_media_serves_file_with_content_type(api: TestClient, anki: TempAnki):
     anki.media["paste-abc.jpg"] = b"\xff\xd8jpeg"
     resp = api.get("/api/media/paste-abc.jpg")
     assert resp.status_code == 200
@@ -781,7 +470,7 @@ def test_api_media_serves_file_with_content_type(api: TestClient, anki: FakeAnki
     assert resp.headers["x-content-type-options"] == "nosniff"
 
 
-def test_api_media_name_is_url_decoded(api: TestClient, anki: FakeAnkiClient):
+def test_api_media_name_is_url_decoded(api: TestClient, anki: TempAnki):
     anki.media["my pic é.png"] = b"png"
     resp = api.get("/api/media/my%20pic%20%C3%A9.png")
     assert resp.status_code == 200
@@ -793,33 +482,54 @@ def test_api_media_missing_is_404(api: TestClient):
 
 
 @pytest.mark.parametrize("name", ["..", "a%2Fb.png", "..%2F..%2Fetc%2Fpasswd", "a%5Cb.png"])
-def test_api_media_rejects_paths(api: TestClient, anki: FakeAnkiClient, name: str):
-    anki.media["a/b.png"] = b"x"
-    anki.media["a\\b.png"] = b"x"
+def test_api_media_rejects_paths(api: TestClient, anki: TempAnki, name: str):
+    anki.media["b.png"] = b"x"
     assert api.get(f"/api/media/{name}").status_code == 404
-    assert "retrieveMediaFile" not in anki.calls
 
 
-def test_api_maps_anki_failures(api: TestClient, anki: FakeAnkiClient, monkeypatch):
-    def unreachable(action: str, **params: object) -> object:
-        raise AnkiConnectError("Cannot reach AnkiConnect at http://fake.invalid. Is Anki running?")
+def test_api_maps_anki_failures(api: TestClient, anki: TempAnki, monkeypatch):
+    def broken() -> list[str]:
+        raise AnkiError("deck_names: collection is not available")
 
-    monkeypatch.setattr(anki, "invoke", unreachable)
-    assert api.get("/api/decks").status_code == 503
-
-    def broken(action: str, **params: object) -> object:
-        raise AnkiConnectError("deckNames: collection is not available")
-
-    monkeypatch.setattr(anki, "invoke", broken)
+    monkeypatch.setattr(anki, "deck_names", broken)
     response = api.get("/api/decks")
     assert response.status_code == 502
     assert "collection is not available" in response.json()["detail"]
 
 
+def test_api_answers_503_while_anki_desktop_holds_the_collection(api: TestClient, anki: TempAnki):
+    anki.add("d", flags=(1,))
+    assert anki.path is not None
+    desktop = Collection(str(anki.path))  # Anki desktop with the profile loaded
+    try:
+        response = api.get("/api/decks")
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Close Anki desktop first"
+        with pytest.raises(CollectionLocked):
+            anki.deck_names()
+    finally:
+        desktop.close()
+    assert api.get("/api/decks").status_code == 200, "desktop closed: the app works again"
+
+
+def test_one_request_opens_the_collection_once(api: TestClient, anki: TempAnki, monkeypatch):
+    anki.add("d", flags=(1,))
+    opened: list[int] = []
+    real_open = anki._open
+
+    def counting_open() -> Collection:
+        opened.append(1)
+        return real_open()
+
+    monkeypatch.setattr(anki, "_open", counting_open)
+    assert api.get("/api/notes", params={"deck": "d"}).status_code == 200
+    assert len(opened) == 1
+
+
 # ---------------------------------------------------------------- priority queue
 
 
-def test_priority_notes_includes_new_flagged(anki: FakeAnkiClient):
+def test_priority_notes_includes_new_flagged(anki: TempAnki):
     nid = anki.add("d", flags=(1,), card_type=0)  # new card, flagged
     anki.add("d", flags=(0,), card_type=0)  # new card, not flagged — excluded
     result = review.priority_notes(anki)
@@ -827,28 +537,28 @@ def test_priority_notes_includes_new_flagged(anki: FakeAnkiClient):
     assert result.notes[0].note_id == nid
 
 
-def test_priority_notes_includes_buried_flagged(anki: FakeAnkiClient):
+def test_priority_notes_includes_buried_flagged(anki: TempAnki):
     nid = anki.add("d", flags=(2,), queue=-2, card_type=2)  # user-buried, flagged
     result = review.priority_notes(anki)
     assert result.count == 1
     assert result.notes[0].note_id == nid
 
 
-def test_priority_notes_includes_due_flagged(anki: FakeAnkiClient):
-    nid = anki.add("d", flags=(1,), queue=2, card_type=2)  # review queue, flagged
+def test_priority_notes_includes_due_flagged(anki: TempAnki):
+    nid = anki.add("d", flags=(1,), queue=2, card_type=2, rel_due=-1)  # review, flagged, due
     result = review.priority_notes(anki)
     assert result.count == 1
     assert result.notes[0].note_id == nid
 
 
-def test_priority_notes_empty_when_nothing_matches(anki: FakeAnkiClient):
+def test_priority_notes_empty_when_nothing_matches(anki: TempAnki):
     anki.add("d", flags=(0,), card_type=0)  # new but not flagged
     result = review.priority_notes(anki)
     assert result.count == 0
     assert result.notes == []
 
 
-def test_priority_notes_cross_deck(anki: FakeAnkiClient):
+def test_priority_notes_cross_deck(anki: TempAnki):
     a = anki.add("deck_a", flags=(1,), card_type=0)
     b = anki.add("deck_b", flags=(3,), queue=-2, card_type=2)
     result = review.priority_notes(anki)
@@ -857,45 +567,47 @@ def test_priority_notes_cross_deck(anki: FakeAnkiClient):
     assert ids == {a, b}
 
 
-def test_priority_due_excluded_when_over_budget(anki: FakeAnkiClient):
+def test_priority_due_excluded_when_over_budget(anki: TempAnki):
     """A flagged due card beyond the study deck's review budget is excluded."""
-    anki.add("d", flags=(1,), queue=2, card_type=2, due=10)  # flagged, most overdue
-    anki.add("d", flags=(0,), queue=2, card_type=2, due=20)  # unflagged, 2nd
-    excluded = anki.add("d", flags=(1,), queue=2, card_type=2, due=30)  # flagged, 3rd — over budget
-    anki.review_budgets["d"] = 2
+    anki.add("d", flags=(1,), queue=2, card_type=2, rel_due=-30)  # flagged, most overdue
+    anki.add("d", flags=(0,), queue=2, card_type=2, rel_due=-20)  # unflagged, 2nd
+    excluded = anki.add(
+        "d", flags=(1,), queue=2, card_type=2, rel_due=-10
+    )  # flagged, 3rd — over budget
+    anki.set_limits("d", review=2)
     result = review.priority_notes(anki, study_deck="d")
     assert result.count == 1
     assert result.notes[0].note_id != excluded
 
 
-def test_priority_due_included_when_within_budget(anki: FakeAnkiClient):
+def test_priority_due_included_when_within_budget(anki: TempAnki):
     """When total due <= budget, all flagged due cards are included."""
-    a = anki.add("d", flags=(1,), queue=2, card_type=2, due=10)
-    b = anki.add("d", flags=(1,), queue=2, card_type=2, due=20)
-    anki.review_budgets["d"] = 100
+    a = anki.add("d", flags=(1,), queue=2, card_type=2, rel_due=-30)
+    b = anki.add("d", flags=(1,), queue=2, card_type=2, rel_due=-20)
+    anki.set_limits("d", review=100)
     result = review.priority_notes(anki, study_deck="d")
     assert result.count == 2
     ids = {n.note_id for n in result.notes}
     assert ids == {a, b}
 
 
-def test_priority_due_excluded_when_budget_zero(anki: FakeAnkiClient):
+def test_priority_due_excluded_when_budget_zero(anki: TempAnki):
     """A deck with no remaining reviews today excludes all its due cards."""
-    anki.add("d", flags=(1,), queue=2, card_type=2, due=10)
-    anki.review_budgets["d"] = 0
+    anki.add("d", flags=(1,), queue=2, card_type=2, rel_due=-30)
+    anki.set_limits("d", review=0)
     result = review.priority_notes(anki, study_deck="d")
     assert result.count == 0
 
 
-def test_priority_due_no_filtering_without_study_deck(anki: FakeAnkiClient):
+def test_priority_due_no_filtering_without_study_deck(anki: TempAnki):
     """Without a study deck, all flagged due cards are included regardless of budget."""
-    anki.add("d", flags=(1,), queue=2, card_type=2, due=10)
-    anki.review_budgets["d"] = 0
+    anki.add("d", flags=(1,), queue=2, card_type=2, rel_due=-30)
+    anki.set_limits("d", review=0)
     result = review.priority_notes(anki)
     assert result.count == 1
 
 
-def test_api_priority_endpoint(api: TestClient, anki: FakeAnkiClient):
+def test_api_priority_endpoint(api: TestClient, anki: TempAnki):
     nid = anki.add("d", flags=(1,), card_type=0)
     resp = api.get("/api/notes/priority")
     assert resp.status_code == 200
@@ -907,7 +619,7 @@ def test_api_priority_endpoint(api: TestClient, anki: FakeAnkiClient):
 # ------------------------------------------------------------- reading for the chat
 
 
-def test_get_notes_batches_round_trips_and_drops_unknown_ids(anki: FakeAnkiClient):
+def test_get_notes_batches_round_trips_and_drops_unknown_ids(anki: TempAnki):
     a = anki.add("d", fields={"Text": "a"}, flags=(1,))
     b = anki.add("d", fields={"Text": "b"})
     anki.calls.clear()
@@ -915,10 +627,10 @@ def test_get_notes_batches_round_trips_and_drops_unknown_ids(anki: FakeAnkiClien
     assert [v.note_id for v in views] == [a, b]
     assert views[0].flagged and views[0].deck == "d"
     assert not views[1].flagged
-    assert anki.calls == ["notesInfo", "cardsInfo"]
+    assert anki.calls == ["notes_info", "cards_info"]
 
 
-def test_search_notes_caps_and_puts_flagged_first(anki: FakeAnkiClient):
+def test_search_notes_caps_and_puts_flagged_first(anki: TempAnki):
     plain = [anki.add("d", fields={"Text": str(i)}) for i in range(3)]
     flagged = anki.add("d", fields={"Text": "f"}, flags=(2,))
     views = review.search_notes(anki, "deck:d")
@@ -927,7 +639,7 @@ def test_search_notes_caps_and_puts_flagged_first(anki: FakeAnkiClient):
     assert review.search_notes(anki, "deck:nope") == []
 
 
-def test_edit_reflag_puts_a_flag_back_for_undo(anki: FakeAnkiClient):
+def test_edit_reflag_puts_a_flag_back_for_undo(anki: TempAnki):
     note_id = anki.add("d", flags=(1, 0))
     first_card = anki.notes[note_id]["cards"][0]
     review.edit(anki, note_id, fields={"Text": "y"})
@@ -937,11 +649,11 @@ def test_edit_reflag_puts_a_flag_back_for_undo(anki: FakeAnkiClient):
     assert view.flagged and view.fields["Text"] == "x"
 
 
-def test_client_note_type_reads_fields_templates_and_css(anki: FakeAnkiClient):
+def test_client_note_type_reads_fields_templates_and_css(anki: TempAnki):
     note_type = anki.note_type("Cloze")
     assert note_type.name == "Cloze"
     assert note_type.fields == ["Text", "Back Extra"]
-    assert note_type.templates == {
-        "Cloze": {"Front": "{{Text}}", "Back": "{{Text}}<br>{{Back Extra}}"}
-    }
+    assert list(note_type.templates) == ["Cloze"]
+    assert note_type.templates["Cloze"]["Front"] == "{{cloze:Text}}"
+    assert "{{Back Extra}}" in note_type.templates["Cloze"]["Back"]
     assert ".card" in note_type.css

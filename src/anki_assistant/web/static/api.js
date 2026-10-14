@@ -1,5 +1,5 @@
 /* Thin wrappers over the HTTP API. Every call rejects with an Error carrying the
-   server's `detail` (502 AnkiConnect / 503 unreachable / 404 unknown note). */
+   server's `detail` (502 Anki refused / 503 collection held by Anki desktop / 404 unknown note). */
 
 "use strict";
 

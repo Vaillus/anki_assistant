@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 from urllib.parse import unquote
 
-from anki_assistant.client import AnkiClient, _quote
+from anki_assistant.client import AnkiClient, Outcomes, _quote
 from anki_assistant.models import Card
 from anki_assistant.web.render import render_field
 
@@ -53,42 +53,13 @@ def window(today: date) -> list[date]:
 
 # ---------------------------------------------------------- precomputed outcomes
 
-_DAY = 86_400.0
-_YEAR = 365 * _DAY
-# Anki's own time-span constants (rslib scheduler/timespan.rs): a month is a year / 12.
-_UNIT_SECONDS: dict[str, float] = {
-    "s": 1.0,
-    "m": 60.0,
-    "min": 60.0,
-    "h": 3_600.0,
-    "d": _DAY,
-    "j": _DAY,
-    "mo": _YEAR / 12,
-    "y": _YEAR,
-    "a": _YEAR,
-}
-# Unicode isolation / direction marks Anki wraps numbers in, and spaces.
+# Unicode isolation / direction marks Anki wraps numbers in.
 _MARKS = re.compile("[⁦-⁩‎‏]")
-_SPACES = re.compile(r"[\s  ]+")
-_SPAN = re.compile(r"^[<>]?(\d+(?:[.,]\d+)?)([^\d.,]+)$")
 
 
 def clean_label(label: str) -> str:
     """An interval display string with Anki's isolation marks removed: `<⁨10⁩m` → `<10m`."""
     return _MARKS.sub("", label).strip()
-
-
-def parse_interval(label: str) -> int | None:
-    """Seconds for one of Anki's interval display strings (`<⁨10⁩m`, `⁨3,9⁩mo`, `1.5y`…),
-    or None when the string is not understood."""
-    text = _SPACES.sub("", clean_label(label)).lower()
-    m = _SPAN.match(text)
-    if not m:
-        return None
-    unit = _UNIT_SECONDS.get(m.group(2))
-    if unit is None:
-        return None
-    return round(float(m.group(1).replace(",", ".")) * unit)
 
 
 # ----------------------------------------------------------- question / answer
@@ -213,22 +184,19 @@ def late_replays(reviews: Iterable[dict[str, Any]], rollover_hour: int, today: d
 
 
 def daily_quotas(anki: AnkiClient, deck: str, late: DayQuota | None = None) -> list[DayQuota]:
-    """Day 0: what `getDeckStats` says is left today, plus the late replays (capped by the deck
-    options' limits, never below the stats). Later days: the deck options' limits."""
-    stats = anki.deck_stats(deck)
-    today = next((s for s in stats.values() if s.get("name") == deck), None)
-    if today is None:
-        today = next(iter(stats.values()), {})
-    config = anki.deck_config(deck) or {}
-    per_review = int((config.get("rev") or {}).get("perDay", 0))
-    per_new = int((config.get("new") or {}).get("perDay", 0))
-    left_review, left_new = int(today.get("review_count", 0)), int(today.get("new_count", 0))
+    """Day 0: the effective deck limit minus what Anki counts as studied today, plus the late
+    replays (capped by that limit). Later days: the effective deck limit without its
+    "Today only" value."""
+    limits = anki.deck_limits(deck)
     late = late or DayQuota(review=0, new=0)
+    left_review = max(0, limits.review - limits.studied_review)
+    left_new = max(0, limits.new - limits.studied_new)
     first = DayQuota(
-        review=max(left_review, min(left_review + late.review, per_review)),
-        new=max(left_new, min(left_new + late.new, per_new)),
+        review=max(left_review, min(left_review + late.review, limits.review)),
+        new=max(left_new, min(left_new + late.new, limits.new)),
     )
-    return [first] + [DayQuota(review=per_review, new=per_new) for _ in range(WINDOW_DAYS - 1)]
+    later = DayQuota(review=limits.review_default, new=limits.new_default)
+    return [first] + [DayQuota(review=later.review, new=later.new) for _ in range(WINDOW_DAYS - 1)]
 
 
 @dataclass
@@ -325,12 +293,7 @@ def _select(
 
 
 def _templates(anki: AnkiClient, models: Iterable[str]) -> dict[str, dict[str, dict[str, str]]]:
-    names = sorted(set(models))
-    raw = anki.invoke_multi([("modelTemplates", {"modelName": n}) for n in names])
-    return {
-        name: {card: dict(sides or {}) for card, sides in (tm or {}).items()}
-        for name, tm in zip(names, raw, strict=True)
-    }
+    return {name: anki.model_templates(name) for name in sorted(set(models))}
 
 
 def batch_card(
@@ -338,6 +301,7 @@ def batch_card(
     day: int,
     kind: CardKind,
     templates: dict[str, dict[str, str]],
+    outcomes: Outcomes | None = None,
 ) -> BatchCard:
     question, answer, cloze = card_sides(card, templates)
     media: list[str] = []
@@ -350,7 +314,9 @@ def batch_card(
             out.append(FieldView(name=name, html=rendered))
         return out
 
-    labels = [clean_label(s) for s in card.next_reviews[:4]]
+    seconds = list(outcomes.seconds[:4]) if outcomes else []
+    seconds += [None] * (4 - len(seconds))
+    labels = [clean_label(s) for s in outcomes.labels[:4]] if outcomes else []
     labels += [""] * (4 - len(labels))
     return BatchCard(
         card_id=card.card_id,
@@ -365,7 +331,7 @@ def batch_card(
         answer=views(answer),
         flag=card.flag,
         media=media,
-        outcomes=[parse_interval(s) if s else None for s in labels],
+        outcomes=seconds,
         outcome_labels=labels,
     )
 
@@ -383,7 +349,11 @@ def build_batch(
     quotas = daily_quotas(anki, deck, late)
     chosen = _select(anki, deck, quotas, order_settings(anki.deck_config(deck) or {}))
     templates = _templates(anki, (c.model_name for c, _, _ in chosen))
-    cards = [batch_card(c, day, kind, templates.get(c.model_name, {})) for c, day, kind in chosen]
+    outcomes = anki.answer_outcomes([c.card_id for c, _, _ in chosen])
+    cards = [
+        batch_card(c, day, kind, templates.get(c.model_name, {}), outcomes.get(c.card_id))
+        for c, day, kind in chosen
+    ]
     media: list[str] = []
     for bc in cards:
         media.extend(n for n in bc.media if n not in media)
@@ -533,13 +503,14 @@ def redate_days(interval: int, answered: date, today: date) -> int | None:
 def _apply(anki: AnkiClient, action: Action, rollover_hour: int, today: date) -> None:
     cid = action.card_id
     if action.kind == "answer":
-        anki.answer_cards([(cid, action.ease or 0)])
+        replayed = anki.answer_card(
+            cid, action.ease or 0, answered_at=action.at, time_ms=action.time_ms
+        )
         answered = anki_day(from_epoch_ms(action.at), rollover_hour)
         if answered >= today:
             return  # answered today: Anki's due date already counts from today
-        replayed = anki.cards_info([cid])
-        if replayed and replayed[0].queue == 2:  # learning cards keep Anki's delays
-            days = redate_days(replayed[0].interval, answered, today)
+        if replayed and replayed.queue == 2:  # learning cards keep Anki's delays
+            days = redate_days(replayed.interval, answered, today)
             if days is not None:
                 anki.set_due_date([cid], str(days))
     elif action.kind == "flag":
@@ -564,7 +535,7 @@ def apply_actions(
     """Apply pending actions oldest first, each at most once across syncs.
 
     Returns the applied ids and the dropped ones; every distinct id sent is in exactly one.
-    An AnkiConnect failure propagates: what was processed before it is recorded, so a retry
+    An Anki failure propagates: what was processed before it is recorded, so a retry
     skips it.
     """
     for action in actions:

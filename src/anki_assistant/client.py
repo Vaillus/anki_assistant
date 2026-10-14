@@ -1,25 +1,66 @@
-"""Thin client over the AnkiConnect HTTP API (https://foosoft.net/projects/anki-connect/).
+"""The app's typed client for Anki: every read and write goes through `AnkiClient`, which opens
+Anki's collection file itself through the anki library (Anki's own Python package, the code
+Anki desktop runs). Spec: specs/00-overview.md#anki.
 
-Anki must be running with the AnkiConnect add-on installed (default port 8765).
+**Collection lock.** Anki opens a collection file with an exclusive lock: while Anki desktop
+has the profile loaded, opening it fails, and while the app holds it, Anki desktop cannot load
+the profile. The app and Anki desktop take turns.
+
+**Holding policy.** The client opens the file for one action (`action()`, one HTTP request or
+one CLI command) and closes it when the action is done. Another action arriving meanwhile waits
+for the file. An operation called outside an action is its own action.
 """
 
 from __future__ import annotations
 
-import base64
-import json
-import urllib.error
-import urllib.request
-from collections.abc import Sequence
-from typing import Any
+import logging
+import os
+import threading
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, cast
+
+import anki.collection  # first: anki.cards imports it back, circularly
+import anki.errors
+from anki.cards import Card as AnkiCard
+from anki.collection import Collection
+from anki.decks import DeckId
+from anki.notes import Note as AnkiNote
+from anki.scheduler.v3 import Scheduler
+from anki.scheduler_pb2 import CardAnswer, SchedulingState, SchedulingStates
 
 from anki_assistant.models import Card, Note, NoteType
 
-DEFAULT_URL = "http://localhost:8765"
-API_VERSION = 6
+log = logging.getLogger(__name__)
+
+#: Where Anki desktop keeps its profiles on macOS.
+ANKI_BASE = Path.home() / "Library" / "Application Support" / "Anki2"
+
+LOCKED_MESSAGE = "Close Anki desktop first"
+
+_DAY_SECONDS = 86_400
+_RATINGS = {
+    1: CardAnswer.AGAIN,
+    2: CardAnswer.HARD,
+    3: CardAnswer.GOOD,
+    4: CardAnswer.EASY,
+}
 
 
-class AnkiConnectError(RuntimeError):
-    """Raised when AnkiConnect is unreachable or returns an error."""
+class AnkiError(RuntimeError):
+    """Anki refused an operation, or the collection could not be opened."""
+
+
+class CollectionLocked(AnkiError):
+    """The collection file is held by another process (Anki desktop): nothing was done."""
+
+
+def default_collection_path() -> Path | None:
+    """The collection of the only Anki desktop profile, or None when there is not exactly one."""
+    found = sorted(ANKI_BASE.glob("*/collection.anki2"))
+    return found[0] if len(found) == 1 else None
 
 
 def _quote(value: str) -> str:
@@ -27,114 +68,254 @@ def _quote(value: str) -> str:
     return '"' + value.replace('"', '\\"') + '"'
 
 
+@dataclass
+class DeckLimits:
+    """A deck's daily limits as Anki applies them, and what Anki counts as studied today.
+
+    `review` / `new`: the effective deck limit today — the deck's "Today only" value when set
+    for today, else its "This deck" value, else its preset's. `review_default` / `new_default`:
+    the same without "Today only", the limit of a later day. `studied_review` / `studied_new`:
+    the deck's studied-today counter, which Anki checks against the limit.
+    """
+
+    review: int
+    new: int
+    review_default: int
+    new_default: int
+    studied_review: int = 0
+    studied_new: int = 0
+
+
+@dataclass
+class Outcomes:
+    """The raw outcome of each answer button (again, hard, good, easy): the delay in seconds
+    until the card is due again, from the scheduler; with Anki's display strings."""
+
+    seconds: list[int | None]
+    labels: list[str]
+
+
+def state_seconds(state: SchedulingState) -> int | None:
+    """Seconds until a card in this scheduling state is due again."""
+    if state.WhichOneof("kind") == "filtered":
+        filtered = state.filtered
+        if filtered.WhichOneof("kind") == "preview":
+            return int(filtered.preview.scheduled_secs)
+        if filtered.WhichOneof("kind") != "rescheduling":
+            return None
+        normal = filtered.rescheduling.original_state
+    else:
+        normal = state.normal
+    kind = normal.WhichOneof("kind")
+    if kind == "review":
+        return int(normal.review.scheduled_days) * _DAY_SECONDS
+    if kind == "learning":
+        return int(normal.learning.scheduled_secs)
+    if kind == "relearning":
+        return int(normal.relearning.learning.scheduled_secs)
+    return None
+
+
 class AnkiClient:
-    def __init__(self, url: str = DEFAULT_URL, timeout: float = 30.0) -> None:
-        self.url = url
-        self.timeout = timeout
+    def __init__(self, path: str | Path | None = None) -> None:
+        """`path`: the collection file (`collection.anki2`); None picks the only profile's."""
+        self.path: Path | None = Path(path) if path else default_collection_path()
+        self._lock = threading.Lock()
+        self._owner: int | None = None
+        self._depth = 0
+        self._col: Collection | None = None
+        self._wrote = False
 
-    # ------------------------------------------------------------------ core
+    # ------------------------------------------------------------- holding policy
 
-    def invoke(self, action: str, **params: Any) -> Any:
-        """Call any AnkiConnect action and return its `result`."""
-        payload = json.dumps({"action": action, "version": API_VERSION, "params": params})
-        req = urllib.request.Request(
-            self.url, data=payload.encode(), headers={"Content-Type": "application/json"}
-        )
+    @property
+    def media_dir(self) -> Path | None:
+        """The collection's media folder (`collection.media` beside the file)."""
+        return self.path.with_suffix(".media") if self.path else None
+
+    def _open(self) -> Collection:
+        if self.path is None:
+            raise AnkiError("No Anki collection: set ANKI_COLLECTION to its collection.anki2")
+        if not self.path.exists():
+            raise AnkiError(f"No Anki collection at {self.path}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = json.load(resp)
-        except urllib.error.URLError as exc:
-            raise AnkiConnectError(
-                f"Cannot reach AnkiConnect at {self.url}. Is Anki running with the add-on? ({exc})"
-            ) from exc
-        if not isinstance(body, dict) or "error" not in body or "result" not in body:
-            raise AnkiConnectError(f"Unexpected response for {action!r}: {body!r}")
-        if body["error"] is not None:
-            raise AnkiConnectError(f"{action}: {body['error']}")
-        return body["result"]
+            return Collection(str(self.path))
+        except anki.errors.DBError as exc:
+            if "already open" in str(exc):
+                raise CollectionLocked(LOCKED_MESSAGE) from exc
+            raise AnkiError(f"Cannot open {self.path}: {exc}") from exc
 
-    def invoke_multi(self, calls: Sequence[tuple[str, dict[str, Any]]]) -> list[Any]:
-        """Run several actions in one HTTP round trip and return their results, in order.
+    @contextmanager
+    def action(self) -> Iterator[Collection]:
+        """Hold the collection for one action: open it now (waiting for another action), close
+        it at the end. Nested calls in the same thread share the open collection."""
+        me = threading.get_ident()
+        if self._owner == me and self._col is not None:
+            self._depth += 1
+            try:
+                yield self._col
+            finally:
+                self._depth -= 1
+            return
+        self._lock.acquire()
+        try:
+            col = self._open()
+        except BaseException:
+            self._lock.release()
+            raise
+        self._col, self._owner, self._depth, self._wrote = col, me, 1, False
+        try:
+            yield col
+        finally:
+            self._col, self._owner, self._depth, self._wrote = None, None, 0, False
+            self._close(col)
 
-        Uses AnkiConnect's `multi`. Each sub-action carries its own version so that failures
-        come back as `{"result": ..., "error": ...}` instead of a silent `None`.
-        """
-        if not calls:
-            return []
-        actions = [
-            {"action": action, "version": API_VERSION, "params": params} for action, params in calls
-        ]
-        raw = self.invoke("multi", actions=actions)
-        if not isinstance(raw, list) or len(raw) != len(actions):
-            raise AnkiConnectError(f"Unexpected 'multi' response: {raw!r}")
-        results: list[Any] = []
-        for (action, _), item in zip(calls, raw, strict=True):
-            if isinstance(item, dict) and "error" in item and "result" in item:
-                if item["error"] is not None:
-                    raise AnkiConnectError(f"{action}: {item['error']}")
-                results.append(item["result"])
-            else:  # older AnkiConnect: bare result, no envelope
-                results.append(item)
-        return results
+    def _close(self, col: Collection) -> None:
+        try:
+            col.close()
+        except Exception as exc:  # noqa: BLE001 — closing must release the lock
+            log.warning("closing the collection failed: %s", exc)
+        finally:
+            self._lock.release()
 
-    def version(self) -> int:
-        return int(self.invoke("version"))
-
-    def sync(self) -> None:
-        self.invoke("sync")
+    @contextmanager
+    def _use(self, *, write: bool = False) -> Iterator[Collection]:
+        """The open collection for one operation; Anki's errors become `AnkiError`."""
+        with self.action() as col:
+            try:
+                yield col
+            except anki.errors.AnkiException as exc:
+                raise AnkiError(str(exc) or type(exc).__name__) from exc
+            finally:
+                if write:
+                    self._wrote = True
 
     # ----------------------------------------------------------------- decks
 
     def deck_names(self) -> list[str]:
-        return sorted(self.invoke("deckNames"))
+        with self._use() as col:
+            return sorted(d.name for d in col.decks.all_names_and_ids(skip_empty_default=True))
 
     def deck_names_and_ids(self) -> dict[str, int]:
-        return self.invoke("deckNamesAndIds")
+        with self._use() as col:
+            return {d.name: int(d.id) for d in col.decks.all_names_and_ids()}
 
     def create_deck(self, name: str) -> int:
         """Create a deck (and any intermediate parents). Returns the deck id."""
-        return int(self.invoke("createDeck", deck=name))
+        with self._use(write=True) as col:
+            return int(col.decks.id(name, create=True) or 0)
 
     def delete_deck(self, name: str, *, cards_too: bool = False) -> None:
-        """Delete a deck. When *cards_too* is False, cards move to Default."""
-        self.invoke("deleteDecks", decks=[name], cardsToo=cards_too)
+        """Delete a deck and its sub-decks. When *cards_too* is False, cards move to Default."""
+        with self._use(write=True) as col:
+            did = col.decks.id_for_name(name)
+            if not did:
+                return
+            if not cards_too:
+                cids = col.find_cards(f"deck:{_quote(name)}")
+                if cids:
+                    col.set_deck(cids, 1)
+            col.decks.remove([did])
 
-    def deck_stats(self, *deck_names: str) -> dict[str, Any]:
-        """Per-deck counts (new/learn/review/total). Keyed by deck id as a string."""
-        return self.invoke("getDeckStats", decks=list(deck_names))
+    def _deck_id(self, col: Collection, deck: str) -> DeckId:
+        did = col.decks.id_for_name(deck)
+        if not did:
+            raise AnkiError(f"deck was not found: {deck}")
+        return did
 
     def deck_config(self, deck: str) -> dict[str, Any]:
-        """The options group of a deck (`new.perDay`, `rev.perDay`, `lapse.delays`…).
+        """The options group (preset) of a deck (`new.perDay`, `rev.perDay`, `reviewOrder`…)."""
+        with self._use() as col:
+            return dict(col.decks.config_dict_for_deck_id(self._deck_id(col, deck)))
 
-        Per-deck "This deck" limit overrides are not part of it: AnkiConnect cannot see them.
-        """
-        return self.invoke("getDeckConfig", deck=deck)
+    def deck_limits(self, deck: str) -> DeckLimits:
+        """The effective deck limit of `deck` and its studied-today counter."""
+        with self._use() as col:
+            did = self._deck_id(col, deck)
+            raw = col.decks.get(did) or {}
+            conf = col.decks.config_dict_for_deck_id(did)
+            today = col.sched.today
+
+            def limit(kind: str, preset: int) -> tuple[int, int]:
+                own = raw.get(f"{kind}Limit")
+                default = preset if own is None else int(own)
+                today_only = raw.get(f"{kind}LimitToday") or {}
+                if today_only and int(today_only.get("today", -1)) == today:
+                    return int(today_only.get("limit", default)), default
+                return default, default
+
+            def studied(key: str) -> int:
+                day, count = (raw.get(key) or [0, 0])[:2]
+                return int(count) if int(day) == today else 0
+
+            review, review_default = limit("review", int(conf["rev"]["perDay"]))
+            new, new_default = limit("new", int(conf["new"]["perDay"]))
+            return DeckLimits(
+                review=review,
+                new=new,
+                review_default=review_default,
+                new_default=new_default,
+                studied_review=studied("revToday"),
+                studied_new=studied("newToday"),
+            )
+
+    def today(self) -> int:
+        """Anki's day number for today (what a review card's `due` counts in)."""
+        with self._use() as col:
+            return int(col.sched.today)
 
     # ---------------------------------------------------------------- search
 
     def find_card_ids(self, query: str) -> list[int]:
-        return self.invoke("findCards", query=query)
+        with self._use() as col:
+            return [int(c) for c in col.find_cards(query)]
 
     def find_note_ids(self, query: str) -> list[int]:
-        return self.invoke("findNotes", query=query)
+        with self._use() as col:
+            return [int(n) for n in col.find_notes(query)]
 
     def cards_info(self, card_ids: list[int]) -> list[Card]:
-        """Cards by id. AnkiConnect returns `{}` for an unknown id; those are dropped."""
+        """Cards by id, in the order given. Unknown ids are dropped."""
         if not card_ids:
             return []
-        return [Card.from_api(c) for c in self.invoke("cardsInfo", cards=card_ids) if c]
+        with self._use() as col:
+            notes: dict[int, AnkiNote] = {}
+            decks: dict[int, str] = {}
+            out = []
+            for cid in card_ids:
+                try:
+                    card = col.get_card(cid)  # ty: ignore[invalid-argument-type]
+                except anki.errors.NotFoundError:
+                    continue
+                note = notes.get(card.nid)
+                if note is None:
+                    note = notes[card.nid] = card.note()
+                if card.did not in decks:
+                    decks[card.did] = col.decks.name(card.did)
+                out.append(_card(card, note, decks[card.did]))
+            return out
 
     def notes_info(self, note_ids: list[int]) -> list[Note]:
-        """Notes by id. AnkiConnect returns `{}` for an unknown id; those are dropped."""
+        """Notes by id, in the order given. Unknown ids are dropped."""
         if not note_ids:
             return []
-        return [Note.from_api(n) for n in self.invoke("notesInfo", notes=note_ids) if n]
+        with self._use() as col:
+            out = []
+            for nid in note_ids:
+                try:
+                    note = col.get_note(nid)  # ty: ignore[invalid-argument-type]
+                except anki.errors.NotFoundError:
+                    continue
+                out.append(_note(note))
+            return out
 
     def find_cards(self, query: str) -> list[Card]:
-        return self.cards_info(self.find_card_ids(query))
+        with self._use():
+            return self.cards_info(self.find_card_ids(query))
 
     def find_notes(self, query: str) -> list[Note]:
-        return self.notes_info(self.find_note_ids(query))
+        with self._use():
+            return self.notes_info(self.find_note_ids(query))
 
     def cards_in_deck(self, deck: str, extra_query: str = "") -> list[Card]:
         """All cards of a deck (including sub-decks). `extra_query` is appended verbatim."""
@@ -152,13 +333,13 @@ class AnkiClient:
     def card(self, card_id: int) -> Card:
         cards = self.cards_info([card_id])
         if not cards:
-            raise AnkiConnectError(f"No card with id {card_id}")
+            raise AnkiError(f"No card with id {card_id}")
         return cards[0]
 
     def note(self, note_id: int) -> Note:
         notes = self.notes_info([note_id])
         if not notes:
-            raise AnkiConnectError(f"No note with id {note_id}")
+            raise AnkiError(f"No note with id {note_id}")
         return notes[0]
 
     def note_card_ids(self, note_id: int) -> list[int]:
@@ -167,9 +348,22 @@ class AnkiClient:
 
     # ------------------------------------------------------------------ edit
 
+    def _get_note(self, col: Collection, note_id: int) -> AnkiNote:
+        try:
+            return col.get_note(note_id)  # ty: ignore[invalid-argument-type]
+        except anki.errors.NotFoundError as exc:
+            raise AnkiError(f"note was not found: {note_id}") from exc
+
+    def _set_fields(self, note: AnkiNote, fields: Mapping[str, str]) -> None:
+        names = note.keys()
+        for name, value in fields.items():
+            if name not in names:
+                raise AnkiError(f"field « {name} » not in note type {_type_name(note)}")
+            note[name] = value
+
     def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
         """Overwrite the given fields of a note (other fields untouched). Values are HTML."""
-        self.invoke("updateNoteFields", note={"id": note_id, "fields": fields})
+        self.update_note(note_id, fields=fields)
 
     def update_note(
         self,
@@ -177,30 +371,31 @@ class AnkiClient:
         fields: dict[str, str] | None = None,
         tags: list[str] | None = None,
     ) -> None:
-        note: dict[str, Any] = {"id": note_id}
-        if fields is not None:
-            note["fields"] = fields
-        if tags is not None:
-            note["tags"] = tags
-        self.invoke("updateNote", note=note)
+        with self._use(write=True) as col:
+            note = self._get_note(col, note_id)
+            if fields is not None:
+                self._set_fields(note, fields)
+            if tags is not None:
+                note.tags = list(tags)
+            col.update_note(note)
 
     def add_tags(self, note_ids: list[int], tags: str) -> None:
         """`tags` is a space-separated string, as Anki expects."""
-        self.invoke("addTags", notes=note_ids, tags=tags)
+        with self._use(write=True) as col:
+            col.tags.bulk_add(note_ids, tags)  # ty: ignore[invalid-argument-type]
 
     def remove_tags(self, note_ids: list[int], tags: str) -> None:
-        self.invoke("removeTags", notes=note_ids, tags=tags)
+        with self._use(write=True) as col:
+            col.tags.bulk_remove(note_ids, tags)  # ty: ignore[invalid-argument-type]
 
     def set_flag(self, card_ids: list[int], flag: int) -> None:
-        """Set the flag colour (0 clears) on the given cards, in a single round trip."""
+        """Set the flag colour (0 clears) on the given cards."""
         if not 0 <= flag <= 7:
             raise ValueError("flag must be between 0 (none) and 7")
-        self.invoke_multi(
-            [
-                ("setSpecificValueOfCard", {"card": cid, "keys": ["flags"], "newValues": [flag]})
-                for cid in card_ids
-            ]
-        )
+        if not card_ids:
+            return
+        with self._use(write=True) as col:
+            col.set_user_flag_for_cards(flag, card_ids)  # ty: ignore[invalid-argument-type]
 
     def clear_flag(self, card_ids: list[int]) -> None:
         self.set_flag(card_ids, 0)
@@ -218,55 +413,86 @@ class AnkiClient:
         lapses: int,
         left: int,
     ) -> None:
-        """Copy a scheduling state onto the given cards (used for split-fragment inheritance).
-
-        `warning_check` is required: without it AnkiConnect silently answers `false` for the
-        scheduling columns (ivl, type, queue, reps, lapses, left) instead of writing them.
-        """
-        keys = ["ivl", "due", "queue", "type", "factor", "reps", "lapses", "left"]
-        values = [interval, due, queue, card_type, factor, reps, lapses, left]
-        results = self.invoke_multi(
-            [
-                (
-                    "setSpecificValueOfCard",
-                    {"card": cid, "keys": keys, "newValues": values, "warning_check": True},
-                )
-                for cid in card_ids
-            ]
-        )
-        for cid, result in zip(card_ids, results, strict=True):
-            if result is False or (isinstance(result, list) and result and result[0] is not True):
-                raise AnkiConnectError(f"setSpecificValueOfCard refused card {cid}: {result!r}")
+        """Copy a scheduling state onto the given cards (used for split-fragment inheritance)."""
+        with self._use(write=True) as col:
+            cards = []
+            for cid in card_ids:
+                card = col.get_card(cid)  # ty: ignore[invalid-argument-type]
+                card.ivl, card.due, card.factor = interval, due, factor
+                card.queue, card.type = queue, card_type  # ty: ignore[invalid-assignment]
+                card.reps, card.lapses, card.left = reps, lapses, left
+                cards.append(card)
+            col.update_cards(cards)
 
     def unflag_note(self, note_id: int) -> None:
         """Clear the flag on every card of a note (the review unit is the note)."""
-        self.clear_flag(self.note_card_ids(note_id))
+        with self._use(write=True):
+            self.clear_flag(self.note_card_ids(note_id))
 
-    def answer_cards(self, answers: Sequence[tuple[int, int]]) -> list[bool]:
-        """Answer cards as if reviewed now: (card id, ease 1 again .. 4 easy) pairs, in order.
+    def answer_outcomes(self, card_ids: list[int]) -> dict[int, Outcomes]:
+        """The raw outcome of each answer button for each card, as the scheduler computes it
+        now. Unknown ids are left out."""
+        out: dict[int, Outcomes] = {}
+        if not card_ids:
+            return out
+        with self._use() as col:
+            for cid in card_ids:
+                try:
+                    states: SchedulingStates = col._backend.get_scheduling_states(cid)
+                except anki.errors.NotFoundError:
+                    continue
+                buttons = [states.again, states.hard, states.good, states.easy]
+                labels = [str(s) for s in _sched(col).describe_next_states(states)]
+                out[cid] = Outcomes(seconds=[state_seconds(s) for s in buttons], labels=labels)
+        return out
 
-        Anki's scheduler updates each card and logs a review. Returns, per answer, whether the
-        card was found.
-        """
-        if not answers:
-            return []
-        payload = [{"cardId": cid, "ease": ease} for cid, ease in answers]
-        return [bool(r) for r in self.invoke("answerCards", answers=payload)]
+    def answer_card(
+        self, card_id: int, ease: int, *, answered_at: int, time_ms: int
+    ) -> Card | None:
+        """Replay one answer (ease 1 again .. 4 easy) given at `answered_at` (ms since epoch)
+        after `time_ms` on the card: a timestamped replay. Anki's review history gets that
+        instant and duration. Returns the card after the answer, or None when it does not
+        exist."""
+        rating = _RATINGS.get(ease)
+        if rating is None:
+            raise ValueError("ease must be between 1 and 4")
+        with self._use(write=True) as col:
+            try:
+                col.get_card(card_id)  # ty: ignore[invalid-argument-type]
+            except anki.errors.NotFoundError:
+                return None
+            states: SchedulingStates = col._backend.get_scheduling_states(card_id)
+            _sched(col).answer_card(
+                CardAnswer(
+                    card_id=card_id,
+                    current_state=states.current,
+                    new_state=_button_state(states, rating),
+                    rating=rating,
+                    answered_at_millis=answered_at,
+                    milliseconds_taken=max(0, time_ms),
+                )
+            )
+        return self.card(card_id)
 
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         """Anki's "Set due date": `days` is relative to today ("0" today, "3" in three days,
         "1-7" a random day in range). A trailing `!` also resets the interval to that delay;
         without it Anki keeps the interval."""
-        self.invoke("setDueDate", cards=card_ids, days=days)
+        with self._use(write=True) as col:
+            col.sched.set_due_date(card_ids, days)  # ty: ignore[invalid-argument-type]
 
     def suspend(self, card_ids: list[int]) -> None:
-        self.invoke("suspend", cards=card_ids)
+        with self._use(write=True) as col:
+            col.sched.suspend_cards(card_ids)  # ty: ignore[invalid-argument-type]
 
     def unsuspend(self, card_ids: list[int]) -> None:
-        self.invoke("unsuspend", cards=card_ids)
+        with self._use(write=True) as col:
+            col.sched.unsuspend_cards(card_ids)  # ty: ignore[invalid-argument-type]
 
     def change_deck(self, card_ids: list[int], deck: str) -> None:
-        self.invoke("changeDeck", cards=card_ids, deck=deck)
+        with self._use(write=True) as col:
+            did = col.decks.id(deck, create=True)
+            col.set_deck(card_ids, int(did or 0))  # ty: ignore[invalid-argument-type]
 
     def add_note(
         self,
@@ -276,17 +502,26 @@ class AnkiClient:
         tags: list[str] | None = None,
         allow_duplicate: bool = False,
     ) -> int:
-        note = {
-            "deckName": deck,
-            "modelName": model,
-            "fields": fields,
-            "tags": tags or [],
-            "options": {"allowDuplicate": allow_duplicate},
-        }
-        return int(self.invoke("addNote", note=note))
+        with self._use(write=True) as col:
+            notetype = col.models.by_name(model)
+            if notetype is None:
+                raise AnkiError(f"model was not found: {model}")
+            note = col.new_note(notetype)
+            self._set_fields(note, fields)
+            note.tags = list(tags or [])
+            check = note.fields_check()
+            if check == 1:  # EMPTY
+                raise AnkiError("cannot create note because it is empty")
+            if check == 2 and not allow_duplicate:  # DUPLICATE
+                raise AnkiError("cannot create note because it is a duplicate")
+            col.add_note(note, col.decks.id(deck, create=True))  # ty: ignore[invalid-argument-type]
+            return int(note.id)
 
     def delete_notes(self, note_ids: list[int]) -> None:
-        self.invoke("deleteNotes", notes=note_ids)
+        with self._use(write=True) as col:
+            for nid in note_ids:
+                self._get_note(col, nid)
+            col.remove_notes(note_ids)  # ty: ignore[invalid-argument-type]
 
     def update_note_model(
         self,
@@ -295,65 +530,158 @@ class AnkiClient:
         fields: dict[str, str],
         tags: list[str],
     ) -> None:
-        """Change the note's type, fields and tags in one call (AnkiConnect `updateNoteModel`).
-
-        This swaps the note type id, rebuilds the field list by case-insensitive name match,
-        and replaces tags. Cards are untouched: orphan cards (ordinals without a template in the
-        new type) remain until Anki's Check Database removes them.
-        """
-        self.invoke(
-            "updateNoteModel",
-            note={"id": note_id, "modelName": model, "fields": fields, "tags": tags},
-        )
+        """Change the note's type, fields and tags. Fields are matched to the new type by name,
+        case ignored; a field not given is left empty. Cards whose template the new type lacks
+        are removed. A change of type is a schema change: AnkiWeb then needs a full sync."""
+        with self._use(write=True) as col:
+            note = self._get_note(col, note_id)
+            new_type = col.models.by_name(model)
+            if new_type is None:
+                raise AnkiError(f"model was not found: {model}")
+            if note.mid != new_type["id"]:
+                info = col.models.change_notetype_info(
+                    old_notetype_id=note.mid, new_notetype_id=new_type["id"]
+                )
+                request = info.input
+                request.note_ids.extend([note_id])
+                col.models.change_notetype_of_notes(request)
+                note = self._get_note(col, note_id)
+            names = note.keys()
+            by_lower = {name.lower(): name for name in names}
+            for name in names:
+                note[name] = ""
+            for name, value in fields.items():
+                real = by_lower.get(name.lower())
+                if real is not None:
+                    note[real] = value
+            note.tags = list(tags)
+            col.update_note(note)
 
     # ----------------------------------------------------------------- media
 
     def retrieve_media_file(self, name: str) -> bytes | None:
-        """The bytes of one file in Anki's media folder, or None when it does not exist.
-
-        AnkiConnect returns the content base64-encoded, or `false` for a missing file.
-        """
-        result = self.invoke("retrieveMediaFile", filename=name)
-        if not result:
+        """The bytes of one file in the collection's media folder, or None when it does not
+        exist. Read straight from the folder: no need to open the collection."""
+        folder = self.media_dir
+        if folder is None or not name or os.sep in name or name in {".", ".."}:
             return None
-        return base64.b64decode(result)
+        path = folder / name
+        return path.read_bytes() if path.is_file() else None
 
     # ---------------------------------------------------------------- models
 
+    def _notetype(self, col: Collection, model: str) -> dict[str, Any]:
+        notetype = col.models.by_name(model)
+        if notetype is None:
+            raise AnkiError(f"model was not found: {model}")
+        return dict(notetype)
+
     def model_names(self) -> list[str]:
-        return sorted(self.invoke("modelNames"))
+        with self._use() as col:
+            return sorted(col.models.all_names())
 
     def model_field_names(self, model: str) -> list[str]:
-        return self.invoke("modelFieldNames", modelName=model)
+        with self._use() as col:
+            return [f["name"] for f in self._notetype(col, model)["flds"]]
 
     def model_names_and_fields(self) -> dict[str, list[str]]:
-        """Every note type mapped to its field names, in one round trip after `modelNames`."""
-        names = self.model_names()
-        fields = self.invoke_multi([("modelFieldNames", {"modelName": n}) for n in names])
-        return {name: list(f or []) for name, f in zip(names, fields, strict=True)}
+        """Every note type mapped to its field names."""
+        with self._use() as col:
+            return {
+                nt["name"]: [f["name"] for f in nt["flds"]]
+                for nt in sorted(col.models.all(), key=lambda nt: nt["name"])
+            }
 
     def model_styling(self, model: str) -> str:
         """The note type's stylesheet."""
-        raw = self.invoke("modelStyling", modelName=model)
-        return str((raw or {}).get("css", ""))
+        with self._use() as col:
+            return str(self._notetype(col, model).get("css", ""))
 
     def model_templates(self, model: str) -> dict[str, dict[str, str]]:
         """Card name -> {"Front": html, "Back": html}."""
-        raw = self.invoke("modelTemplates", modelName=model)
-        return {name: dict(sides or {}) for name, sides in (raw or {}).items()}
+        with self._use() as col:
+            return _templates(self._notetype(col, model))
 
     def note_type(self, model: str) -> NoteType:
-        """Fields, card templates and CSS of a note type, in one round trip."""
-        fields, templates, styling = self.invoke_multi(
-            [
-                ("modelFieldNames", {"modelName": model}),
-                ("modelTemplates", {"modelName": model}),
-                ("modelStyling", {"modelName": model}),
-            ]
-        )
-        return NoteType(
-            name=model,
-            fields=list(fields or []),
-            templates={name: dict(sides or {}) for name, sides in (templates or {}).items()},
-            css=str((styling or {}).get("css", "")),
-        )
+        """Fields, card templates and CSS of a note type."""
+        with self._use() as col:
+            nt = self._notetype(col, model)
+            return NoteType(
+                name=model,
+                fields=[f["name"] for f in nt["flds"]],
+                templates=_templates(nt),
+                css=str(nt.get("css", "")),
+            )
+
+
+def _templates(notetype: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    return {t["name"]: {"Front": t["qfmt"], "Back": t["afmt"]} for t in notetype["tmpls"]}
+
+
+def _button_state(states: SchedulingStates, rating: int) -> SchedulingState:
+    return {
+        CardAnswer.AGAIN: states.again,
+        CardAnswer.HARD: states.hard,
+        CardAnswer.GOOD: states.good,
+        CardAnswer.EASY: states.easy,
+    }[rating]
+
+
+def _sched(col: Collection) -> Scheduler:
+    """The v3 scheduler, the only one Anki 23.10 and later run."""
+    return cast(Scheduler, col.sched)
+
+
+def _type_name(note: AnkiNote) -> str:
+    notetype = note.note_type()
+    return str(notetype["name"]) if notetype else ""
+
+
+def _note(note: AnkiNote) -> Note:
+    return Note(
+        note_id=int(note.id),
+        model_name=_type_name(note),
+        tags=list(note.tags),
+        fields=dict(note.items()),
+        card_ids=[int(c) for c in note.card_ids()],
+    )
+
+
+def _card(card: AnkiCard, note: AnkiNote, deck_name: str) -> Card:
+    return Card(
+        card_id=int(card.id),
+        note_id=int(card.nid),
+        deck_name=deck_name,
+        model_name=_type_name(note),
+        fields=dict(note.items()),
+        flag=int(card.user_flag()),
+        ord=int(card.ord),
+        interval=int(card.ivl),
+        due=int(card.due),
+        reps=int(card.reps),
+        lapses=int(card.lapses),
+        queue=int(card.queue),
+        type=int(card.type),
+        factor=int(card.factor),
+        left=int(card.left),
+    )
+
+
+def anki_client_from_env(env: Mapping[str, str] | None = None) -> AnkiClient:
+    """The client the app and the CLI use: collection from `ANKI_COLLECTION`, else the only
+    profile's."""
+    env = os.environ if env is None else env
+    return AnkiClient(env.get("ANKI_COLLECTION") or None)
+
+
+__all__ = [
+    "LOCKED_MESSAGE",
+    "AnkiClient",
+    "AnkiError",
+    "CollectionLocked",
+    "DeckLimits",
+    "Outcomes",
+    "anki_client_from_env",
+    "default_collection_path",
+    "state_seconds",
+]

@@ -9,7 +9,9 @@ import sys
 import textwrap
 from collections.abc import Iterable
 
-from anki_assistant.client import AnkiClient, AnkiConnectError
+from dotenv import load_dotenv
+
+from anki_assistant.client import AnkiClient, AnkiError, anki_client_from_env
 from anki_assistant.models import Card, Note
 from anki_assistant.sources import SourceStore
 
@@ -203,8 +205,13 @@ def cmd_source(client: AnkiClient, args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="anki", description="Talk to Anki through AnkiConnect.")
-    p.add_argument("--url", default="http://localhost:8765", help="AnkiConnect URL")
+    p = argparse.ArgumentParser(
+        prog="anki", description="Read and edit Anki's collection (Anki desktop closed)."
+    )
+    p.add_argument(
+        "--collection",
+        help="the collection.anki2 file (default: $ANKI_COLLECTION, else the only profile's)",
+    )
     p.add_argument("--json", action="store_true", help="machine-readable output")
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -281,10 +288,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    client = AnkiClient(url=args.url)
+    load_dotenv()
+    client = AnkiClient(args.collection) if args.collection else anki_client_from_env()
     try:
-        args.func(client, args)
-    except AnkiConnectError as exc:
+        if args.func is cmd_source:  # sources.json only: Anki's file is not needed
+            args.func(client, args)
+        else:
+            with client.action():
+                args.func(client, args)
+    except AnkiError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except BrokenPipeError:  # output piped into `head` & co

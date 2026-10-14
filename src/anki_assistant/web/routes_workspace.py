@@ -52,7 +52,7 @@ def apply_workspace(request: Request, body: PlanIn) -> ApplyReport:
     """Write the plan all-or-nothing (emulated). 200 whether or not every write went through:
     the report's `ok` says. 422 on a malformed plan, 404 on an unknown note."""
     try:
-        with anki_errors():
+        with anki_errors(request.app.state.anki):
             report, snap = workspace.apply(
                 request.app.state.anki, request.app.state.store, body.to_plan()
             )
@@ -69,7 +69,7 @@ def undo_workspace(request: Request) -> ApplyReport:
     when a note was modified since."""
     snap = getattr(request.app.state, "last_validation", None)
     try:
-        with anki_errors():
+        with anki_errors(request.app.state.anki):
             report = workspace.undo(request.app.state.anki, request.app.state.store, snap)
     except (workspace.NothingToUndo, workspace.ModifiedSince) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

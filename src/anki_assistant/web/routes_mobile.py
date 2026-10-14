@@ -93,7 +93,7 @@ class SyncBody(BaseModel):
 @router.get("/batch")
 def get_batch(request: Request) -> mobile.Batch:
     """A fresh batch, nothing applied."""
-    with anki_errors():
+    with anki_errors(_anki(request)):
         anki, deck, hour = _anki(request), _deck(request), _rollover(request)
         return mobile.build_batch(anki, deck, hour, datetime.now(), _log(request))
 
@@ -102,7 +102,7 @@ def get_batch(request: Request) -> mobile.Batch:
 def post_sync(request: Request, body: SyncBody) -> mobile.SyncResult:
     """Apply the phone's pending actions oldest first, then return a fresh batch."""
     actions = [mobile.Action(**a.model_dump()) for a in body.actions]
-    with anki_errors():
+    with anki_errors(_anki(request)):
         return mobile.sync(
             _anki(request),
             actions,

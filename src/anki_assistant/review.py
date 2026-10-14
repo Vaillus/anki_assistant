@@ -1,8 +1,8 @@
 """Note-level view of a deck and the decisions that write to Anki. Spec: specs/review.md.
 
 Pure functions over an `AnkiClient` (plus a `SourceStore` for deck source kinds), no FastAPI:
-`web/routes_review.py` is a thin HTTP shell over this module, and the tests drive it with a fake
-client holding an in-memory collection.
+`web/routes_review.py` is a thin HTTP shell over this module, and the tests drive it with a
+client on a temporary collection.
 
 The review unit is the **note**, not the card: a note is flagged when any of its cards carries a
 flag, and resolving a note clears the flag on all of them. Flag colours carry no meaning.
@@ -262,19 +262,16 @@ def _due_within_budget(
 ) -> set[int]:
     """Return card ids of flagged due cards within the study deck's review budget.
 
-    The user studies from one root deck (e.g. ``courant``); its ``review_count``
-    from ``getDeckStats`` is the total remaining reviews for today across all
-    sub-decks. Anki presents review cards grouped by sub-deck in tree order
-    (alphabetical), so the sort key is ``(deck_name, due)`` — all of one sub-deck's
-    cards before the next, most overdue first within each.
+    The user studies from one root deck (e.g. ``courant``); the budget is its effective deck
+    limit for reviews minus what Anki counts as studied today. Anki presents review cards
+    grouped by sub-deck in tree order (alphabetical), so the sort key is ``(deck_name, due)``
+    — all of one sub-deck's cards before the next, most overdue first within each.
     """
     if not flagged_due_cards:
         return set()
 
-    stats_raw = client.deck_stats(study_deck)
-    budget = 0
-    for stat in stats_raw.values():
-        budget = int(stat.get("review_count", 0))
+    limits = client.deck_limits(study_deck)
+    budget = max(0, limits.review - limits.studied_review)
 
     if budget == 0:
         return set()

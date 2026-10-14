@@ -4,7 +4,7 @@
 
 ## What the app does
 
-A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged [notes](./notes.md), the deck's [sources](./sources.md) (Obsidian notes, PDFs, web pages) side by side, and, once a note is opened in the [workspace](./workspace.md), a [conversation with Claude](./chat.md) that reads the deck's notes and sources on demand and proposes edits, splits and creations that land on the workspace as versions and cards. Everything is written into Anki through AnkiConnect, in one validation per workspace.
+A personal, local web app to **empty the queue of flagged Anki cards efficiently**, deck by deck. For each deck the user sees the flagged [notes](./notes.md), the deck's [sources](./sources.md) (Obsidian notes, PDFs, web pages) side by side, and, once a note is opened in the [workspace](./workspace.md), a [conversation with Claude](./chat.md) that reads the deck's notes and sources on demand and proposes edits, splits and creations that land on the workspace as versions and cards. Everything is written into Anki's collection by the app itself, in one validation per workspace.
 
 The user flags a card during an Anki review when something is wrong with it (too vague, wrong deck, should be split, needs a sibling card…). The reason is often typed into the note's `Back Extra` field ([notes.md § Reason](./notes.md#reason-back-extra)). This app is where those flags get resolved.
 
@@ -26,7 +26,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 ```mermaid
 graph LR
     UI["Browser · vanilla JS · /static"] --> API["FastAPI · port 5070"]
-    API --> Client["AnkiClient (client.py)"] --> AC["AnkiConnect · localhost:8765"]
+    API --> Client["AnkiClient (client.py)"] --> Lib["anki library"] --> Col["collection.anki2 · Anki desktop closed"]
     API --> Sources["SourceStore (sources.py) · sources.json"]
     Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
     Sources --> PDF["PDF files · Docling / pypdf"]
@@ -40,22 +40,44 @@ graph LR
 
 **Who writes to Anki.** Three paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)); a phone [sync](./mobile.md#sync) replays answers, sets or clears the orange flag, suspends, and re-dates replayed cards. The server keeps one snapshot for « Undo last validation ».
 
+**How the app reaches Anki.** See [Anki](#anki) below.
+
 **Who writes to the vault.** Two operations only, both behind a user click: create a file, replace a passage ([sources.md § Writing to the vault](./sources.md#writing-to-the-vault)).
 
 **Single user, Mac plus phone.** No login. One process listens on two ports, both bound to `127.0.0.1`: the main app on `5070`, the phone app alone on the [phone port](./mobile.md#tailnet-gate) `5071`. Only the phone port is exposed on the tailnet, through `tailscale serve`, and its tailnet gate refuses every request that does not carry the owner's Tailscale login.
+
+## Anki
+
+The **anki library** is Anki's own Python package (`anki` on PyPI), the code Anki desktop runs: it opens a collection file inside the calling process. It is a dependency pinned to Anki desktop's version (`anki==26.9.2`); the two are bumped together.
+
+The **collection** is the file Anki desktop keeps for the profile, `collection.anki2`, with its media folder `collection.media` beside it. Env `ANKI_COLLECTION` is its path; unset, the app takes the only profile's under `~/Library/Application Support/Anki2/`. The app never creates a collection: a path with no file is an error.
+
+**AnkiClient** (`client.py`) is the app's typed client for Anki: every read and write of the app goes through it, as anki library calls on the open collection. Its operations are named after what they do (`cards_info`, `update_note`, `set_flag`, `answer_card`…); the routes, `review.py`, `workspace.py` and `mobile.py` call nothing else. A media file is read straight from the media folder, without opening the collection.
+
+The **collection lock** is Anki's exclusive hold on a collection file while one process has it open: no other process can open it until it is closed. Anki desktop holds it from the moment the profile is loaded until it is closed, so the app and Anki desktop **take turns** on the file.
+
+The **holding policy** is when the app opens the file and closes it again: it opens it for one **action** — one HTTP request, one CLI command — and closes it when the action is done. Opening takes a few milliseconds. Another action arriving meanwhile waits for the file, then runs. So:
+
+| Situation | What happens |
+|---|---|
+| Anki desktop open, the app acts (a click, a phone sync) | The action fails and writes nothing: `503` with `Close Anki desktop first`. Closing Anki desktop and retrying works. |
+| The app running, Anki desktop opened | It opens normally, unless an app action is running at that instant: then Anki desktop says the collection is already open, and a retry works. |
+| A phone sync while Anki desktop is open | Fails like any action; the phone keeps its pending actions for the next sync. |
+
+The workspace's « Undo last validation » stays the app's own snapshot ([workspace.md § Undo](./workspace.md#undo)): Anki's own undo list lives in the open collection and is lost at each close.
 
 ## Module map
 
 | Path | Role | Spec |
 |---|---|---|
-| `src/anki_assistant/client.py` | Typed client over AnkiConnect | — |
+| `src/anki_assistant/client.py` | `AnkiClient`: the collection through the anki library, holding policy | [§ Anki](#anki) |
 | `src/anki_assistant/models.py` | `Card`, `Note` dataclasses | — |
 | `src/anki_assistant/sources/` | `SourceStore`, corpora, anchors, text extraction, vault writes | [sources.md](./sources.md) |
 | `src/anki_assistant/pdf_cache.py` | Sidecar cache, structural index, Docling extraction | [sources.md](./sources.md) |
 | `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes, priority queue | [review.md](./review.md), [priority.md](./priority.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
-| `src/anki_assistant/mobile.py` | Anki day, batch building, outcome parsing, sync (replay, re-dating, dropped actions, review log) | [mobile.md](./mobile.md) |
+| `src/anki_assistant/mobile.py` | Anki day, batch building, sync (replay, re-dating, dropped actions, review log) | [mobile.md](./mobile.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
 | `src/anki_assistant/web/main.py` | App factories (main app, phone app), static mount, router includes, port dispatch, entry point serving both ports | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…`, `/api/notes/priority` | [review.md](./review.md#api), [priority.md](./priority.md#api) |
@@ -65,11 +87,11 @@ graph LR
 | `src/anki_assistant/web/routes_mobile.py` | `/api/mobile/batch`, `/api/mobile/sync`, `/api/mobile/media/{filename}`, the page under `/m`, the phone port's shell files | [mobile.md](./mobile.md#api) |
 | `src/anki_assistant/web/gate.py` | Tailnet gate middleware (phone app only) | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/render.py` | Field display transform | [review.md](./review.md#rendering) |
-| `src/anki_assistant/web/errors.py` | Shared error handlers | — |
+| `src/anki_assistant/web/errors.py` | Error mapping; holds the collection for one request | [review.md](./review.md#api) |
 | `src/anki_assistant/web/templates/index.html` | The main app's page | — |
 | `src/anki_assistant/web/templates/mobile.html`, `mobile-sw.js` | The phone page and its service worker | [mobile.md](./mobile.md#phone-page) |
 | `src/anki_assistant/web/static/` | Frontend: vanilla JS, no framework, no bundler; `mobile*.js`, `mobile.css` are the phone page's | [review.md](./review.md#frontend), [theme.md](./theme.md), [mobile.md](./mobile.md#phone-page) |
-| `tests/` | pytest, AnkiConnect mocked | — |
+| `tests/` | pytest, each test on a temporary collection: an empty collection it creates in its temp folder with the anki library (`tests/anki_fixture.py`), never the user's | — |
 
 ## Conventions
 

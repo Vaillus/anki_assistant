@@ -34,26 +34,26 @@ An **Anki day** is a day as Anki counts it: it starts at Anki's **rollover hour*
 
 The **window** is the 3 Anki days starting today: day `0` (today), day `1`, day `2`.
 
-The **daily quota** is how many review cards and new cards Anki would show in one Anki day for the mobile deck:
+The **daily quota** is how many review cards and new cards Anki would show in one Anki day for the mobile deck. It comes from the mobile deck's **effective deck limit**: the daily limit Anki actually applies, the deck's « Today only » value when set for today, else its « This deck » value, else its preset's ([00-overview.md § Anki](./00-overview.md#anki)).
 
 | Day | Reviews | New cards |
 |---|---|---|
-| 0 | `review_count` of `getDeckStats` (what is left today), plus the late replays of review cards | `new_count` of `getDeckStats`, plus the late replays of new cards |
-| 1, 2 | the deck options' `rev.perDay` (`getDeckConfig`) | the deck options' `new.perDay` |
+| 0 | the effective review limit minus Anki's studied-today count of reviews, plus the late replays of review cards | the same for new cards |
+| 1, 2 | the effective review limit without its « Today only » value | the same for new cards |
 
-Day 0 uses `getDeckStats` because a per-deck "This deck" limit override is invisible through AnkiConnect, while today's counts reflect it.
+The **studied-today counter** is the per-deck count of reviews and new cards Anki has recorded as studied on the current Anki day, which it checks against the daily limit.
 
-A sync [replays](#sync) answers given on earlier Anki days, and Anki counts each replay as done today: after two offline days, today's `getDeckStats` counts are near `0` although nothing was reviewed today. A **late replay** is a card with an applied answer in the [review log](#review-log) synced today whose answer's Anki day is before today. Day 0 adds them back:
+A sync [replays](#sync) answers given on earlier Anki days, and Anki counts each replay as studied today: after two offline days, today's counter is near the limit although nothing was reviewed today. A **late replay** is a card with an applied answer in the [review log](#review-log) synced today whose answer's Anki day is before today. Day 0 adds them back:
 
 - each card counts once, however many of its answers were replayed;
 - it counts as a new card when one of those entries has `was_new` true, as a review otherwise (an entry without `was_new` counts as a review);
-- each sum is capped by the deck options' limit (`rev.perDay`, `new.perDay`), but never below the `getDeckStats` count.
+- each sum is capped by the effective deck limit, but never below what is left before the correction.
 
 Being read from the review log, the correction holds for every batch built the same Anki day, at a sync or at `GET /api/mobile/batch`.
 
 A **batch** is the cards the phone downloads at a sync: one daily quota per day of the window, plus the learning cards due that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
 
-Each day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (`getDeckConfig`). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value, or a missing option, keeps the default given for that option.
+Each day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (its preset). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value, or a missing option, keeps the default given for that option.
 
 | Option | Honoured value | Default |
 |---|---|---|
@@ -101,16 +101,7 @@ A reference is any `{{…}}` tag (`{{Field}}`, `{{cloze:Text}}`, `{{#Field}}` se
 
 ## Precomputed outcomes
 
-A **precomputed outcome** is, for one card and one of the four answer buttons (again, hard, good, easy), the interval Anki would give the card, computed by Anki's own scheduler (FSRS) when the batch is made. AnkiConnect's `cardsInfo` returns them as `nextReviews`: four display strings in Anki's interface language, e.g. `<⁨10⁩m`, `⁨24⁩j`, `⁨3,9⁩mo`.
-
-The batch carries them as seconds. Parsing a display string:
-
-- Unicode isolation and direction marks (U+2066–U+2069, U+200E, U+200F) and spaces are removed, then a leading `<` or `>`;
-- the number may use a decimal comma or point;
-- units: `s` seconds; `m`, `min` minutes; `h` hours; `d`, `j` days; `mo` months; `y`, `a` years — a month is a year / 12, a year 365 days (Anki's own time-span constants);
-- anything else gives `null`.
-
-Months and years are displayed with one decimal, so an outcome above a month is accurate to about ±1.5 days.
+A **precomputed outcome** is, for one card and one of the four answer buttons (again, hard, good, easy), the interval Anki would give the card, computed by Anki's own scheduler (FSRS) when the batch is made. It is a **raw outcome**: the delay as a number of seconds, read from the scheduler's next states (a review state's days × 86 400, a learning or relearning state's seconds), never parsed back from a display string. The batch also carries Anki's display string of each, for the buttons.
 
 The phone runs no scheduler. An outcome holds for the card's state at download: a card answered a second time on the phone (after « again ») has no outcome for that answer, and the phone treats it as leaving the window. A `null` outcome also leaves the window.
 
@@ -162,7 +153,7 @@ One line per answer action, written when the sync first processes it, applied or
  "was_new": false}
 ```
 
-`answered_at` and `synced_at` are ms since epoch. `was_new` is whether the card was new (`cardsInfo` `type` `0`) when the sync processed the answer, before the replay; `null` when the card no longer exists. Lines written before `was_new` existed lack it.
+`answered_at` and `synced_at` are ms since epoch. `was_new` is whether the card was new (card type `0`) when the sync processed the answer, before the replay; `null` when the card no longer exists. Lines written before `was_new` existed lack it.
 
 ## Sync
 
@@ -171,8 +162,8 @@ A **sync** starts when the page opens and the Mac answers, or with the ⟳ butto
 1. **Order.** The pending actions are applied oldest first (by instant; ties keep the order sent).
 2. **Idempotency.** An action whose id was already processed by an earlier sync is not applied again; it is reported with the status it got then. Every processed action id is recorded in `mobile_actions.jsonl` (gitignored, next to `review_log.jsonl`) with its status, right after it is processed.
 3. **Dropped actions.** Before applying an action, its card is checked. A **dropped action** is one whose card no longer exists (deleted, or split away), has left the mobile deck, or is suspended. The reasons are `card_missing`, `left_deck`, `suspended`. An edit to the card on the Mac does not drop it.
-4. **Apply.** `answer` → **replay** with AnkiConnect `answerCards`, so Anki's scheduler updates the card as if answered now. `flag` → flag `2`. `unflag` → flag `0`. `suspend` → `suspend`.
-5. **Re-dating.** After a replay, when the card is in review (queue 2) and the answer's Anki day is before today, the card's due date is moved to *answer's Anki day + the interval Anki just gave* (`setDueDate`, without `!`, so Anki keeps the interval), clamped to today: a sync two days late does not push the card two days back. Learning cards and same-day answers are left as Anki put them.
+4. **Apply.** `answer` → **replay**: a **timestamped replay**, Anki's scheduler answering the card with the answer's instant and the time spent on it, so Anki's review history and the card's last-review time hold the phone's instant and duration. `flag` → flag `2`. `unflag` → flag `0`. `suspend` → `suspend`.
+5. **Re-dating.** After a replay, when the card is in review (queue 2) and the answer's Anki day is before today, the card's due date is moved to *answer's Anki day + the interval Anki just gave* (Anki's « Set due date », without `!`, so Anki keeps the interval), clamped to today: a sync two days late does not push the card two days back. Learning cards and same-day answers are left as Anki put them.
 6. **Review log.** Each answer action processed for the first time is appended to the review log.
 7. **New batch.** The Mac builds a new batch and returns it with the applied and dropped action ids; the phone clears those actions and replaces its batch.
 
@@ -182,7 +173,7 @@ If the Mac or Anki stops answering midway, the request fails and nothing is clea
 
 The Mac sits on a tailnet shared with colleagues, and the app has no login. `tailscale serve` exposes one local port over HTTPS at the Mac's `.ts.net` name; it forwards each request with a `Tailscale-User-Login` header naming the sender, for user-owned devices only (not for tagged devices), and replaces any such header the sender put.
 
-The **phone port** is a second local port, env `MOBILE_PORT` (default `5071`), bound to `127.0.0.1` like the main port (`5070`). `uv run anki-web` listens on both in one process, and both ports share the AnkiConnect client, the mobile deck, the rollover hour and the review log. A request is routed by the local port of the socket it arrived on, never by anything the request carries; a request whose local port is unknown is treated as arriving on the phone port. The phone port serves only the phone app:
+The **phone port** is a second local port, env `MOBILE_PORT` (default `5071`), bound to `127.0.0.1` like the main port (`5070`). `uv run anki-web` listens on both in one process, and both ports share the `AnkiClient`, the mobile deck, the rollover hour and the review log. A request is routed by the local port of the socket it arrived on, never by anything the request carries; a request whose local port is unknown is treated as arriving on the phone port. The phone port serves only the phone app:
 
 | Request | Served |
 |---|---|
@@ -247,7 +238,7 @@ The web app manifest is at `/m/manifest.webmanifest` (standalone display, start 
 
 ## API
 
-All routes are under `/api/mobile`, on the phone port and on the main port ([Tailnet gate](#tailnet-gate)). Errors follow [review.md § API](./review.md#api): Anki unreachable → `503`, other AnkiConnect failure → `502`, malformed body → `422`; bodies are `{ "detail": "<message>" }`.
+All routes are under `/api/mobile`, on the phone port and on the main port ([Tailnet gate](#tailnet-gate)). Errors follow [review.md § API](./review.md#api): collection held by Anki desktop → `503` (`Close Anki desktop first`), Anki refused the operation → `502`, malformed body → `422`; bodies are `{ "detail": "<message>" }`.
 
 | Method & path | Purpose |
 |---|---|
@@ -283,7 +274,7 @@ The page itself is served outside `/api`: `GET /m` (the page), `GET /m/manifest.
 }
 ```
 
-`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same strings as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
+`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
 
 **Sync** (`POST /api/mobile/sync`), request:
 

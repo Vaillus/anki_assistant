@@ -54,11 +54,11 @@ Anki's **study queue** of a deck is the ordered cards Anki's scheduler would sho
 | | Anki's study queue (Anki desktop, AnkiMobile) | A day of the batch (0, 1 or 2) |
 |---|---|---|
 | Which cards | Anki's scheduler's | due by that day, not taken by an earlier day |
-| Review and new limit | the effective deck limit of the deck and of each sub-deck, minus what Anki counts as studied today | the day's daily quota (table above); sub-deck limits ignored |
+| Review and new limit | the effective deck limit of the deck and of each sub-deck, minus what Anki counts as studied today; new cards also capped by what the reviews left of the review limit | the day's daily quota (table above); sub-deck limits ignored; the new quota independent of the review quota |
 | Order | every display-order option, sibling burying, Anki's deck order | the four display-order options below, in the app's [deck order](#deck-order); no sibling burying |
 | Suspended and buried cards | left out by Anki | left out by the search filter `-is:suspended -is:buried` (Anki's `is:new` and `prop:due` match them too) |
 
-So day 0 on the phone can differ from what Anki desktop shows today: in another order, and, when a quota cuts partway through the mobile deck, with new cards Anki desktop would not show today and without some it would. Once the phone's answers sync, Anki counts them as studied today, and Anki desktop's study queue for the rest of the day shrinks with them.
+So day 0 on the phone can differ from what Anki desktop shows today: in another order, and, when a quota cuts partway through the mobile deck, with new cards Anki desktop would not show today and without some it would. Each day's new quota is also independent of its review quota: with a review limit of 2, a new limit of 1 and two reviews due, Anki desktop shows no new card today, the phone's day 0 one. Once the phone's answers sync, Anki counts them as studied today, and Anki desktop's study queue for the rest of the day shrinks with them.
 
 A rebuilt day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (its preset). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value keeps the default given for that option.
 
@@ -75,7 +75,7 @@ Within each rebuilt day:
 
 1. **interday learning cards** due by that day, not taken by an earlier day, in review order, the first up to the day's review quota;
 2. **review cards** (queue 2) due by that day, not taken by an earlier day, in review order (ties by card id), the first up to what step 1 left of the review quota;
-3. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota;
+3. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota, whatever steps 1 and 2 took of the review quota;
 4. **intraday learning cards** due by that day, by due, not counted in any quota.
 
 The day's cards are then laid out: intraday learning first; then interday learning mixed into the reviews; then the new cards mixed into that. **Mixing** a shorter list into a longer one spreads it evenly, each list keeping its own order (Anki's intersperser). Where an option keeps its default, the lists follow each other instead of mixing.
@@ -126,7 +126,7 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
 3. **Cut at the day's limit.** Each day shows at most that day's quota (`quota[k]` for `days[k]`) of reviews and of new cards, minus what was answered on the phone that day, returning and unreached cards included:
    - the **interday learning cards** of the share come first, in Anki's review order, and use up the review quota before the reviews, as in Anki;
    - the **reviews** of the share and the cards returning on a later day are merged, sorted in the batch's **review order** — due day first, or deck first (by `deck_rank`, the [deck order](#deck-order)) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to what the interday learning cards left of the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
-   - the **new cards** of the share, in batch order, are kept up to the new quota;
+   - the **new cards** of the share, in batch order, are kept up to the new quota, whatever the reviews used of the review quota;
    - intraday learning cards of the share and same-day returns are never cut, as in Anki;
    - **answered that day**: a card's first answer counts as a review for a review or interday learning card, as a new card for a new card, as nothing for an intraday learning card; a later answer counts as a review when the previous outcome brought the card back on a later day, as nothing when it was a same-day return.
 

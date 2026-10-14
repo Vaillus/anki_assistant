@@ -9,6 +9,7 @@ async function loadDecks() {
   try {
     const res = await API.decks();
     S.decks = (res && res.decks) || [];
+    S.labels = (res && res.labels) || [];
     S.priorityCount = (res && res.priority_count) || 0;
   } catch (e) {
     S.error = e.message;
@@ -159,6 +160,7 @@ async function afterDecision(opts) {
     }
     const decksRes = res[1];
     S.decks = (decksRes && decksRes.decks) || S.decks;
+    S.labels = (decksRes && decksRes.labels) || S.labels;
     S.priorityCount = (decksRes && decksRes.priority_count) || 0;
     S.revealed = {};
     S.error = "";
@@ -349,7 +351,62 @@ document.addEventListener("focusout", (e) => {
   if (el && el.getAttribute && el.getAttribute("data-input") === "ws-field") wsBlur(el);
 });
 
-/* ---------------- context menu (specs/review.md#creating-a-deck) ---------------- */
+/* ---------------- context menu (specs/review.md#creating-a-deck, #labels) ---------------- */
+
+function deckByName(name) {
+  return (S.decks || []).find((d) => d.name === name) || null;
+}
+
+/* Why setting the label `labelId` (null: a new one) on deck `d` is refused, or "": a deck under
+   it carrying a group's label, or another label (specs/review.md#labels). */
+function labelRefusal(d, labelId) {
+  const prefix = d.name + "::";
+  const carrier = (S.decks || []).find(
+    (r) =>
+      r.name.indexOf(prefix) === 0 &&
+      r.label &&
+      (r.label.how === "group" || (r.label.how === "set" && r.label.id !== labelId)),
+  );
+  return carrier ? carrier.leaf + " porte l'étiquette " + carrier.label.name : "";
+}
+
+function ctxItem(act, deck, text, opts) {
+  const o = opts || {};
+  return (
+    '<div class="ctx-item' + (o.cls ? " " + o.cls : "") + (o.off ? " off" : "") + '"' +
+    (o.off ? "" : ' data-act="' + act + '"') +
+    ' data-deck="' + esc(deck) + '"' +
+    (o.label ? ' data-label="' + esc(o.label) + '"' : "") +
+    (o.note ? ' title="' + esc(o.note) + '"' : "") +
+    ">" + esc(text) + "</div>" +
+    (o.off && o.note ? '<div class="ctx-note">' + esc(o.note) + "</div>" : "")
+  );
+}
+
+function labelItems(d) {
+  if (d.label && d.label.how !== "set") {
+    return ctxItem("", d.name, "Étiquette : " + d.label.name, {
+      off: true,
+      note: "Couvert par l'étiquette " + d.label.name,
+    });
+  }
+  let out = ctxItem("", d.name, "Étiquette ▸", { off: true });
+  (S.labels || []).forEach((l) => {
+    if (d.label && d.label.id === l.id) return;
+    const refused = labelRefusal(d, l.id);
+    out += ctxItem("ctx-label", d.name, l.name, {
+      cls: "ctx-sub", label: l.id, off: !!refused, note: refused,
+    });
+  });
+  const refusedNew = labelRefusal(d, null);
+  out += ctxItem("ctx-label-new", d.name, "Nouvelle étiquette…", {
+    cls: "ctx-sub", off: !!refusedNew, note: refusedNew,
+  });
+  if (d.label && d.label.how === "set") {
+    out += ctxItem("ctx-label-off", d.name, "Retirer l'étiquette", { cls: "ctx-sub" });
+  }
+  return out;
+}
 
 document.addEventListener("contextmenu", function (e) {
   var el = e.target.closest(".deck[data-deck]");
@@ -359,14 +416,19 @@ document.addEventListener("contextmenu", function (e) {
   var old = document.getElementById("ctx-menu");
   if (old) old.remove();
   var deckName = el.getAttribute("data-deck");
+  var d = deckByName(deckName);
   var menu = document.createElement("div");
   menu.id = "ctx-menu";
   menu.className = "ctx-menu";
   menu.innerHTML =
-    '<div class="ctx-item" data-act="ctx-new-child" data-deck="' + esc(deckName) + '">' +
-    "Nouveau sous-paquet</div>" +
-    '<div class="ctx-item danger" data-act="ctx-delete-deck" data-deck="' + esc(deckName) + '">' +
-    "Supprimer le paquet</div>";
+    ctxItem("ctx-new-child", deckName, "Nouveau sous-paquet") +
+    (d ? labelItems(d) : "") +
+    (d && d.can_group
+      ? ctxItem("ctx-group-label", deckName, "Transformer en étiquette", {
+          off: !!d.group_refused, note: d.group_refused || "",
+        })
+      : "") +
+    ctxItem("ctx-delete-deck", deckName, "Supprimer le paquet", { cls: "danger" });
   menu.style.left = e.clientX + "px";
   menu.style.top = e.clientY + "px";
   document.body.appendChild(menu);
@@ -385,14 +447,173 @@ document.addEventListener("contextmenu", function (e) {
     dismiss();
     var act = item.getAttribute("data-act");
     var deck = item.getAttribute("data-deck");
+    var row = deckByName(deck);
     if (act === "ctx-new-child") {
       S.newDeck = { value: deck + "::", error: "" };
       S.refocus = "new-deck";
       draw();
     } else if (act === "ctx-delete-deck") {
       deleteDeck(deck);
+    } else if (act === "ctx-label" && row) {
+      deckLabel({ deck_id: row.id, label_id: item.getAttribute("data-label") });
+    } else if (act === "ctx-label-new" && row) {
+      var name = prompt("Nom de la nouvelle étiquette");
+      if (name && name.trim()) deckLabel({ deck_id: row.id, name: name.trim() });
+    } else if (act === "ctx-label-off" && row) {
+      deckLabel({ deck_id: row.id });
+    } else if (act === "ctx-group-label" && row) {
+      groupLabel(row);
     }
   });
+});
+
+/* A write to the app's tree, then the tree reloaded. */
+async function treeWrite(fn) {
+  S.busy = true;
+  S.error = "";
+  draw();
+  try {
+    await fn();
+  } catch (e) {
+    S.error = e.message;
+  }
+  S.busy = false;
+  await loadDecks();
+  draw();
+}
+
+function deckLabel(body) {
+  return treeWrite(() => API.setDeckLabel(body));
+}
+
+/* Turn a group into a label, after one confirmation stating what moves in Anki and what is
+   copied (specs/review.md#labels). */
+async function groupLabel(row) {
+  let fx;
+  try {
+    fx = await API.groupLabelEffects(row.id);
+  } catch (e) {
+    S.error = e.message;
+    draw();
+    return;
+  }
+  if (fx.refused) {
+    S.error = fx.refused;
+    draw();
+    return;
+  }
+  const lines = [];
+  if (fx.own_cards) {
+    lines.push(
+      fx.own_cards + " cartes sont rangées directement dans " + row.leaf + ". Elles passent " +
+        (fx.misc_exists ? "dans son sous-paquet " : "dans un nouveau sous-paquet, ") +
+        fx.misc + ", dans Anki.",
+    );
+  }
+  if (fx.sources) {
+    lines.push(
+      "Ses " + fx.sources + " sources sont copiées sur chacun de ses sous-paquets, puis retirées de " +
+        row.leaf + ".",
+    );
+  }
+  if (lines.length && !confirm("Transformer " + row.leaf + " en étiquette ?\n\n" + lines.join("\n\n"))) {
+    return;
+  }
+  await treeWrite(async () => {
+    await API.groupLabel(row.id);
+    if (S.deck === row.name) {
+      S.deck = null;
+      S.notes = null;
+      S.corpus = null;
+    }
+  });
+}
+
+/* ---------------- moving a deck (specs/review.md#moving-a-deck) ---------------- */
+
+/* The deck of tree parent `parent` that `row` is, or sits under; null when it is outside. */
+function childOf(row, parent, byId) {
+  let r = row;
+  while (r && r.parent_id !== parent) r = byId[r.parent_id];
+  return r || null;
+}
+
+/* Where the dragged deck lands for the drop line above visible row `line`: { before } or
+   { after, afterRow }, or null when the drop is refused. */
+function dropPlace(line) {
+  const drag = S.drag;
+  if (!drag) return null;
+  const vis = visibleDecks();
+  const byId = {};
+  (S.decks || []).forEach((d) => { byId[d.id] = d; });
+  const below = vis[line];
+  const above = vis[line - 1];
+  if (below && below.parent_id === drag.parent) return { before: below.id };
+  if (!above) return null;
+  const last = childOf(above, drag.parent, byId);
+  if (!last) return null;
+  if (below && childOf(below, drag.parent, byId)) return null; // among a deck's sub-decks
+  return { after: last.id, afterRow: above.id };
+}
+
+function clearDropLine() {
+  document.querySelectorAll(".deck.drop-before, .deck.drop-after").forEach((el) => {
+    el.classList.remove("drop-before", "drop-after");
+  });
+}
+
+function dropLineAt(e) {
+  const el = e.target.closest && e.target.closest(".deck[data-id]");
+  if (!el) return null;
+  const vis = visibleDecks();
+  const id = Number(el.getAttribute("data-id"));
+  const i = vis.findIndex((d) => d.id === id);
+  if (i < 0) return null;
+  const box = el.getBoundingClientRect();
+  return e.clientY < box.top + box.height / 2 ? i : i + 1;
+}
+
+document.addEventListener("dragstart", (e) => {
+  const el = e.target.closest && e.target.closest(".deck[data-id]");
+  if (!el || S.ws || S.busy) return;
+  S.drag = { id: Number(el.getAttribute("data-id")), parent: Number(el.getAttribute("data-parent")) };
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", el.getAttribute("data-deck"));
+});
+
+document.addEventListener("dragover", (e) => {
+  if (!S.drag) return;
+  const line = dropLineAt(e);
+  const place = line === null ? null : dropPlace(line);
+  clearDropLine();
+  if (!place) return; // refused: no preventDefault, the browser shows no drop
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  const sel = place.before !== undefined
+    ? '.deck[data-id="' + place.before + '"]'
+    : '.deck[data-id="' + place.afterRow + '"]';
+  const target = document.querySelector(sel);
+  if (target) target.classList.add(place.before !== undefined ? "drop-before" : "drop-after");
+});
+
+document.addEventListener("drop", (e) => {
+  if (!S.drag) return;
+  e.preventDefault();
+  const line = dropLineAt(e);
+  const place = line === null ? null : dropPlace(line);
+  const id = S.drag.id;
+  S.drag = null;
+  clearDropLine();
+  if (!place) return;
+  const body = { deck_id: id };
+  if (place.before !== undefined) body.before = place.before;
+  else body.after = place.after;
+  treeWrite(() => API.moveDeck(body));
+});
+
+document.addEventListener("dragend", () => {
+  S.drag = null;
+  clearDropLine();
 });
 
 /* ---------------- keyboard ---------------- */

@@ -99,14 +99,21 @@ class DeckOrderStore:
     """Read/write the app deck order and the labels (the file described above)."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or default_order_path()
+        self.path: Path | None = path or default_order_path()
         self.order: dict[int, list[int]] = {}
         self.labels: dict[str, Label] = {}
         self.deck_labels: dict[int, str] = {}
         self.load()
 
+    @classmethod
+    def in_memory(cls) -> DeckOrderStore:
+        """An empty store tied to no file (Anki's deck order, no label), never saved."""
+        store = cls.__new__(cls)
+        store.path, store.order, store.labels, store.deck_labels = None, {}, {}, {}
+        return store
+
     def load(self) -> None:
-        if not self.path.exists():
+        if self.path is None or not self.path.exists():
             return
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         self.order = {int(k): [int(d) for d in v] for k, v in (raw.get("order") or {}).items()}
@@ -124,6 +131,8 @@ class DeckOrderStore:
         }
 
     def save(self) -> None:
+        if self.path is None:
+            return
         payload = {
             "order": {str(k): list(v) for k, v in sorted(self.order.items()) if v},
             "labels": {lid: label.to_dict() for lid, label in sorted(self.labels.items())},

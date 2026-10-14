@@ -12,8 +12,9 @@ from anki.collection import Collection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anki_assistant import review
+from anki_assistant import deck_order, review
 from anki_assistant.client import FULL_SYNC_MESSAGE, AnkiError, CollectionLocked, SyncStatus
+from anki_assistant.deck_order import DeckOrderStore, LabelRefused
 from anki_assistant.sources import Source, SourceStore
 from anki_assistant.web.render import render_field
 from anki_assistant.web.routes_review import router
@@ -89,6 +90,92 @@ def test_deck_source_kinds_are_deduplicated_in_corpus_order(anki: TempAnki):
 # ------------------------------------------------------------------- create_deck
 
 
+def test_deck_tree_rows_in_ankis_order_case_ignored_prefix_hidden(anki: TempAnki, store):
+    for deck in ("c::01-AI::RL", "c::01-AI::little book", "c::00-Thèse", "c x", "c::01-AI::ML"):
+        anki.add(deck)
+
+    rows = review.list_decks(anki, store)
+
+    assert [(r.leaf, r.depth) for r in rows] == [
+        ("c", 0),
+        ("Thèse", 1),
+        ("AI", 1),
+        ("little book", 2),
+        ("ML", 2),
+        ("RL", 2),
+        ("c x", 0),
+    ]
+    ai = next(r for r in rows if r.leaf == "AI")
+    assert ai.name == "c::01-AI", "the full Anki name is kept"
+    assert ai.parent_id == rows[0].id
+    assert ai.can_group and ai.group_refused is None
+
+
+def test_turning_a_group_into_a_label_files_its_cards_and_copies_its_corpus(
+    anki: TempAnki, tmp_path: Path
+):
+    own = anki.add("c::04-maths", flags=(1,))
+    in_sub = anki.add("c::04-maths::probas")
+    anki.add("c::04-maths::dérivés")
+    group_src = Source(deck="c::04-maths", kind="web", target="https://w.example", id="wwwwww")
+    sub_src = Source(deck="c::04-maths::probas", kind="obsidian", target="P", id="pppppp")
+    store = FakeStore({"c::04-maths": [group_src], "c::04-maths::probas": [sub_src]})
+    store.save = lambda: None  # ty: ignore[invalid-assignment]
+    order = DeckOrderStore(tmp_path / "deck_order.json")
+    group = review.app_tree(anki, order).by_name["c::04-maths"]
+
+    with pytest.raises(LabelRefused):
+        review.turn_group_into_label(anki, store, order, group, protected=["c::04-maths"])
+    fx = review.group_label_effects(anki, store, order, group)
+    assert (fx.own_cards, fx.misc, fx.misc_exists, fx.sources) == (
+        1,
+        "c::04-maths::misc",
+        False,
+        1,
+    )
+
+    review.turn_group_into_label(anki, store, order, group)
+
+    assert anki.decks_of(own) == ["c::04-maths::misc"], "its own cards moved, in Anki"
+    assert anki.decks_of(in_sub) == ["c::04-maths::probas"]
+    assert "c::04-maths" not in store.corpora
+    assert [s.id for s in store.corpora["c::04-maths::probas"]] == ["pppppp", "wwwwww"]
+    assert [s.id for s in store.corpora["c::04-maths::misc"]] == ["wwwwww"]
+    rows = review.list_decks(anki, store, order)
+    assert [(r.leaf, r.depth) for r in rows] == [
+        ("c", 0),
+        ("misc", 1),
+        ("dérivés", 1),
+        ("probas", 1),
+    ]
+    assert all(r.label and r.label.name == "maths" for r in rows[1:])
+
+
+def test_api_moves_and_labels_decks(api: TestClient, anki: TempAnki, tmp_path: Path):
+    for deck in ("c::a", "c::b", "c::b::x"):
+        anki.add(deck)
+    api.app.state.deck_order = DeckOrderStore(tmp_path / "deck_order.json")  # ty: ignore[unresolved-attribute]
+    ids = {d["name"]: d["id"] for d in api.get("/api/decks").json()["decks"]}
+
+    assert api.post("/api/decks/move", json={"deck_id": ids["c::b"], "before": ids["c::a"]})
+    refused = api.post("/api/decks/move", json={"deck_id": ids["c::a"], "before": ids["c::b::x"]})
+    assert refused.status_code == 409
+    resp = api.put("/api/decks/label", json={"deck_id": ids["c::b::x"], "name": "AI"})
+    assert resp.status_code == 200
+    assert api.put("/api/decks/label", json={"deck_id": ids["c"], "name": "x"}).status_code == 409
+
+    body = api.get("/api/decks").json()
+    assert [d["leaf"] for d in body["decks"]] == ["c", "b", "x", "a"]
+    assert [lab["name"] for lab in body["labels"]] == ["AI"]
+    x = next(d for d in body["decks"] if d["leaf"] == "x")
+    assert x["label"]["how"] == "set"
+    b = next(d for d in body["decks"] if d["leaf"] == "b")
+    assert b["group_refused"] == "x porte l'étiquette AI"
+
+    assert api.put("/api/decks/label", json={"deck_id": ids["c::b::x"]}).status_code == 200
+    assert api.get("/api/decks").json()["labels"] == []
+
+
 def test_create_deck(anki: TempAnki):
     review.create_deck(anki, "x::y")
     assert "x" in anki.decks
@@ -134,17 +221,35 @@ def test_flagged_cards_carry_the_card_ordinal(anki: TempAnki):
     assert review.get_note(anki, anki.add("d", flags=(0, 0))).flagged_cards == []
 
 
-def test_queue_lists_sub_decks_flagged_first_then_by_id(anki: TempAnki):
+def test_queue_lists_flagged_first_then_in_the_trees_order_then_by_id(anki: TempAnki):
     first_clean = anki.add("d", flags=(0,))
     flagged_sub = anki.add("d::sub", flags=(1,))
     later_flagged = anki.add("d", flags=(2,))
+    flagged_b = anki.add("d::B", flags=(1,))
 
     result = review.list_notes(anki, "d")
 
-    assert result.total == 3
-    assert result.flagged == 2
-    assert [n.note_id for n in result.notes] == [flagged_sub, later_flagged, first_clean]
-    assert result.notes[0].deck == "d::sub", "deck says where the note actually lives"
+    assert result.total == 4
+    assert result.flagged == 3
+    assert [n.note_id for n in result.notes] == [
+        later_flagged,
+        flagged_b,
+        flagged_sub,
+        first_clean,
+    ], "the deck's own notes first, then its sub-decks in Anki's order, case ignored"
+    assert result.notes[1].deck == "d::B", "deck says where the note actually lives"
+
+
+def test_queue_follows_the_app_deck_order(anki: TempAnki, tmp_path: Path):
+    in_a = anki.add("d::a", flags=(1,))
+    in_b = anki.add("d::b", flags=(1,))
+    order = DeckOrderStore(tmp_path / "deck_order.json")
+    tree = review.app_tree(anki, order)
+    deck_order.move(order, tree, tree.by_name["d::b"], before=tree.by_name["d::a"])
+
+    assert [n.note_id for n in review.list_notes(anki, "d", order).notes] == [in_b, in_a]
+    priority = review.priority_notes(anki, order=order).notes
+    assert [n.note_id for n in priority] == [in_b, in_a]
 
 
 def test_reason_is_plain_back_extra_only_for_flagged_notes(anki: TempAnki):
@@ -488,10 +593,10 @@ def test_api_media_rejects_paths(api: TestClient, anki: TempAnki, name: str):
 
 
 def test_api_maps_anki_failures(api: TestClient, anki: TempAnki, monkeypatch):
-    def broken() -> list[str]:
-        raise AnkiError("deck_names: collection is not available")
+    def broken() -> list[tuple[str, int]]:
+        raise AnkiError("all_decks: collection is not available")
 
-    monkeypatch.setattr(anki, "deck_names", broken)
+    monkeypatch.setattr(anki, "all_decks", broken)
     response = api.get("/api/decks")
     assert response.status_code == 502
     assert "collection is not available" in response.json()["detail"]

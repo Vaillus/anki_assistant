@@ -70,6 +70,8 @@ const S = {
   priorityCount: 0,
   showAllDecks: false,
   newDeck: null, // { value, error } while the create-deck input is open
+  labels: [], // the labels of the app's tree: { id, name, color, group }
+  drag: null, // { id, parent } while a deck row is dragged
   // column 2
   notes: null, // { deck, total, flagged, notes: Note[] }
   onlyFlagged: true,
@@ -155,6 +157,12 @@ function detectKind(target) {
   const t = String(target || "").trim();
   if (/^https?:\/\/\S+$/i.test(t)) return "web";
   return /\.pdf$/i.test(t) ? "pdf" : "obsidian";
+}
+
+/* The name the app's tree shows for a deck: its leaf, number prefix hidden. */
+function deckLeaf(name) {
+  const row = (S.decks || []).find((d) => d.name === name);
+  return row ? row.leaf : String(name).split("::").pop();
 }
 
 function visibleDecks() {

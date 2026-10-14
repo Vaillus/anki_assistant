@@ -309,7 +309,7 @@ class AnkiClient:
         with self._use() as col:
             return {d.name: int(d.id) for d in col.decks.all_names_and_ids()}
 
-    def decks(self) -> list[tuple[str, int]]:
+    def all_decks(self) -> list[tuple[str, int]]:
         """Every deck as (full name, deck id), the empty Default deck left out."""
         with self._use() as col:
             return [

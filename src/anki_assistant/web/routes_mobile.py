@@ -3,8 +3,8 @@ Also the phone page itself under /m: the page, its manifest and its service work
 (specs/mobile.md#phone-page), and the shell files the phone port serves under /static
 (specs/mobile.md#tailnet-gate).
 
-A thin HTTP shell over `mobile.py`. The deck, rollover hour and log files are read from
-`app.state` (set by `create_app` from the environment).
+A thin HTTP shell over `mobile.py`. The deck, rollover hour, log files and app deck order
+are read from `app.state` (set by `create_app` from the environment).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from anki_assistant import mobile
 from anki_assistant.client import AnkiClient
+from anki_assistant.deck_order import DeckOrderStore
 from anki_assistant.web import routes_review
 from anki_assistant.web.errors import anki_errors
 
@@ -66,6 +67,10 @@ def _rollover(request: Request) -> int:
     return mobile.DEFAULT_ROLLOVER_HOUR if hour is None else int(hour)
 
 
+def _deck_order(request: Request) -> DeckOrderStore | None:
+    return getattr(request.app.state, "deck_order", None)
+
+
 def _log(request: Request) -> mobile.MobileLog:
     log = getattr(request.app.state, "mobile_log", None)
     return log if log is not None else mobile.MobileLog()
@@ -95,7 +100,7 @@ def get_batch(request: Request) -> mobile.Batch:
     """A fresh batch, nothing applied."""
     with anki_errors(_anki(request)):
         anki, deck, hour = _anki(request), _deck(request), _rollover(request)
-        return mobile.build_batch(anki, deck, hour, datetime.now())
+        return mobile.build_batch(anki, deck, hour, datetime.now(), _deck_order(request))
 
 
 @router.post("/sync")
@@ -109,6 +114,7 @@ def post_sync(request: Request, body: SyncBody) -> mobile.SyncResult:
             _log(request),
             deck=_deck(request),
             rollover_hour=_rollover(request),
+            deck_order=_deck_order(request),
         )
 
 

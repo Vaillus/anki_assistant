@@ -19,8 +19,9 @@ from anki.collection import Collection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anki_assistant import mobile
+from anki_assistant import deck_order, mobile
 from anki_assistant.client import AnkiError
+from anki_assistant.deck_order import DeckOrderStore
 from anki_assistant.mobile import Action, MobileLog
 from anki_assistant.models import Card
 from anki_assistant.web import routes_mobile
@@ -455,6 +456,65 @@ def test_batch_gives_the_review_order_of_each_card(anki: PhoneAnki) -> None:
     assert build(anki).review_order == "due"
 
 
+@pytest.fixture
+def order_store(tmp_path: Path) -> DeckOrderStore:
+    return DeckOrderStore(tmp_path / "deck_order.json")
+
+
+def move_deck(
+    anki: PhoneAnki,
+    store: DeckOrderStore,
+    deck: str,
+    *,
+    before: str | None = None,
+    after: str | None = None,
+) -> None:
+    """Drag `deck` right before or after a deck of its tree parent, as column 1 does."""
+    ids = anki.deck_names_and_ids()
+    tree = deck_order.build_tree(list(ids.items()), store)
+    deck_order.move(
+        store,
+        tree,
+        ids[deck],
+        before=ids[before] if before else None,
+        after=ids[after] if after else None,
+    )
+
+
+def test_batch_follows_the_app_deck_order(anki: PhoneAnki, order_store: DeckOrderStore) -> None:
+    anki.set_limits(DECK, review=10, new=1, **DECK_ORDER)
+    r_a = anki.new_card(deck="courant::A", rel_due=-1)
+    r_b = anki.new_card(deck="courant::b", rel_due=-1)
+    n_a = anki.new_card(deck="courant::A", queue=0, due=1)
+    n_b = anki.new_card(deck="courant::b", queue=0, due=2)
+
+    def day0() -> list[int]:
+        batch = mobile.build_batch(anki, DECK, 4, NOW, order_store)
+        return [c.card_id for c in batch.cards if c.day == 0]
+
+    assert day0() == [r_a, r_b, n_a], "nothing reordered: Anki's deck order, case ignored"
+    move_deck(anki, order_store, "courant::b", before="courant::A")
+    assert day0() == [r_b, r_a, n_b], "b placed first takes today's one new card"
+    assert n_a in {q.card_id for q in anki.study_queue(DECK)}, "Anki keeps its own order"
+
+
+def test_batch_deck_rank_follows_the_app_deck_order(
+    anki: PhoneAnki, order_store: DeckOrderStore
+) -> None:
+    anki.set_limits(DECK, review=10, new=0, **DECK_ORDER)
+    root = anki.new_card(rel_due=-1)
+    a = anki.new_card(deck="courant::A", rel_due=-1)
+    ax = anki.new_card(deck="courant::A::x", rel_due=-1)
+    b = anki.new_card(deck="courant::b", rel_due=-1)
+    move_deck(anki, order_store, "courant::A", after="courant::b")
+
+    batch = mobile.build_batch(anki, DECK, 4, NOW, order_store)
+    assert [c.card_id for c in batch.cards] == [root, b, a, ax], "sub-decks follow their deck"
+    assert [c.deck_rank for c in batch.cards] == [0, 1, 2, 3]
+    unordered = {c.card_id: c.deck_rank for c in build(anki).cards}
+    assert [unordered[c] for c in (root, a, ax, b)] == [0, 1, 2, 3], "no store: Anki's order"
+
+
 def test_batch_is_read_only(anki: PhoneAnki) -> None:
     anki.new_card()
     build(anki)
@@ -865,6 +925,20 @@ def test_route_batch(http: TestClient, anki: PhoneAnki) -> None:
     assert card["outcomes"][0] == 600
     assert body["media"] == ["paste-1.png"]
     assert anki.writes() == []
+
+
+def test_route_batch_uses_the_apps_deck_order(
+    http: TestClient, anki: PhoneAnki, order_store: DeckOrderStore
+) -> None:
+    anki.set_limits(DECK, review=10, new=0, **DECK_ORDER)
+    a = anki.new_card(deck="courant::a", rel_due=-1)
+    b = anki.new_card(deck="courant::b", rel_due=-1)
+    move_deck(anki, order_store, "courant::b", before="courant::a")
+    assert isinstance(http.app, FastAPI)
+    http.app.state.deck_order = order_store
+    for res in (http.get("/api/mobile/batch"), http.post("/api/mobile/sync", json={})):
+        cards = res.json().get("cards") or res.json()["batch"]["cards"]
+        assert [c["card_id"] for c in cards] == [b, a]
 
 
 def test_route_sync(http: TestClient, anki: PhoneAnki, log: MobileLog) -> None:

@@ -321,14 +321,30 @@ def test_batch_deck_order_decides_which_cards_are_taken(anki: PhoneAnki) -> None
 
 
 def test_batch_interday_learning_by_deck_order(anki: PhoneAnki) -> None:
-    rebuilt_days_only(anki, 0, 0, **DECK_ORDER)
+    rebuilt_days_only(anki, 2, 0, **DECK_ORDER)
     i_b = anki.new_card(deck="courant::b", queue=3, rel_due=1)
     i_a = anki.new_card(deck="courant::a", queue=3, rel_due=1)
     assert [(c.card_id, c.day) for c in build(anki).cards] == [(i_a, 1), (i_b, 1)]
 
 
+def test_interday_learning_takes_the_review_limit_before_reviews(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=2, new=0, today_review=1)
+    review = anki.new_card(rel_due=-5)
+    interday = [anki.new_card(queue=3, rel_due=d) for d in (-1, 0, 1)]
+
+    got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
+    # Day 0 is Anki's queue: v3 counts the interday card against the review limit of 1.
+    # Days 1 and 2 do the same with the limit of 2: interday learning first, then reviews.
+    assert got == [
+        (interday[0], 0, "learn"),
+        (interday[1], 1, "learn"),
+        (interday[2], 1, "learn"),
+        (review, 2, "review"),
+    ]
+
+
 def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnki) -> None:
-    rebuilt_days_only(anki, 4, 2, **(DECK_ORDER | {"newMix": 0, "interdayLearningMix": 0}))
+    rebuilt_days_only(anki, 5, 2, **(DECK_ORDER | {"newMix": 0, "interdayLearningMix": 0}))
     r1, r2, r3, r4 = (anki.new_card(rel_due=d) for d in (-9, -8, -7, -6))
     n1, n2 = (anki.new_card(queue=0, due=d) for d in (1, 2))
     interday = anki.new_card(queue=3, rel_due=1)
@@ -353,7 +369,7 @@ def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnk
     ],
 )
 def test_batch_order_defaults_when_options_other(anki: PhoneAnki, order: dict[str, int]) -> None:
-    rebuilt_days_only(anki, 2, 1, **order)
+    rebuilt_days_only(anki, 4, 1, **order)
     r_b = anki.new_card(deck="courant::b", rel_due=-40)
     r_a = anki.new_card(deck="courant::a", rel_due=-30)
     anki.new_card(deck="courant", rel_due=-1)

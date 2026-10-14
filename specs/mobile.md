@@ -41,6 +41,8 @@ The **daily quota** is how many review cards and new cards Anki would show in on
 | 0 | the effective review limit minus Anki's studied-today count of reviews | the same for new cards |
 | 1, 2 | the effective review limit without its « Today only » value (« Today only » ends with today) | the same for new cards |
 
+An **interday learning card** is a learning or relearning card whose current step is a day or more (Anki's queue 3); an **intraday learning card** is one whose step is under a day (queue 1). As in Anki's v3 scheduler, interday learning cards count against the review limit, and take it before the review cards; intraday learning cards count against no limit.
+
 The **studied-today counter** is the per-deck count of reviews and new cards Anki has recorded as studied on the current Anki day, which it checks against the daily limit. A [late replay](#sync) does not count in it: the sync gives back the room it used up.
 
 A **batch** is the cards the phone downloads at a sync: for each day of the window, the cards Anki would show that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
@@ -69,9 +71,10 @@ A rebuilt day's cards are gathered in order, then cut at the quota, so the order
 
 Within each rebuilt day:
 
-1. **review cards** (queue 2) due by that day, not taken by an earlier day, in review order (ties by card id), the first up to the day's review quota;
-2. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota;
-3. **learning cards** due by that day, not counted in the quota: intraday learning (queue 1) by due, interday learning (queue 3) in review order.
+1. **interday learning cards** due by that day, not taken by an earlier day, in review order, the first up to the day's review quota;
+2. **review cards** (queue 2) due by that day, not taken by an earlier day, in review order (ties by card id), the first up to what step 1 left of the review quota;
+3. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota;
+4. **intraday learning cards** due by that day, by due, not counted in any quota.
 
 The day's cards are then laid out: intraday learning first; then interday learning mixed into the reviews; then the new cards mixed into that. **Mixing** a shorter list into a longer one spreads it evenly, each list keeping its own order (Anki's intersperser). Where an option keeps its default, the lists follow each other instead of mixing.
 
@@ -84,7 +87,7 @@ A batch replaces the previous one at each sync; the phone keeps nothing of the o
 Each card of a batch carries:
 
 - its card id, note id, deck, note type and ordinal;
-- its **day** (`0`, `1`, `2`) and its **kind** (`learn`, `review`, `new`);
+- its **day** (`0`, `1`, `2`) and its **kind** (`learn`, `review`, `new`); an interday learning card is a `learn` card with a due day;
 - its **question** and **answer** content, as lists of `{ name, html }`, each field rendered by the display transform;
 - its **cloze number** (`ord + 1`) for a cloze note type, `null` otherwise;
 - its flag;
@@ -119,10 +122,11 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
    - outcome of one day or more → on the Anki day *answer's Anki day + round(outcome / 1 day)*, if that day is in the window, after today's share;
    - otherwise (past the window, second answer, `null` outcome) → not until the next sync.
 3. **Cut at the day's limit.** Each day shows at most that day's quota (`quota[k]` for `days[k]`) of reviews and of new cards, minus what was answered on the phone that day, returning and unreached cards included:
-   - the **reviews** of the share and the cards returning on a later day are merged, sorted in **Anki's review order** — due day first, or deck first (by `deck_rank`) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
+   - the **interday learning cards** of the share come first, in Anki's review order, and use up the review quota before the reviews, as in Anki;
+   - the **reviews** of the share and the cards returning on a later day are merged, sorted in **Anki's review order** — due day first, or deck first (by `deck_rank`) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to what the interday learning cards left of the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
    - the **new cards** of the share, in batch order, are kept up to the new quota;
-   - learning cards of the share and same-day returns are learning cards: never cut, as in Anki;
-   - **answered that day**: a card's first answer counts as a review or a new card by its kind (a learning card counts nothing); a later answer counts as a review when the previous outcome brought the card back on a later day, as nothing when it was a same-day return.
+   - intraday learning cards of the share and same-day returns are never cut, as in Anki;
+   - **answered that day**: a card's first answer counts as a review for a review or interday learning card, as a new card for a new card, as nothing for an intraday learning card; a later answer counts as a review when the previous outcome brought the card back on a later day, as nothing when it was a same-day return.
 
    What does not fit moves to the next window day, where it competes again by the same order; past the window's last day it waits for the next sync, still due in Anki.
 4. **Minus buried cards**: a card buried today is hidden until the next Anki day. Burying sends nothing to Anki.
@@ -132,7 +136,7 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
 | Part | Cards |
 |---|---|
 | **new** | cards of today's share of kind `new` kept by the cut |
-| **learning** | same-day returns (outcome under one day: due now or later today), plus cards of today's share of kind `learn` |
+| **learning** | same-day returns (outcome under one day: due now or later today), plus cards of today's share of kind `learn` kept by the cut |
 | **review** | cards of today's share of kind `review` and cards returning on a later Anki day (outcome of one day or more) whose day has come, kept by the cut |
 
 Today's share holds only cards not answered on the phone, and suspended and buried cards are in no part, so the three parts sum to left today.

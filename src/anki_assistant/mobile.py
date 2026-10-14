@@ -276,9 +276,12 @@ def _select(
         interday = sorted((c for c in pool if c.queue == 3), key=interday_key)
         reviews = sorted((c for c in pool if c.queue == 2), key=review_key)
         news = [c for c in new_cards if c.card_id not in taken]
+        # Interday learning takes the review quota before the reviews (Anki's v3 scheduler).
+        room = max(quota.review, 0)
         intra: list[tuple[Card, CardKind]] = [(c, "learn") for c in intraday]
-        learning: list[tuple[Card, CardKind]] = [(c, "learn") for c in interday]
-        main: list[tuple[Card, CardKind]] = [(c, "review") for c in reviews[: max(quota.review, 0)]]
+        learning: list[tuple[Card, CardKind]] = [(c, "learn") for c in interday[:room]]
+        room -= len(learning)
+        main: list[tuple[Card, CardKind]] = [(c, "review") for c in reviews[:room]]
         fresh: list[tuple[Card, CardKind]] = [(c, "new") for c in news[: max(quota.new, 0)]]
         main = intersperse(main, learning) if order.mix_interday else learning + main
         main = intersperse(main, fresh) if order.mix_new else main + fresh

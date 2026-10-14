@@ -115,6 +115,20 @@ def test_a_drop_on_the_decks_own_place_stores_nothing(store: DeckOrderStore):
     assert store.path is not None and not store.path.exists()
 
 
+def test_a_deck_moved_out_in_anki_loses_its_old_place(store: DeckOrderStore):
+    t = tree(store)
+    do.move(store, t, IDS["courant::03-OR"], before=IDS["courant::00-Thèse"])
+    # OR put under dessin in Anki, then back under courant.
+    moved = [n.replace("courant::03-OR", "dessin::03-OR") for n in NAMES]
+    tree_ids = {m: IDS[n] for m, n in zip(moved, NAMES, strict=True)}
+    build_tree(list(tree_ids.items()), store)
+    assert store.order[IDS["courant"]] == ids(
+        "courant::00-Thèse", "courant::01-AI", "courant::02-code"
+    )
+    t = tree(store)
+    assert under(t, "courant") == ["Thèse", "AI", "code", "OR"], "lands like a created deck"
+
+
 def test_group_turned_into_label_lifts_its_decks_into_its_place(store: DeckOrderStore):
     t = tree(store)
     group = IDS["courant::01-AI"]

@@ -301,7 +301,8 @@ def _drop(store: DeckOrderStore, carrier: _Carrier, decks: _Decks) -> None:
 def normalize(store: DeckOrderStore, decks: _Decks) -> None:
     """Bring the store in line with the collection after changes made in Anki
     (specs/review.md#labels): deleted decks leave it, a group's deletion takes its label, and
-    labels that came to overlap lose one of them."""
+    labels that came to overlap lose one of them, and a deck deleted or put under another tree
+    parent leaves the stored list of its old one."""
     for lid, label in list(store.labels.items()):
         if label.group is not None and label.group not in decks.names:
             del store.labels[lid]
@@ -330,6 +331,17 @@ def normalize(store: DeckOrderStore, decks: _Decks) -> None:
     for key in list(store.order):
         if key != ROOT and key not in decks.names:
             del store.order[key]
+    groups = _groups(store, decks)
+    for key, stored in list(store.order.items()):
+        kept = [
+            did
+            for did in stored
+            if did in decks.names and _key(_tree_parent(decks.names[did], groups), decks) == key
+        ]
+        if not kept:
+            del store.order[key]
+        elif kept != stored:
+            store.order[key] = kept
 
 
 def _groups(store: DeckOrderStore, decks: _Decks) -> dict[str, str]:

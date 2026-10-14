@@ -29,7 +29,7 @@ from anki.collection import Collection
 from anki.decks import DeckId
 from anki.notes import Note as AnkiNote
 from anki.scheduler.v3 import Scheduler
-from anki.scheduler_pb2 import CardAnswer, SchedulingState, SchedulingStates
+from anki.scheduler_pb2 import CardAnswer, QueuedCards, SchedulingState, SchedulingStates
 
 from anki_assistant.models import Card, Note, NoteType
 
@@ -84,6 +84,24 @@ class DeckLimits:
     new_default: int
     studied_review: int = 0
     studied_new: int = 0
+
+
+@dataclass
+class QueuedCard:
+    """One card of Anki's study queue: its id and what Anki shows it as."""
+
+    card_id: int
+    kind: str  # "new", "learn", "review"
+
+
+@dataclass
+class Replay:
+    """What a replayed answer did: the card after it, and what Anki added to the
+    studied-today counter of the card's deck."""
+
+    card: Card
+    counted_new: int
+    counted_review: int
 
 
 @dataclass
@@ -258,6 +276,35 @@ class AnkiClient:
                 studied_review=studied("revToday"),
                 studied_new=studied("newToday"),
             )
+
+    def apply_all_parent_limits(self) -> bool:
+        """Anki's option to apply every parent deck's limit to a sub-deck studied alone."""
+        with self._use() as col:
+            return bool(col.get_config("applyAllParentLimits", False))
+
+    def extend_limits(self, deck: str, *, new: int = 0, review: int = 0) -> None:
+        """Lower the deck's studied-today counter by `new` and `review` (Custom Study
+        « increase today's limit »); its parents too when `apply_all_parent_limits` is on.
+        Touches neither the cards nor the review history."""
+        if not new and not review:
+            return
+        with self._use(write=True) as col:
+            did = self._deck_id(col, deck)
+            col._backend.extend_limits(deck_id=did, new_delta=new, review_delta=review)
+
+    def study_queue(self, deck: str, limit: int = 10_000) -> list[QueuedCard]:
+        """The study queue of `deck`: the cards Anki's scheduler would show today, in Anki's
+        order, its limits, sub-deck limits, sibling burying and display order applied."""
+        with self._use() as col:
+            did = self._deck_id(col, deck)
+            previous = col.decks.get_current_id()
+            col.decks.select(did)
+            try:
+                queued: QueuedCards = _sched(col).get_queued_cards(fetch_limit=limit)
+            finally:
+                col.decks.select(previous)
+            kinds = {QueuedCards.NEW: "new", QueuedCards.LEARNING: "learn"}
+            return [QueuedCard(int(q.card.id), kinds.get(q.queue, "review")) for q in queued.cards]
 
     def today(self) -> int:
         """Anki's day number for today (what a review card's `due` counts in)."""
@@ -448,20 +495,21 @@ class AnkiClient:
 
     def answer_card(
         self, card_id: int, ease: int, *, answered_at: int, time_ms: int
-    ) -> Card | None:
+    ) -> Replay | None:
         """Replay one answer (ease 1 again .. 4 easy) given at `answered_at` (ms since epoch)
-        after `time_ms` on the card: a timestamped replay. Anki's review history gets that
-        instant and duration. Returns the card after the answer, or None when it does not
+        after `time_ms` on the card: a timestamped replay. Anki's review history and the card's
+        last-review time get that instant and duration. Returns None when the card does not
         exist."""
         rating = _RATINGS.get(ease)
         if rating is None:
             raise ValueError("ease must be between 1 and 4")
         with self._use(write=True) as col:
             try:
-                col.get_card(card_id)  # ty: ignore[invalid-argument-type]
+                card = col.get_card(card_id)  # ty: ignore[invalid-argument-type]
             except anki.errors.NotFoundError:
                 return None
             states: SchedulingStates = col._backend.get_scheduling_states(card_id)
+            deck_before = col.decks.get(card.did) or {}
             _sched(col).answer_card(
                 CardAnswer(
                     card_id=card_id,
@@ -472,7 +520,13 @@ class AnkiClient:
                     milliseconds_taken=max(0, time_ms),
                 )
             )
-        return self.card(card_id)
+            deck_after = col.decks.get(card.did) or {}
+            answered = col.get_card(card_id)  # ty: ignore[invalid-argument-type]
+            return Replay(
+                card=_card(answered, answered.note(), col.decks.name(answered.did)),
+                counted_new=_counter(deck_after, "newToday") - _counter(deck_before, "newToday"),
+                counted_review=_counter(deck_after, "revToday") - _counter(deck_before, "revToday"),
+            )
 
     def set_due_date(self, card_ids: list[int], days: str) -> None:
         """Anki's "Set due date": `days` is relative to today ("0" today, "3" in three days,
@@ -627,6 +681,12 @@ def _button_state(states: SchedulingStates, rating: int) -> SchedulingState:
     }[rating]
 
 
+def _counter(deck: Mapping[str, Any], key: str) -> int:
+    """A deck's studied-today counter (`newToday`, `revToday`: [day, count])."""
+    value = deck.get(key) or [0, 0]
+    return int(value[1]) if len(value) > 1 else 0
+
+
 def _sched(col: Collection) -> Scheduler:
     """The v3 scheduler, the only one Anki 23.10 and later run."""
     return cast(Scheduler, col.sched)
@@ -681,6 +741,8 @@ __all__ = [
     "CollectionLocked",
     "DeckLimits",
     "Outcomes",
+    "QueuedCard",
+    "Replay",
     "anki_client_from_env",
     "default_collection_path",
     "state_seconds",

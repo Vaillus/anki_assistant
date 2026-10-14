@@ -38,22 +38,25 @@ The **daily quota** is how many review cards and new cards Anki would show in on
 
 | Day | Reviews | New cards |
 |---|---|---|
-| 0 | the effective review limit minus Anki's studied-today count of reviews, plus the late replays of review cards | the same for new cards |
-| 1, 2 | the effective review limit without its « Today only » value | the same for new cards |
+| 0 | the effective review limit minus Anki's studied-today count of reviews | the same for new cards |
+| 1, 2 | the effective review limit without its « Today only » value (« Today only » ends with today) | the same for new cards |
 
-The **studied-today counter** is the per-deck count of reviews and new cards Anki has recorded as studied on the current Anki day, which it checks against the daily limit.
+The **studied-today counter** is the per-deck count of reviews and new cards Anki has recorded as studied on the current Anki day, which it checks against the daily limit. A [late replay](#sync) does not count in it: the sync gives back the room it used up.
 
-A sync [replays](#sync) answers given on earlier Anki days, and Anki counts each replay as studied today: after two offline days, today's counter is near the limit although nothing was reviewed today. A **late replay** is a card with an applied answer in the [review log](#review-log) synced today whose answer's Anki day is before today. Day 0 adds them back:
+A **batch** is the cards the phone downloads at a sync: for each day of the window, the cards Anki would show that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
 
-- each card counts once, however many of its answers were replayed;
-- it counts as a new card when one of those entries has `was_new` true, as a review otherwise (an entry without `was_new` counts as a review);
-- each sum is capped by the effective deck limit, but never below what is left before the correction.
+**Day 0** is Anki's **study queue** of the mobile deck: the ordered cards Anki's scheduler would show today, as Anki builds it — its limits, sub-deck limits, sibling burying and every display-order option applied, and Anki's own kinds (new, learning, review). It is exact: Anki desktop and AnkiMobile would show the same cards today.
 
-Being read from the review log, the correction holds for every batch built the same Anki day, at a sync or at `GET /api/mobile/batch`.
+**Days 1 and 2 are rebuilt** by the app: Anki builds its study queue for the current day only, so the app works out a later day from the cards' due dates and the deck's limits. A rebuilt day is a guess at what Anki would show that day; it misses what Anki applies while building a day's queue and the app does not repeat:
 
-A **batch** is the cards the phone downloads at a sync: one daily quota per day of the window, plus the learning cards due that day, with everything needed to show and answer them offline. Suspended and buried cards (in Anki) are never in a batch.
+| | Day 0 | Days 1 and 2 |
+|---|---|---|
+| Which cards | Anki's study queue | due by that day, not taken by an earlier day |
+| Review and new limit | the effective deck limit of the deck and of each sub-deck, minus what Anki counts as studied today | the deck's effective limit without « Today only »; sub-deck limits ignored |
+| Order | Anki's: every display-order option, sibling burying | the four display-order options below |
+| Suspended and buried cards | left out by Anki | left out by the search filter `-is:suspended -is:buried` (Anki's `is:new` and `prop:due` match them too) |
 
-Each day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (its preset). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value, or a missing option, keeps the default given for that option.
+A rebuilt day's cards are gathered in order, then cut at the quota, so the order decides which cards are in the batch. The order follows the **order settings**: the display-order options of the mobile deck's options group (its preset). Only the mobile deck's options count; a sub-deck's options give limits, never order, as in Anki. The honoured values are below; any other value keeps the default given for that option.
 
 | Option | Honoured value | Default |
 |---|---|---|
@@ -64,7 +67,7 @@ Each day's cards are gathered in order, then cut at the quota, so the order deci
 
 **Deck order** is Anki's deck-list order: a parent before its sub-decks, siblings by name with case ignored. **Review order** and **new order** are the orders the first two rows give.
 
-Within each day:
+Within each rebuilt day:
 
 1. **review cards** (queue 2) due by that day, not taken by an earlier day, in review order (ties by card id), the first up to the day's review quota;
 2. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota;
@@ -72,7 +75,7 @@ Within each day:
 
 The day's cards are then laid out: intraday learning first; then interday learning mixed into the reviews; then the new cards mixed into that. **Mixing** a shorter list into a longer one spreads it evenly, each list keeping its own order (Anki's intersperser). Where an option keeps its default, the lists follow each other instead of mixing.
 
-"Due by day *k*" is Anki's `prop:due<=k`, so a backlog of overdue cards fills every day of the window.
+"Due by day *k*" is Anki's `prop:due<=k`, so a backlog of overdue cards that day 0 could not take fills days 1 and 2.
 
 A batch replaces the previous one at each sync; the phone keeps nothing of the old batch except pending actions and the review log.
 
@@ -164,8 +167,9 @@ A **sync** starts when the page opens and the Mac answers, or with the ⟳ butto
 3. **Dropped actions.** Before applying an action, its card is checked. A **dropped action** is one whose card no longer exists (deleted, or split away), has left the mobile deck, or is suspended. The reasons are `card_missing`, `left_deck`, `suspended`. An edit to the card on the Mac does not drop it.
 4. **Apply.** `answer` → **replay**: a **timestamped replay**, Anki's scheduler answering the card with the answer's instant and the time spent on it, so Anki's review history and the card's last-review time hold the phone's instant and duration. `flag` → flag `2`. `unflag` → flag `0`. `suspend` → `suspend`.
 5. **Re-dating.** After a replay, when the card is in review (queue 2) and the answer's Anki day is before today, the card's due date is moved to *answer's Anki day + the interval Anki just gave* (Anki's « Set due date », without `!`, so Anki keeps the interval), clamped to today: a sync two days late does not push the card two days back. Learning cards and same-day answers are left as Anki put them.
-6. **Review log.** Each answer action processed for the first time is appended to the review log.
-7. **New batch.** The Mac builds a new batch and returns it with the applied and dropped action ids; the phone clears those actions and replaces its batch.
+6. **Late replays.** A **late replay** is a replayed answer whose Anki day is before today. Anki counts it as studied today, in the studied-today counter of the card's deck and of every parent deck, which would use up today's limits before anything was studied today, on the phone and in Anki desktop alike. So once the actions are applied (and also when the sync stops midway), the app gives that room back inside the collection with Anki's `extend_limits` (what Custom Study « Increase today's limit » does): it lowers each counter the late replays raised by what Anki counted for them, touching neither the cards nor the review history. When Anki applies all parent limits, lowering a deck lowers its parents too, so each deck holding replayed cards is lowered by its own count; otherwise each deck and each parent is lowered by the sum over its sub-decks. Since the counters live in the collection, Anki desktop and AnkiMobile see the same room for today.
+7. **Review log.** Each answer action processed for the first time is appended to the review log.
+8. **New batch.** The Mac builds a new batch and returns it with the applied and dropped action ids; the phone clears those actions and replaces its batch.
 
 If the Mac or Anki stops answering midway, the request fails and nothing is cleared on the phone; the actions already processed are skipped by the retry.
 

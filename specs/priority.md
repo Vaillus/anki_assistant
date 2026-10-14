@@ -11,14 +11,14 @@ A flagged note is priority when at least one of its flagged cards is:
 | Criterion | Anki state | Why it's urgent |
 |---|---|---|
 | **Buried** | `is:buried` (queue −2 or −3) | Deferred — will come back tomorrow unchanged |
-| **Due within budget** | `is:due`, within the study deck's remaining review count | Anki will present it today |
+| **Due within budget** | `is:due`, in the study deck's study queue | Anki will present it today |
 | **New** | `is:new` | Blocks the new-card queue |
 
 Buried and new flagged cards are always included. Due flagged cards are budget-filtered (see below). Without a study deck configured, all flagged due cards are included.
 
 ## Budget filtering
 
-The **study deck** (`STUDY_DECK` env var, e.g. `courant`) is the root deck the user reviews from. The **budget** is its effective deck limit for reviews minus what Anki counts as studied today. The **effective deck limit** is the daily limit Anki actually applies to a deck: the deck's « Today only » value when set for today, else its « This deck » value, else its preset's. All due cards under it are sorted by `(deck_name, due)` — deck alphabetical first (Anki's deck-order presentation), most overdue first within each deck. Flagged due cards whose position exceeds the budget are excluded.
+The **study deck** (`STUDY_DECK` env var, e.g. `courant`) is the root deck the user reviews from. A flagged due card is **within budget** when it is in the study deck's **study queue**: the ordered cards Anki's scheduler would show today for that deck, as Anki builds it, with its limits (the effective deck limit of the deck and each sub-deck, minus what Anki counts as studied today) and its display order. Flagged due cards outside it are excluded.
 
 ## Deck tree row
 

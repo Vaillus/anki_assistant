@@ -251,38 +251,17 @@ def search_notes(client: AnkiClient, query: str, limit: int = 50) -> list[NoteVi
 PRIORITY_QUERY = "-flag:0 (is:buried OR is:new OR is:due)"
 
 
-def _quote(value: str) -> str:
-    return '"' + value.replace('"', '\\"') + '"'
-
-
 def _due_within_budget(
     client: AnkiClient,
     flagged_due_cards: list[Card],
     study_deck: str,
 ) -> set[int]:
-    """Return card ids of flagged due cards within the study deck's review budget.
-
-    The user studies from one root deck (e.g. ``courant``); the budget is its effective deck
-    limit for reviews minus what Anki counts as studied today. Anki presents review cards
-    grouped by sub-deck in tree order (alphabetical), so the sort key is ``(deck_name, due)``
-    — all of one sub-deck's cards before the next, most overdue first within each.
+    """Return card ids of flagged due cards within the study deck's review budget: the cards
+    of Anki's study queue for that deck, which is what Anki will show today, limits applied.
     """
     if not flagged_due_cards:
         return set()
-
-    limits = client.deck_limits(study_deck)
-    budget = max(0, limits.review - limits.studied_review)
-
-    if budget == 0:
-        return set()
-
-    all_due_ids = client.find_card_ids(f"deck:{_quote(study_deck)} is:due -is:new -is:buried")
-    if len(all_due_ids) <= budget:
-        return {c.card_id for c in flagged_due_cards}
-
-    all_due = client.cards_info(all_due_ids)
-    all_due.sort(key=lambda c: (c.deck_name, c.due))
-    within = {c.card_id for c in all_due[:budget]}
+    within = {queued.card_id for queued in client.study_queue(study_deck)}
     return {c.card_id for c in flagged_due_cards if c.card_id in within}
 
 

@@ -243,7 +243,7 @@ def test_batch_day0_quota_counts_what_was_studied_today(anki: PhoneAnki) -> None
     assert [(q.review, q.new) for q in build(anki).quota] == [(3, 2), (4, 2), (4, 2)]
 
 
-def test_batch_order_and_day_assignment(anki: PhoneAnki) -> None:
+def test_batch_day0_is_ankis_study_queue_later_days_are_rebuilt(anki: PhoneAnki) -> None:
     anki.set_limits(DECK, review=2, new=1)
     r_recent = anki.new_card(rel_due=-1)
     r_overdue = anki.new_card(rel_due=-40)
@@ -255,25 +255,34 @@ def test_batch_order_and_day_assignment(anki: PhoneAnki) -> None:
     learn = anki.new_card(queue=1)
     n_second = anki.new_card(queue=0, due=8)
     n_first = anki.new_card(queue=0, due=7)
-    n_third = anki.new_card(queue=0, due=9)
+    anki.new_card(queue=0, due=9)
     anki.new_card(queue=-1)  # suspended
     anki.new_card(queue=-2)  # buried
     anki.new_card(deck="other", rel_due=-90)  # another deck
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
-    assert got == [
-        (learn, 0, "learn"),
-        (r_overdue, 0, "review"),
-        (r_mid, 0, "review"),
-        (n_first, 0, "new"),
+    day0 = [(q.card_id, 0, q.kind) for q in anki.study_queue(DECK)]
+    # Anki's review limit also caps new cards: two reviews leave no room for a new one today.
+    assert day0 == [(learn, 0, "learn"), (r_overdue, 0, "review"), (r_mid, 0, "review")]
+    assert got == day0 + [
         (r_backlog, 1, "review"),
         (r_recent, 1, "review"),
-        (n_second, 1, "new"),
+        (n_first, 1, "new"),
         (r_tomorrow, 2, "review"),
         (r_day3, 2, "review"),
-        (n_third, 2, "new"),
+        (n_second, 2, "new"),
     ]
-    assert r_later not in got
+    assert r_later not in {c for c, _, _ in got}
+
+
+def test_batch_day0_follows_ankis_subdeck_limits(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=10, new=0)
+    anki.set_limits("courant::maths", deck_review=1)
+    maths = [anki.new_card(deck="courant::maths", rel_due=-5) for _ in range(3)]
+    other = anki.new_card(rel_due=-1)
+    day0 = [c.card_id for c in build(anki).cards if c.day == 0]
+    assert len(set(day0) & set(maths)) == 1, "the sub-deck's own limit"
+    assert other in day0
 
 
 DECK_ORDER = {
@@ -285,45 +294,48 @@ DECK_ORDER = {
 }
 
 
+def rebuilt_days_only(anki: PhoneAnki, review: int, new: int, **order: int) -> None:
+    """Preset limits for days 1 and 2, nothing left today: day 0 holds learning cards only and
+    the rebuild of days 1 and 2 decides the rest."""
+    anki.set_limits(DECK, review=review, new=new, today_review=0, today_new=0, **order)
+
+
 def test_batch_deck_order_decides_which_cards_are_taken(anki: PhoneAnki) -> None:
-    anki.set_limits(DECK, review=2, new=1, **DECK_ORDER)
+    rebuilt_days_only(anki, 2, 1, **DECK_ORDER)
     r_b = anki.new_card(deck="courant::b", rel_due=-40)  # most overdue, last deck
     r_a_late = anki.new_card(deck="courant::A", rel_due=-20)
     r_a_early = anki.new_card(deck="courant::A", rel_due=-30)
     r_root = anki.new_card(deck="courant", rel_due=-1)
-    n_b = anki.new_card(deck="courant::b", queue=0, due=1)  # lowest position, last deck
+    anki.new_card(deck="courant::b", queue=0, due=1)  # lowest position, last deck
     n_a = anki.new_card(deck="courant::A", queue=0, due=5)
     n_ax = anki.new_card(deck="courant::A::x", queue=0, due=3)
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
     assert got == [
-        (r_root, 0, "review"),
-        (r_a_early, 0, "review"),
-        (n_a, 0, "new"),
-        (r_a_late, 1, "review"),
-        (r_b, 1, "review"),
-        (n_ax, 1, "new"),
-        (n_b, 2, "new"),
+        (r_root, 1, "review"),
+        (r_a_early, 1, "review"),
+        (n_a, 1, "new"),
+        (r_a_late, 2, "review"),
+        (r_b, 2, "review"),
+        (n_ax, 2, "new"),
     ]
 
 
 def test_batch_interday_learning_by_deck_order(anki: PhoneAnki) -> None:
-    anki.set_limits(DECK, review=0, new=0, **DECK_ORDER)
-    i_b = anki.new_card(deck="courant::b", queue=3, rel_due=-1)
-    i_a = anki.new_card(deck="courant::a", queue=3, rel_due=0)
-    assert [c.card_id for c in build(anki).cards] == [i_a, i_b]
+    rebuilt_days_only(anki, 0, 0, **DECK_ORDER)
+    i_b = anki.new_card(deck="courant::b", queue=3, rel_due=1)
+    i_a = anki.new_card(deck="courant::a", queue=3, rel_due=1)
+    assert [(c.card_id, c.day) for c in build(anki).cards] == [(i_a, 1), (i_b, 1)]
 
 
 def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnki) -> None:
-    anki.set_limits(DECK, review=4, new=2, **(DECK_ORDER | {"newMix": 0, "interdayLearningMix": 0}))
+    rebuilt_days_only(anki, 4, 2, **(DECK_ORDER | {"newMix": 0, "interdayLearningMix": 0}))
     r1, r2, r3, r4 = (anki.new_card(rel_due=d) for d in (-9, -8, -7, -6))
     n1, n2 = (anki.new_card(queue=0, due=d) for d in (1, 2))
-    interday = anki.new_card(queue=3, rel_due=0)
-    intraday = anki.new_card(queue=1)
+    interday = anki.new_card(queue=3, rel_due=1)
 
-    got = [(c.card_id, c.kind) for c in build(anki).cards if c.day == 0]
+    got = [(c.card_id, c.kind) for c in build(anki).cards if c.day == 1]
     assert got == [
-        (intraday, "learn"),
         (r1, "review"),
         (n1, "new"),
         (r2, "review"),
@@ -342,16 +354,16 @@ def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnk
     ],
 )
 def test_batch_order_defaults_when_options_other(anki: PhoneAnki, order: dict[str, int]) -> None:
-    anki.set_limits(DECK, review=2, new=1, **order)
+    rebuilt_days_only(anki, 2, 1, **order)
     r_b = anki.new_card(deck="courant::b", rel_due=-40)
     r_a = anki.new_card(deck="courant::a", rel_due=-30)
     anki.new_card(deck="courant", rel_due=-1)
     n_b = anki.new_card(deck="courant::b", queue=0, due=1)
     anki.new_card(deck="courant::a", queue=0, due=5)
-    i_b = anki.new_card(deck="courant::b", queue=3, rel_due=-2)
-    i_a = anki.new_card(deck="courant::a", queue=3, rel_due=-1)
+    i_b = anki.new_card(deck="courant::b", queue=3, rel_due=0)
+    i_a = anki.new_card(deck="courant::a", queue=3, rel_due=1)
 
-    got = [c.card_id for c in build(anki).cards if c.day == 0]
+    got = [c.card_id for c in build(anki).cards if c.day == 1]
     assert got == [i_b, i_a, r_b, r_a, n_b]
 
 
@@ -641,53 +653,49 @@ def test_review_log_records_was_new_before_replay(anki: PhoneAnki, log: MobileLo
 
 # ------------------------------------------------------------- late replays
 
-YESTERDAY = FIXED - timedelta(days=1)
 
-
-def entry(cid: int, answered: datetime, **extra: Any) -> dict[str, Any]:
-    base = {
-        "card_id": cid,
-        "answered_at": ms(answered),
-        "synced_at": ms(FIXED - timedelta(hours=1)),
-        "status": "applied",
-        "was_new": False,
-    }
-    return base | extra
-
-
-def test_late_replays_counts_earlier_day_answers_synced_today() -> None:
-    reviews = [
-        entry(1, YESTERDAY),
-        entry(1, YESTERDAY - timedelta(days=1)),  # same card twice: once
-        entry(2, YESTERDAY, was_new=True),
-        entry(3, YESTERDAY - timedelta(days=1), was_new=True),
-        entry(3, YESTERDAY, was_new=False),  # new at its first replay: stays new
-        {k: v for k, v in entry(4, YESTERDAY).items() if k != "was_new"},  # old line: review
-        entry(5, FIXED - timedelta(hours=2)),  # answered today: Anki counts it rightly
-        entry(6, YESTERDAY, synced_at=ms(YESTERDAY)),  # synced on an earlier day
-        entry(7, YESTERDAY, status="dropped"),  # never reached Anki
-        entry(8, datetime(2026, 10, 6, 2, 0)),  # 02:00 is still yesterday's Anki day
-    ]
-    late = mobile.late_replays(reviews, 4, date(2026, 10, 6))
-    assert (late.review, late.new) == (3, 2)
-
-
-def test_sync_adds_late_replays_to_today_quota(anki: PhoneAnki, log: MobileLog) -> None:
+def test_sync_gives_back_the_limits_late_replays_used_up(anki: PhoneAnki, log: MobileLog) -> None:
     anki.set_limits(DECK, review=5, new=2)
     reviewed = [anki.new_card(rel_due=-3) for _ in range(3)]
     fresh = anki.new_card(queue=0, due=1)
+    today = anki.new_card(rel_due=-1)
     actions = [answer(f"r{i}", c, NOW - timedelta(days=2)) for i, c in enumerate(reviewed)]
     actions.append(answer("n", fresh, NOW - timedelta(days=1)))
+    actions.append(answer("t", today, NOW - timedelta(minutes=1)))
     batch = run(anki, actions, log).batch
-    assert (batch.quota[0].review, batch.quota[0].new) == (5, 2), "the replays are given back"
+    assert anki.studied_today(DECK) == (1, 0), "only today's answer counts today"
+    assert (batch.quota[0].review, batch.quota[0].new) == (4, 2)
 
 
-def test_late_replays_capped_by_the_deck_limit(anki: PhoneAnki, log: MobileLog) -> None:
-    anki.set_limits(DECK, review=3, new=1)
-    cards = [anki.new_card(rel_due=-1) for _ in range(4)]
-    actions = [answer(str(i), c, NOW - timedelta(days=1)) for i, c in enumerate(cards)]
-    batch = run(anki, actions, log).batch
-    assert (batch.quota[0].review, batch.quota[0].new) == (3, 1)
+@pytest.mark.parametrize("all_parent_limits", [False, True])
+def test_late_replays_in_subdecks_give_back_every_parent(
+    anki: PhoneAnki, log: MobileLog, all_parent_limits: bool
+) -> None:
+    with anki.action() as col:
+        col.set_config("applyAllParentLimits", all_parent_limits)
+    maths = [anki.new_card(deck="courant::maths", rel_due=-3) for _ in range(2)]
+    root = anki.new_card(rel_due=-3)
+    late = NOW - timedelta(days=2)
+    run(anki, [answer(str(i), c, late) for i, c in enumerate([*maths, root])], log)
+    assert anki.studied_today("courant::maths") == (0, 0)
+    assert anki.studied_today(DECK) == (0, 0)
+
+
+def test_limits_to_give_back_per_deck_or_summed_over_parents() -> None:
+    counted = {
+        "courant::maths": mobile.DayQuota(review=24, new=0),
+        "courant": mobile.DayQuota(review=46, new=2),
+    }
+    on = mobile.limits_to_give_back(counted, all_parent_limits=True)
+    assert {d: (q.review, q.new) for d, q in on.items()} == {
+        "courant::maths": (24, 0),
+        "courant": (46, 2),
+    }
+    off = mobile.limits_to_give_back(counted, all_parent_limits=False)
+    assert {d: (q.review, q.new) for d, q in off.items()} == {
+        "courant::maths": (24, 0),
+        "courant": (70, 2),
+    }
 
 
 def test_log_survives_a_truncated_line(log: MobileLog) -> None:
@@ -750,23 +758,13 @@ def test_route_sync(http: TestClient, anki: PhoneAnki, log: MobileLog) -> None:
     assert log.reviews()[0]["time_ms"] == 900
 
 
-def test_route_batch_later_same_day_keeps_late_replays(
-    http: TestClient, anki: PhoneAnki, log: MobileLog
+def test_route_batch_later_same_day_keeps_the_given_back_limits(
+    http: TestClient, anki: PhoneAnki
 ) -> None:
     anki.set_limits(DECK, review=1)
-    cid = anki.new_card()
-    anki.answer_card(cid, 3, answered_at=ms(NOW), time_ms=0)  # Anki: 1 studied, 0 left
-    log.review_log.write_text(
-        json.dumps(
-            {
-                "card_id": cid,
-                "answered_at": ms(NOW - timedelta(days=2)),
-                "synced_at": ms(NOW),
-                "status": "applied",
-            }
-        )
-        + "\n"
-    )
+    cid = anki.new_card(rel_due=-2)
+    late = {"id": "a", "kind": "answer", "card_id": cid, "at": ms(NOW - timedelta(days=2))}
+    assert http.post("/api/mobile/sync", json={"actions": [late | {"ease": 3}]}).status_code == 200
     assert http.get("/api/mobile/batch").json()["quota"][0] == {"review": 1, "new": 5}
 
 

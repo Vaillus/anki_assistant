@@ -95,7 +95,7 @@ def get_batch(request: Request) -> mobile.Batch:
     """A fresh batch, nothing applied."""
     with anki_errors(_anki(request)):
         anki, deck, hour = _anki(request), _deck(request), _rollover(request)
-        return mobile.build_batch(anki, deck, hour, datetime.now(), _log(request))
+        return mobile.build_batch(anki, deck, hour, datetime.now())
 
 
 @router.post("/sync")

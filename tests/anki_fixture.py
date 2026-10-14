@@ -214,10 +214,11 @@ class TempAnki(AnkiClient):
         new: int | None = None,
         deck_review: int | None = None,
         today_review: int | None = None,
+        today_new: int | None = None,
         **options: Any,
     ) -> None:
         """Set the daily limits of the deck's preset (`review`, `new`), its "This deck" review
-        limit (`deck_review`), its "Today only" review limit (`today_review`), and preset
+        limit (`deck_review`), its "Today only" limits (`today_review`, `today_new`), and preset
         options (`reviewOrder=2`…)."""
         with self.action() as col:
             did = col.decks.id(deck, create=True)
@@ -235,6 +236,8 @@ class TempAnki(AnkiClient):
                 raw["reviewLimit"] = deck_review
             if today_review is not None:
                 raw["reviewLimitToday"] = {"limit": today_review, "today": col.sched.today}
+            if today_new is not None:
+                raw["newLimitToday"] = {"limit": today_new, "today": col.sched.today}
             col.decks.save(raw)
 
     # ----------------------------------------------------------------- reading
@@ -298,6 +301,11 @@ class TempAnki(AnkiClient):
             assert col.db is not None
             rows = col.db.all("select id, cid, ease, ivl, time from revlog order by id")
             return [tuple(int(v) for v in row) for row in rows]  # ty: ignore[invalid-return-type]
+
+    def studied_today(self, deck: str) -> tuple[int, int]:
+        """The deck's studied-today counter: (reviews, new cards)."""
+        limits = self.deck_limits(deck)
+        return limits.studied_review, limits.studied_new
 
     def anki_today(self) -> int:
         with self.action() as col:

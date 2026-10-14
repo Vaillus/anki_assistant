@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from anki_assistant import review
-from anki_assistant.client import AnkiClient
+from anki_assistant.client import AnkiClient, SyncStatus
 from anki_assistant.review import DeckNotes, DeckSummary, NoteView, PriorityResult, SplitResult
 from anki_assistant.sources import SourceStore
 from anki_assistant.web.errors import anki_errors
@@ -235,3 +235,10 @@ def get_media(request: Request, filename: str) -> Response:
     # opened directly would otherwise execute on the app's origin).
     headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
     return Response(content=data, media_type=media_type, headers=headers)
+
+
+@router.get("/anki/sync")
+def get_sync_status(request: Request) -> SyncStatus:
+    """The sync status of the app's last AnkiWeb sync (specs/00-overview.md#ankiweb-sync),
+    which the main page shows as a notice while it failed. Never opens the collection."""
+    return _anki(request).last_sync or SyncStatus(ok=True, message=None)

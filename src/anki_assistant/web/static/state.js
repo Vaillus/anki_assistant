@@ -77,6 +77,7 @@ const S = {
   revealed: {}, // note id -> true once its flagged clozes are shown (specs/review.md#question-state)
   busy: false,
   error: "",
+  syncNotice: null, // message of the last failed AnkiWeb sync (specs/00-overview.md#ankiweb-sync)
   // column 3 (Source)
   corpus: null, // { deck, inherited_from, sources: [] }
   corpusLoading: false,

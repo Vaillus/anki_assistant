@@ -82,7 +82,7 @@ A **full sync** replaces one side's whole collection with the other's; Anki requ
 | full sync, schema unchanged at open and changed by the app's write | Uploads: the Mac's file wins; answers given on other devices since the last sync are lost. |
 | full sync otherwise (Anki desktop changed the schema and did not sync, or another device forced it), full download | Sends nothing, and records « AnkiWeb needs a full sync: open Anki desktop to choose » as the sync's status; the app's writes stay in the file, unsent, until Anki desktop settles it. |
 
-The outcome of the last AnkiWeb sync is kept in memory and a failure is logged in the server's output.
+The **sync status** is the outcome of the app's last AnkiWeb sync, kept in memory (and a failure logged in the server's output): ok, or failed with a message — the failure's cause, or « AnkiWeb needs a full sync: open Anki desktop to choose » for the last row above. The sync runs after the reply, so its outcome cannot ride on that reply: `GET /api/anki/sync` returns the status, `{ "ok": true, "message": null }` before any sync. The main app's page asks for it at load and after each of its requests (again a few seconds after a request that can write, once its sync has had time to end), and while the last sync failed it shows a notice with its message across the top of the page, until a later sync succeeds. The phone page shows none: its own sync already reports offline.
 
 ### Undo
 

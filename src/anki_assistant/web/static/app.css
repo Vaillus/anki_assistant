@@ -83,7 +83,7 @@ body {
   overflow: hidden;
 }
 
-#app { height: 100vh; }
+#app { height: 100vh; --notice-h: 30px; }
 
 /* ---------- atoms ---------- */
 
@@ -233,6 +233,22 @@ a { color: var(--accent); }
 /* ---------- layout ---------- */
 
 .app { display: grid; grid-template-columns: 270px minmax(360px, 1fr) 420px; height: 100vh; }
+#app.has-notice .app { height: calc(100vh - var(--notice-h)); }
+#app.has-notice .ws { top: calc(var(--notice-h) + 20px); }
+#app.has-notice .ws-backdrop { top: var(--notice-h); }
+.sync-notice {
+  position: relative;
+  z-index: 30;
+  height: var(--notice-h);
+  line-height: var(--notice-h);
+  padding: 0 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--dangerbg);
+  border-bottom: 1px solid var(--dangerline);
+  color: var(--danger);
+}
 @media (max-width: 1200px) { .app { grid-template-columns: 220px minmax(260px, 1fr) 340px; } }
 .col { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); }
 .col:last-child { border-right: 0; overflow: hidden; display: flex; flex-direction: column; }

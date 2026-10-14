@@ -103,6 +103,7 @@ All routes are under `/api`. Each request is one action of the [holding policy](
 | `DELETE /api/notes/{id}` | Delete a note |
 | `GET /api/models` | All note types and their field names |
 | `GET /api/media/{filename}` | One file from Anki's media folder, with its content type; 404 when missing or when the name has a path separator |
+| `GET /api/anki/sync` | `{ ok, message }` — the [sync status](./00-overview.md#ankiweb-sync) of the app's last AnkiWeb sync; never opens the collection |
 
 The workspace's own routes (`/api/workspace/…`) are specified in [workspace.md § API](./workspace.md#api).
 

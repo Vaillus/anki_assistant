@@ -120,10 +120,10 @@ class Outcomes:
 
 @dataclass
 class SyncStatus:
-    """The outcome of the last AnkiWeb sync the app ran."""
+    """The outcome of the last AnkiWeb sync the app ran (None message: no sync yet)."""
 
     ok: bool
-    message: str
+    message: str | None
 
 
 def full_sync_choice(required: int, schema_changed_at_open: bool, schema_changed_now: bool) -> str:

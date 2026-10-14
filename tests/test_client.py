@@ -90,7 +90,7 @@ def test_a_failed_sync_is_recorded_and_releases_the_file(spy: SyncSpy) -> None:
     spy.create_deck("a")
     wait_idle(spy)
     assert spy.last_sync is not None and not spy.last_sync.ok
-    assert "no network" in spy.last_sync.message
+    assert "no network" in (spy.last_sync.message or "")
     assert spy.deck_names() == ["a"], "the write stays"
 
 

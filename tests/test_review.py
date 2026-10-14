@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from anki_assistant import review
-from anki_assistant.client import AnkiError, CollectionLocked
+from anki_assistant.client import FULL_SYNC_MESSAGE, AnkiError, CollectionLocked, SyncStatus
 from anki_assistant.sources import Source, SourceStore
 from anki_assistant.web.render import render_field
 from anki_assistant.web.routes_review import router
@@ -657,3 +657,10 @@ def test_client_note_type_reads_fields_templates_and_css(anki: TempAnki):
     assert note_type.templates["Cloze"]["Front"] == "{{cloze:Text}}"
     assert "{{Back Extra}}" in note_type.templates["Cloze"]["Back"]
     assert ".card" in note_type.css
+
+
+def test_api_sync_status(api: TestClient, anki: TempAnki):
+    assert api.get("/api/anki/sync").json() == {"ok": True, "message": None}
+
+    anki.last_sync = SyncStatus(ok=False, message=FULL_SYNC_MESSAGE)
+    assert api.get("/api/anki/sync").json() == {"ok": False, "message": FULL_SYNC_MESSAGE}

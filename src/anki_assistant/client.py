@@ -621,10 +621,15 @@ class AnkiClient:
             )
             deck_after = col.decks.get(card.did) or {}
             answered = col.get_card(card_id)  # ty: ignore[invalid-argument-type]
+            today = col.sched.today
+
+            def counted(key: str) -> int:
+                return _counter(deck_after, key, today) - _counter(deck_before, key, today)
+
             return Replay(
                 card=_card(answered, answered.note(), col.decks.name(answered.did)),
-                counted_new=_counter(deck_after, "newToday") - _counter(deck_before, "newToday"),
-                counted_review=_counter(deck_after, "revToday") - _counter(deck_before, "revToday"),
+                counted_new=counted("newToday"),
+                counted_review=counted("revToday"),
             )
 
     def set_due_date(self, card_ids: list[int], days: str) -> None:
@@ -780,10 +785,13 @@ def _button_state(states: SchedulingStates, rating: int) -> SchedulingState:
     }[rating]
 
 
-def _counter(deck: Mapping[str, Any], key: str) -> int:
-    """A deck's studied-today counter (`newToday`, `revToday`: [day, count])."""
+def _counter(deck: Mapping[str, Any], key: str, today: int) -> int:
+    """A deck's studied-today counter (`newToday`, `revToday`: [day, count]); a count stored
+    for an earlier day is 0, since Anki resets it on the deck's first answer of `today`."""
     value = deck.get(key) or [0, 0]
-    return int(value[1]) if len(value) > 1 else 0
+    if len(value) < 2 or int(value[0]) != today:
+        return 0
+    return int(value[1])
 
 
 def _sched(col: Collection) -> Scheduler:

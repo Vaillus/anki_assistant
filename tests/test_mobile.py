@@ -711,6 +711,23 @@ def test_sync_gives_back_the_limits_late_replays_used_up(anki: PhoneAnki, log: M
     assert (batch.quota[0].review, batch.quota[0].new) == (4, 2)
 
 
+def test_late_replay_into_a_deck_last_studied_on_an_earlier_day(
+    anki: PhoneAnki, log: MobileLog
+) -> None:
+    """The deck's counter still holds an earlier day's count: Anki resets it on today's first
+    answer, and the give-back must lower it by what the replay counted, not by the old count."""
+    with anki.action() as col:
+        col.crt -= 10 * 86_400  # the collection is ten days old, so Anki's today is day 10
+    cid = anki.new_card(rel_due=-3)
+    with anki.action() as col:
+        raw = col.decks.by_name(DECK)
+        assert raw is not None
+        raw["revToday"] = [col.sched.today - 4, 15]
+        col.decks.save(raw)
+    run(anki, [answer("a", cid, NOW - timedelta(days=2))], log)
+    assert anki.studied_today(DECK) == (0, 0)
+
+
 @pytest.mark.parametrize("all_parent_limits", [False, True])
 def test_late_replays_in_subdecks_give_back_every_parent(
     anki: PhoneAnki, log: MobileLog, all_parent_limits: bool

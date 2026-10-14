@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from anki.collection import Collection
+from anki.decks import DeckId
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -123,6 +124,12 @@ def test_turning_a_group_into_a_label_files_its_cards_and_copies_its_corpus(
     store.save = lambda: None  # ty: ignore[invalid-assignment]
     order = DeckOrderStore(tmp_path / "deck_order.json")
     group = review.app_tree(anki, order).by_name["c::04-maths"]
+    with anki.action() as col:
+        preset = col.decks.add_config_returning_id("maths")
+        deck = col.decks.get(DeckId(group))
+        assert deck is not None
+        deck["conf"] = preset
+        col.decks.save(deck)
 
     with pytest.raises(LabelRefused):
         review.turn_group_into_label(anki, store, order, group, protected=["c::04-maths"])
@@ -137,6 +144,10 @@ def test_turning_a_group_into_a_label_files_its_cards_and_copies_its_corpus(
     review.turn_group_into_label(anki, store, order, group)
 
     assert anki.decks_of(own) == ["c::04-maths::misc"], "its own cards moved, in Anki"
+    with anki.action() as col:
+        decks = col.decks.all_names_and_ids()
+        conf = {d.name: (col.decks.get(DeckId(d.id)) or {}).get("conf") for d in decks}
+    assert conf["c::04-maths::misc"] == conf["c::04-maths"] == preset, "the group's preset"
     assert anki.decks_of(in_sub) == ["c::04-maths::probas"]
     assert "c::04-maths" not in store.corpora
     assert [s.id for s in store.corpora["c::04-maths::probas"]] == ["pppppp", "wwwwww"]

@@ -73,7 +73,7 @@ One `confirm()` dialog states every effect (the number of cards moved and the su
 
 - A group deleted in Anki takes its label with it, also from the decks it was set on; a deck deleted takes the label set on it.
 - A deck put under a group turned into a label takes the label; one taken out of it loses it.
-- When a change puts one label under another, a group's label wins over a label set on a deck, and between two of the same kind the higher one wins; the other is removed. A group whose label is removed shows its row again, its sub-decks under it.
+- When a change puts one label under another, a group's label wins over a label set on a deck, and between two of the same kind the higher one wins; the other is removed. A group whose label is removed shows its row again, its sub-decks under it. A deck elsewhere that label is set on keeps it, as a label of its own that keeps the group's name and no longer follows the group.
 - A label with no group that no deck carries any more is removed.
 
 ### Where the app stores it

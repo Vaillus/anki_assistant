@@ -663,6 +663,29 @@ def test_sync_failure_midway_reports_the_first_error(anki: PhoneAnki, log: Mobil
     assert gave_back == [DECK]
 
 
+def test_failed_give_back_is_done_by_the_retry(anki: PhoneAnki, log: MobileLog) -> None:
+    """The late replays are recorded, then the give-back fails: the retry skips the replays
+    but still gives back what they counted, and a third sync gives nothing twice."""
+    anki.set_limits(DECK, review=5, new=2)
+    cards = [anki.new_card(rel_due=-3) for _ in range(2)]
+    actions = [answer(str(i), c, NOW - timedelta(days=2)) for i, c in enumerate(cards)]
+    anki.fail_on["extend_limits"] = 1
+    with pytest.raises(AnkiError):
+        run(anki, actions, log)
+    assert set(log.processed()) == {"0", "1"}
+    assert anki.studied_today(DECK) == (2, 0)
+
+    anki.calls.clear()
+    assert run(anki, actions, log).applied == ["0", "1"]
+    assert anki.calls.count("answer_card") == 0
+    assert anki.studied_today(DECK) == (0, 0)
+
+    anki.calls.clear()
+    run(anki, actions, log)
+    assert anki.calls.count("extend_limits") == 0
+    assert anki.studied_today(DECK) == (0, 0)
+
+
 def test_sync_rejects_answer_without_ease(anki: PhoneAnki, log: MobileLog) -> None:
     a = anki.new_card()
     bad = Action(id="1", kind="answer", card_id=a, at=ms(NOW))

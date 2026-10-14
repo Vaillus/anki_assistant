@@ -398,7 +398,8 @@ class SyncResult:
 
 class MobileLog:
     """The two append-only files a sync writes: the review log (every answer given on the
-    phone) and the processed-actions log (every action id already handled, for idempotency)."""
+    phone) and the processed-actions log (every action id already handled, for idempotency,
+    with what each late replay counted, and each give-back done: specs/mobile.md#sync)."""
 
     def __init__(
         self, review_log: Path = DEFAULT_REVIEW_LOG, actions_log: Path = DEFAULT_ACTIONS_LOG
@@ -410,26 +411,46 @@ class MobileLog:
         """Action id -> None when it was applied, its `Dropped` record when it was dropped."""
         out: dict[str, Dropped | None] = {}
         for entry in _read_lines(self.actions_log):
-            action_id = str(entry.get("id", ""))
+            if "id" not in entry:
+                continue  # a give-back line
+            action_id = str(entry["id"])
             if entry.get("status") == "dropped":
                 out[action_id] = Dropped(id=action_id, reason=str(entry.get("reason")))
             else:
                 out[action_id] = None
         return out
 
-    def record(self, action: Action, dropped: Dropped | None, synced_at: int) -> None:
-        _append(
-            self.actions_log,
-            {
-                "id": action.id,
-                "kind": action.kind,
-                "card_id": action.card_id,
-                "at": action.at,
-                "status": "dropped" if dropped else "applied",
-                "reason": dropped.reason if dropped else None,
-                "synced_at": synced_at,
-            },
-        )
+    def record(
+        self,
+        action: Action,
+        dropped: Dropped | None,
+        synced_at: int,
+        late: LateCount | None = None,
+    ) -> None:
+        entry: dict[str, Any] = {
+            "id": action.id,
+            "kind": action.kind,
+            "card_id": action.card_id,
+            "at": action.at,
+            "status": "dropped" if dropped else "applied",
+            "reason": dropped.reason if dropped else None,
+            "synced_at": synced_at,
+        }
+        if late is not None:
+            entry["late"] = late.as_json()
+        _append(self.actions_log, entry)
+
+    def record_give_back(self, given: LateCount, synced_at: int) -> None:
+        """One deck's studied-today counter lowered by `extend_limits`."""
+        _append(self.actions_log, {"give_back": given.as_json(), "synced_at": synced_at})
+
+    def owed(self, day: date) -> dict[str, DayQuota]:
+        """What the late replays recorded on Anki day `day` counted, per deck of their cards."""
+        return _sum_by_deck(_late_counts(self.actions_log, "late", day))
+
+    def given_back(self, day: date) -> dict[str, DayQuota]:
+        """What was already given back on Anki day `day`, per deck lowered."""
+        return _sum_by_deck(_late_counts(self.actions_log, "give_back", day))
 
     def log_answer(
         self, action: Action, dropped: Dropped | None, synced_at: int, was_new: bool | None
@@ -451,6 +472,46 @@ class MobileLog:
 
     def reviews(self) -> list[dict[str, Any]]:
         return list(_read_lines(self.review_log))
+
+
+@dataclass
+class LateCount:
+    """Reviews and new cards counted as studied on Anki day `day` in `deck`'s counter."""
+
+    day: date
+    deck: str
+    review: int
+    new: int
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "day": self.day.isoformat(),
+            "deck": self.deck,
+            "review": self.review,
+            "new": self.new,
+        }
+
+
+def _late_counts(path: Path, key: str, day: date) -> Iterable[LateCount]:
+    for entry in _read_lines(path):
+        raw = entry.get(key)
+        if not isinstance(raw, dict) or raw.get("day") != day.isoformat():
+            continue
+        yield LateCount(
+            day=day,
+            deck=str(raw.get("deck")),
+            review=int(raw.get("review") or 0),
+            new=int(raw.get("new") or 0),
+        )
+
+
+def _sum_by_deck(counts: Iterable[LateCount]) -> dict[str, DayQuota]:
+    out: dict[str, DayQuota] = {}
+    for count in counts:
+        total = out.setdefault(count.deck, DayQuota(review=0, new=0))
+        total.review += count.review
+        total.new += count.new
+    return out
 
 
 def _read_lines(path: Path) -> Iterable[dict[str, Any]]:
@@ -554,13 +615,25 @@ def limits_to_give_back(
     return {deck: q for deck, q in out.items() if q.review or q.new}
 
 
-def give_back_limits(anki: AnkiClient, counted: Mapping[str, DayQuota]) -> None:
+def give_back_limits(
+    anki: AnkiClient,
+    owed: Mapping[str, DayQuota],
+    given: Mapping[str, DayQuota],
+    on_given: Callable[[str, DayQuota], None],
+) -> None:
     """Lower the studied-today counters the late replays raised, so that a late replay does
-    not count against today's limits (specs/mobile.md#sync)."""
-    if not any(q.review or q.new for q in counted.values()):
+    not count against today's limits (specs/mobile.md#sync). `owed`: what today's late
+    replays counted, per deck of their cards; `given`: what earlier give-backs already
+    lowered, per deck; `on_given` records each deck lowered, right after it is."""
+    if not any(q.review or q.new for q in owed.values()):
         return
-    for deck, quota in limits_to_give_back(counted, anki.apply_all_parent_limits()).items():
-        anki.extend_limits(deck, new=quota.new, review=quota.review)
+    for deck, quota in limits_to_give_back(owed, anki.apply_all_parent_limits()).items():
+        done = given.get(deck, DayQuota(review=0, new=0))
+        rest = DayQuota(review=max(0, quota.review - done.review), new=max(0, quota.new - done.new))
+        if not rest.review and not rest.new:
+            continue
+        anki.extend_limits(deck, new=rest.new, review=rest.review)
+        on_given(deck, rest)
 
 
 def apply_actions(
@@ -576,7 +649,7 @@ def apply_actions(
 
     Returns the applied ids and the dropped ones; every distinct id sent is in exactly one.
     An Anki failure propagates: what was processed before it is recorded, so a retry
-    skips it.
+    skips it, and gives back what today's recorded late replays still owe.
     """
     for action in actions:
         if action.kind == "answer" and action.ease not in (1, 2, 3, 4):
@@ -588,7 +661,13 @@ def apply_actions(
     dropped: list[Dropped] = []
     seen: set[str] = set()
     ordered = sorted(enumerate(actions), key=lambda pair: (pair[1].at, pair[0]))
-    counted: dict[str, DayQuota] = {}
+
+    def give_back() -> None:
+        def record(deck: str, quota: DayQuota) -> None:
+            log.record_give_back(LateCount(today, deck, quota.review, quota.new), synced_at)
+
+        give_back_limits(anki, log.owed(today), log.given_back(today), record)
+
     try:
         for _, action in ordered:
             if action.id in seen:
@@ -605,25 +684,26 @@ def apply_actions(
             card = cards[0] if cards else None
             reason = drop_reason(card, deck)
             record = Dropped(id=action.id, reason=reason) if reason else None
+            counted: LateCount | None = None
             if record is None and card is not None:
                 late = _apply(anki, action, rollover_hour, today)
                 if late is not None:  # never negative: a give-back must not raise a counter
-                    total = counted.setdefault(card.deck_name, DayQuota(review=0, new=0))
-                    total.review += max(0, late.review)
-                    total.new += max(0, late.new)
+                    review, new = max(0, late.review), max(0, late.new)
+                    if review or new:
+                        counted = LateCount(today, card.deck_name, review, new)
                 applied.append(action.id)
             elif record is not None:
                 dropped.append(record)
-            log.record(action, record, synced_at)
+            log.record(action, record, synced_at, counted)
             if action.kind == "answer":
                 log.log_answer(action, record, synced_at, card.type == 0 if card else None)
     except BaseException:
         try:  # the room is given back even when the sync stops midway
-            give_back_limits(anki, counted)
+            give_back()
         except Exception as exc:  # noqa: BLE001 — the first failure is the one to report
             _log.warning("giving back today's limits failed: %s", exc)
         raise
-    give_back_limits(anki, counted)
+    give_back()
     return applied, dropped
 
 

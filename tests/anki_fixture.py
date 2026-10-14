@@ -35,6 +35,7 @@ OPERATIONS = (
     "answer_card",
     "answer_outcomes",
     "set_due_date",
+    "extend_limits",
     "suspend",
     "change_deck",
     "add_note",

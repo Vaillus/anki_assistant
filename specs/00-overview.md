@@ -57,7 +57,7 @@ The **collection** is the file Anki desktop keeps for the profile, `collection.a
 
 The **collection lock** is Anki's exclusive hold on a collection file while one process has it open: no other process can open it until it is closed. Anki desktop holds it from the moment the profile is loaded until it is closed, so the app and Anki desktop **take turns** on the file.
 
-The **holding policy** is when the app opens the file and closes it again: it opens it for one **action** — one HTTP request, one CLI command — and closes it when the action is done. Opening takes a few milliseconds. An action that wrote keeps the file open for one more step, its [AnkiWeb sync](#ankiweb-sync), run in the background after the app has replied, and closes it when that sync ends. Another action arriving meanwhile waits for the file, then runs. So:
+The **holding policy** is when the app opens the file and closes it again: it opens it for one **action** — one HTTP request, one CLI command, one chat [read tool](./chat.md#read-tools) call — and closes it when the action is done. Opening takes a few milliseconds. An action that wrote keeps the file open for one more step, its [AnkiWeb sync](#ankiweb-sync), run in the background after the app has replied, and closes it when that sync ends. Another action arriving meanwhile waits for the file, then runs. So:
 
 | Situation | What happens |
 |---|---|

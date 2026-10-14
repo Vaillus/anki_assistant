@@ -7,6 +7,7 @@ and the web-event helpers.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
@@ -394,7 +395,8 @@ async def stream_chat(
                     )
                     continue
                 try:
-                    text = tool(tool_input)
+                    # off the event loop: the call can wait for an AnkiWeb sync to end
+                    text = await asyncio.to_thread(tool, tool_input)
                 except Exception as exc:  # noqa: BLE001 — Claude gets the error, not the UI
                     text, failed = f"{type(exc).__name__}: {exc}", True
                 else:

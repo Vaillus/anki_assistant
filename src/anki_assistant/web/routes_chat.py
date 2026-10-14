@@ -211,11 +211,20 @@ def read_tools_for(
         source, text = load_source(source_id)
         return format_source(source, text)
 
+    def one_action(tool: ReadTool) -> ReadTool:
+        """One tool call, one action of the holding policy: the file opened once."""
+
+        def run(inp: Mapping[str, Any]) -> str:
+            with anki.action():
+                return tool(inp)
+
+        return run
+
     return {
-        "list_decks": list_decks,
-        "search_notes": search_notes,
-        "get_notes": get_notes,
-        "get_note_type": get_note_type,
+        "list_decks": one_action(list_decks),
+        "search_notes": one_action(search_notes),
+        "get_notes": one_action(get_notes),
+        "get_note_type": one_action(get_note_type),
         "read_source": read_source,
     }
 

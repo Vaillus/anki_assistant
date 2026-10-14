@@ -8,6 +8,7 @@ pytest-asyncio is not installed, so the async generator is drained with `asyncio
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1108,7 +1109,13 @@ def test_search_notes_tool_honours_detail_fields_and_the_full_cap(monkeypatch: A
         FakeNote(note_id=1, fields={"Text": "a" * 60_000, "Back Extra": "b"}),
         FakeNote(note_id=2, fields={"Text": "c" * 60_000, "Back Extra": "d"}),
     ]
-    anki: Any = SimpleNamespace(find_note_ids=lambda q: [1, 2, 3])
+    actions: list[str] = []
+
+    def action() -> Any:
+        actions.append("open")
+        return contextlib.nullcontext()
+
+    anki: Any = SimpleNamespace(find_note_ids=lambda q: [1, 2, 3], action=action)
     store: Any = SimpleNamespace()
     no_source: Any = lambda sid: None  # noqa: E731 - read_source is not exercised here
     monkeypatch.setattr(routes_chat.review, "search_notes", lambda a, q, limit: notes)
@@ -1116,6 +1123,7 @@ def test_search_notes_tool_honours_detail_fields_and_the_full_cap(monkeypatch: A
     search = tools["search_notes"]
 
     assert search({"query": "x", "detail": "count"}) == "# 3 note(s) match x"
+    assert actions == ["open"], "one tool call, one action"
     assert search({"query": "x"}).startswith("# 2 note(s) in deck d")
     refused = search({"query": "x", "detail": "full"})
     assert "not returned" in refused and "fields" in refused

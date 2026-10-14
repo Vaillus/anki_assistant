@@ -1167,3 +1167,16 @@ def test_missing_api_key_yields_a_single_error_event(monkeypatch: Any) -> None:
     assert lines[0] == "event: error"
     detail = json.loads(lines[1].removeprefix("data: "))["detail"]
     assert "ANTHROPIC_API_KEY" in detail
+
+
+def test_read_source_reaches_only_the_sources_of_the_decks_corpus(tmp_path: Path) -> None:
+    from anki_assistant.sources import Source, SourceStore
+    from anki_assistant.web import routes_chat
+
+    store = SourceStore(path=tmp_path / "sources.json")
+    store.set_corpus("e", [Source(deck="e", kind="pdf", target="p.pdf", id="pdf000")])
+    anki: Any = SimpleNamespace()
+    no_source: Any = lambda sid: None  # noqa: E731 - the pages override looks the source up itself
+    read = routes_chat.read_tools_for(anki, store, "d", no_source)["read_source"]
+    with pytest.raises(KeyError):
+        read({"source_id": "pdf000", "pages": "1"})

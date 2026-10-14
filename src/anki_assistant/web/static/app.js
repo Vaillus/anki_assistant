@@ -295,7 +295,7 @@ document.addEventListener("click", (e) => {
   } else if (act === "src-save") {
     saveNewSource();
   } else if (act === "open-pdf") {
-    API.openSourceFile(el.getAttribute("data-id")).catch(() => {});
+    API.openSourceFile((S.corpus || {}).deck || S.deck, el.getAttribute("data-id")).catch(() => {});
   } else if (act === "new-deck") {
     S.newDeck = { value: "", error: "" };
     S.refocus = "new-deck";

@@ -498,10 +498,6 @@ class SourceStore:
             if not src.exists(self.vault)
         ]
 
-    def by_id(self, source_id: str) -> Source | None:
-        """The source carrying this id, whichever deck lists it; None when unknown."""
-        return self.sources.get(source_id)
-
     # `AbstractSet`, not `set`: inside this class `set` is the method above.
     def _known_ids(self) -> AbstractSet[str]:
         return set(self.sources)
@@ -618,15 +614,15 @@ class SourceStore:
             deck, Source(deck=deck, kind="obsidian", target=target, id=source_id or "")
         )
 
-    def replace_in_note(self, source_id: str, old: str, new: str) -> None:
+    def replace_in_note(self, deck: str, source_id: str, old: str, new: str) -> None:
         """Replace `old` with `new` in an obsidian source's file; `old` must occur exactly once.
 
-        KeyError for an unknown id; ValueError for a pdf or web source, or when `old` occurs 0
-        or 2+ times (the message says which). The bounded, reviewable replacement is the whole
-        safety story of writing into the vault — and what makes undoing it a swap of `old` and
-        `new`.
+        KeyError for an id the deck's corpus does not list; ValueError for a pdf or web source,
+        or when `old` occurs 0 or 2+ times (the message says which). The bounded, reviewable
+        replacement is the whole safety story of writing into the vault — and what makes undoing
+        it a swap of `old` and `new`.
         """
-        source = self.by_id(source_id)
+        source = self.find(deck, source_id)
         if source is None:
             raise KeyError(f"unknown source: {source_id}")
         if source.kind != "obsidian":

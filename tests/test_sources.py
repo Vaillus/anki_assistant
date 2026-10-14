@@ -759,16 +759,16 @@ def test_replace_in_note_requires_exactly_one_match(tmp_path: Path) -> None:
         ],
     )
 
-    store.replace_in_note("note00", "beta", "BETA")
+    store.replace_in_note("a", "note00", "beta", "BETA")
     assert path.read_text(encoding="utf-8") == "alpha BETA alpha gamma"
     with pytest.raises(ValueError, match="ambiguous"):
-        store.replace_in_note("note00", "alpha", "x")
+        store.replace_in_note("a", "note00", "alpha", "x")
     with pytest.raises(ValueError, match="not found"):
-        store.replace_in_note("note00", "delta", "x")
+        store.replace_in_note("a", "note00", "delta", "x")
     with pytest.raises(ValueError, match="Obsidian"):
-        store.replace_in_note("pdf000", "a", "b")
+        store.replace_in_note("a", "pdf000", "a", "b")
     with pytest.raises(KeyError):
-        store.replace_in_note("nope00", "a", "b")
+        store.replace_in_note("a", "nope00", "a", "b")
 
 
 # --------------------------------------------------------------------- routes
@@ -858,7 +858,10 @@ def test_api_post_source_appends_with_detected_kind_anchors_and_id(
     )
     assert put.status_code == 200 and put.json()["sources"][0]["id"] == "chat00"
     # A web source is read-only.
-    assert api.patch("/api/sources/chat00/text", json={"old": "a", "new": "b"}).status_code == 400
+    assert (
+        api.patch("/api/sources/chat00/text?deck=a::b", json={"old": "a", "new": "b"}).status_code
+        == 400
+    )
 
 
 def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
@@ -884,13 +887,24 @@ def test_api_create_vault_note_and_conflicts(tmp_path: Path) -> None:
 
 def test_api_replace_source_text_maps_errors(tmp_path: Path) -> None:
     api, _ = _api(tmp_path)
-    ok = api.patch("/api/sources/note00/text", json={"old": "unique", "new": "modifié"})
+    ok = api.patch("/api/sources/note00/text?deck=a", json={"old": "unique", "new": "modifié"})
     assert ok.status_code == 200
     assert ok.json()["source"]["text"] == ""
     assert (
-        api.patch("/api/sources/note00/text", json={"old": "unique", "new": "x"}).status_code == 409
+        api.patch("/api/sources/note00/text?deck=a", json={"old": "unique", "new": "x"}).status_code
+        == 409
     )
-    assert api.patch("/api/sources/nope00/text", json={"old": "a", "new": "b"}).status_code == 404
+    assert (
+        api.patch("/api/sources/nope00/text?deck=a", json={"old": "a", "new": "b"}).status_code
+        == 404
+    )
+    # A deck whose corpus does not list the id does not reach it.
+    assert (
+        api.patch(
+            "/api/sources/note00/text?deck=other", json={"old": "unique", "new": "x"}
+        ).status_code
+        == 404
+    )
     # undo = the same call with old and new swapped
-    back = api.patch("/api/sources/note00/text", json={"old": "modifié", "new": "unique"})
+    back = api.patch("/api/sources/note00/text?deck=a", json={"old": "modifié", "new": "unique"})
     assert back.json()["source"]["text"] == ""

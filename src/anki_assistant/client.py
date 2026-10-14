@@ -7,8 +7,10 @@ has the profile loaded, opening it fails, and while the app holds it, Anki deskt
 the profile. The app and Anki desktop take turns.
 
 **Holding policy.** The client opens the file for one action (`action()`, one HTTP request or
-one CLI command) and closes it when the action is done. Another action arriving meanwhile waits
-for the file. An operation called outside an action is its own action.
+one CLI command) and closes it when the action is done. An action that wrote keeps the file open
+for one AnkiWeb sync, run in the background after the action returned, then closes it. Another
+action arriving meanwhile waits for the file. An operation called outside an action is its own
+action.
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ from anki.decks import DeckId
 from anki.notes import Note as AnkiNote
 from anki.scheduler.v3 import Scheduler
 from anki.scheduler_pb2 import CardAnswer, QueuedCards, SchedulingState, SchedulingStates
+from anki.sync import SyncAuth
+from anki.sync_pb2 import SyncCollectionResponse
 
 from anki_assistant.models import Card, Note, NoteType
 
@@ -39,6 +43,7 @@ log = logging.getLogger(__name__)
 ANKI_BASE = Path.home() / "Library" / "Application Support" / "Anki2"
 
 LOCKED_MESSAGE = "Close Anki desktop first"
+FULL_SYNC_MESSAGE = "AnkiWeb needs a full sync: open Anki desktop to choose"
 
 _DAY_SECONDS = 86_400
 _RATINGS = {
@@ -113,6 +118,28 @@ class Outcomes:
     labels: list[str]
 
 
+@dataclass
+class SyncStatus:
+    """The outcome of the last AnkiWeb sync the app ran."""
+
+    ok: bool
+    message: str
+
+
+def full_sync_choice(required: int, schema_changed_at_open: bool, schema_changed_now: bool) -> str:
+    """What the app does with AnkiWeb's answer to a sync (specs/00-overview.md#ankiweb-sync):
+    `done`, `upload` (the app's file replaces AnkiWeb's), or `leave` (left to Anki desktop).
+    The app uploads a full sync only when its own write changed the schema."""
+    req = SyncCollectionResponse.ChangesRequired
+    if required in (req.NO_CHANGES, req.NORMAL_SYNC):
+        return "done"
+    if required == req.FULL_UPLOAD:
+        return "upload"
+    if required == req.FULL_SYNC and not schema_changed_at_open and schema_changed_now:
+        return "upload"
+    return "leave"
+
+
 def state_seconds(state: SchedulingState) -> int | None:
     """Seconds until a card in this scheduling state is due again."""
     if state.WhichOneof("kind") == "filtered":
@@ -135,14 +162,18 @@ def state_seconds(state: SchedulingState) -> int | None:
 
 
 class AnkiClient:
-    def __init__(self, path: str | Path | None = None) -> None:
-        """`path`: the collection file (`collection.anki2`); None picks the only profile's."""
+    def __init__(self, path: str | Path | None = None, *, auth: SyncAuth | None = None) -> None:
+        """`path`: the collection file (`collection.anki2`); None picks the only profile's.
+        `auth`: the AnkiWeb login; None runs no AnkiWeb sync."""
         self.path: Path | None = Path(path) if path else default_collection_path()
+        self.auth = auth
+        self.last_sync: SyncStatus | None = None
         self._lock = threading.Lock()
         self._owner: int | None = None
         self._depth = 0
         self._col: Collection | None = None
         self._wrote = False
+        self._schema_changed_at_open = False
 
     # ------------------------------------------------------------- holding policy
 
@@ -165,8 +196,9 @@ class AnkiClient:
 
     @contextmanager
     def action(self) -> Iterator[Collection]:
-        """Hold the collection for one action: open it now (waiting for another action), close
-        it at the end. Nested calls in the same thread share the open collection."""
+        """Hold the collection for one action: open it now (waiting for another action or its
+        AnkiWeb sync), close it at the end, after one AnkiWeb sync in the background when the
+        action wrote. Nested calls in the same thread share the open collection."""
         me = threading.get_ident()
         if self._owner == me and self._col is not None:
             self._depth += 1
@@ -182,11 +214,20 @@ class AnkiClient:
             self._lock.release()
             raise
         self._col, self._owner, self._depth, self._wrote = col, me, 1, False
+        if self.auth is not None:
+            self._schema_changed_at_open = bool(col.schema_changed())
         try:
             yield col
         finally:
+            wrote = self._wrote
             self._col, self._owner, self._depth, self._wrote = None, None, 0, False
-            self._close(col)
+            if wrote and self.auth is not None:
+                at_open = self._schema_changed_at_open
+                threading.Thread(
+                    target=self._sync_and_close, args=(col, at_open), daemon=True
+                ).start()
+            else:
+                self._close(col)
 
     def _close(self, col: Collection) -> None:
         try:
@@ -195,6 +236,37 @@ class AnkiClient:
             log.warning("closing the collection failed: %s", exc)
         finally:
             self._lock.release()
+
+    def _sync_and_close(self, col: Collection, schema_changed_at_open: bool) -> None:
+        """The background half of a write action: one AnkiWeb sync, then close the file. A
+        failed sync loses nothing: the changes stay marked for the next sync."""
+        try:
+            self.last_sync = self._sync(col, schema_changed_at_open)
+        except Exception as exc:  # noqa: BLE001 — reported, never raised: the reply is sent
+            self.last_sync = SyncStatus(ok=False, message=f"AnkiWeb sync failed: {exc}")
+        if not self.last_sync.ok:
+            log.warning("%s", self.last_sync.message)
+        self._close(col)
+
+    def _sync(self, col: Collection, schema_changed_at_open: bool) -> SyncStatus:
+        """One AnkiWeb sync of the open collection, media included."""
+        auth = self.auth
+        if auth is None:
+            return SyncStatus(ok=True, message="AnkiWeb sync off")
+        out = col.sync_collection(auth, sync_media=False)
+        if out.new_endpoint:
+            auth.endpoint = out.new_endpoint
+        choice = full_sync_choice(out.required, schema_changed_at_open, bool(col.schema_changed()))
+        if choice == "leave":
+            return SyncStatus(ok=False, message=FULL_SYNC_MESSAGE)
+        if choice == "upload":
+            col.close_for_full_sync()
+            col.full_upload_or_download(auth=auth, server_usn=out.server_media_usn, upload=True)
+            col.reopen(after_full_sync=True)
+        col.sync_media(auth)
+        while col.media_sync_status().active:
+            threading.Event().wait(0.2)
+        return SyncStatus(ok=True, message="synced with AnkiWeb")
 
     @contextmanager
     def _use(self, *, write: bool = False) -> Iterator[Collection]:
@@ -207,6 +279,14 @@ class AnkiClient:
             finally:
                 if write:
                     self._wrote = True
+
+    def login(self, username: str, password: str) -> SyncAuth:
+        """Log in to AnkiWeb; the returned key (`hkey`) is what to keep, never the password."""
+        with self._use() as col:
+            try:
+                return col.sync_login(username, password, endpoint=None)
+            except anki.errors.SyncError as exc:
+                raise AnkiError(f"AnkiWeb login failed: {exc}") from exc
 
     # ----------------------------------------------------------------- decks
 
@@ -747,10 +827,12 @@ def _card(card: AnkiCard, note: AnkiNote, deck_name: str) -> Card:
 
 
 def anki_client_from_env(env: Mapping[str, str] | None = None) -> AnkiClient:
-    """The client the app and the CLI use: collection from `ANKI_COLLECTION`, else the only
-    profile's."""
+    """The client the app and the CLI use: collection from `ANKI_COLLECTION` (else the only
+    profile's), AnkiWeb login from `ANKIWEB_HKEY` (and `ANKIWEB_ENDPOINT`), when set."""
     env = os.environ if env is None else env
-    return AnkiClient(env.get("ANKI_COLLECTION") or None)
+    hkey = (env.get("ANKIWEB_HKEY") or "").strip()
+    auth = SyncAuth(hkey=hkey, endpoint=env.get("ANKIWEB_ENDPOINT") or None) if hkey else None
+    return AnkiClient(env.get("ANKI_COLLECTION") or None, auth=auth)
 
 
 __all__ = [
@@ -762,7 +844,9 @@ __all__ = [
     "Outcomes",
     "QueuedCard",
     "Replay",
+    "SyncStatus",
     "anki_client_from_env",
     "default_collection_path",
+    "full_sync_choice",
     "state_seconds",
 ]

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import subprocess
 import sys
 import textwrap
 from collections.abc import Iterable
+from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv, set_key
 
 from anki_assistant.client import AnkiClient, AnkiError, anki_client_from_env
 from anki_assistant.models import Card, Note
@@ -204,6 +206,19 @@ def cmd_source(client: AnkiClient, args: argparse.Namespace) -> None:
         print(f"\n{len(unmapped)} deck(s) without a source")
 
 
+def cmd_login(client: AnkiClient, args: argparse.Namespace) -> None:
+    """Log in to AnkiWeb once and keep the key it returns in .env (never the password)."""
+    username = args.username or input("AnkiWeb email: ")
+    password = getpass.getpass("AnkiWeb password: ")
+    auth = client.login(username, password)
+    env = find_dotenv(usecwd=True) or ".env"
+    Path(env).touch(exist_ok=True)
+    set_key(env, "ANKIWEB_HKEY", auth.hkey, quote_mode="never")
+    if auth.endpoint:
+        set_key(env, "ANKIWEB_ENDPOINT", auth.endpoint, quote_mode="never")
+    print(f"AnkiWeb key saved in {env}: the app now syncs with AnkiWeb after its writes.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="anki", description="Read and edit Anki's collection (Anki desktop closed)."
@@ -276,6 +291,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.set_defaults(func=cmd_source)
     q = ssub.add_parser("missing", help="decks with no source, and broken targets")
     q.set_defaults(func=cmd_source)
+
+    sp = sub.add_parser("login", help="log in to AnkiWeb and keep its key in .env")
+    sp.add_argument("username", nargs="?", help="AnkiWeb email (asked when left out)")
+    sp.set_defaults(func=cmd_login)
 
     sp = sub.add_parser("tag", help="add (or --remove) tags on notes")
     sp.add_argument("note_ids", type=int, nargs="+")

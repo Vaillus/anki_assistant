@@ -27,6 +27,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 graph LR
     UI["Browser · vanilla JS · /static"] --> API["FastAPI · port 5070"]
     API --> Client["AnkiClient (client.py)"] --> Lib["anki library"] --> Col["collection.anki2 · Anki desktop closed"]
+    Lib -- sync after a write --> AW["AnkiWeb"]
     API --> Sources["SourceStore (sources.py) · sources.json"]
     Sources -- read / create / replace --> Vault["~/Documents/Vault/*.md"]
     Sources --> PDF["PDF files · Docling / pypdf"]
@@ -56,13 +57,34 @@ The **collection** is the file Anki desktop keeps for the profile, `collection.a
 
 The **collection lock** is Anki's exclusive hold on a collection file while one process has it open: no other process can open it until it is closed. Anki desktop holds it from the moment the profile is loaded until it is closed, so the app and Anki desktop **take turns** on the file.
 
-The **holding policy** is when the app opens the file and closes it again: it opens it for one **action** — one HTTP request, one CLI command — and closes it when the action is done. Opening takes a few milliseconds. Another action arriving meanwhile waits for the file, then runs. So:
+The **holding policy** is when the app opens the file and closes it again: it opens it for one **action** — one HTTP request, one CLI command — and closes it when the action is done. Opening takes a few milliseconds. An action that wrote keeps the file open for one more step, its [AnkiWeb sync](#ankiweb-sync), run in the background after the app has replied, and closes it when that sync ends. Another action arriving meanwhile waits for the file, then runs. So:
 
 | Situation | What happens |
 |---|---|
 | Anki desktop open, the app acts (a click, a phone sync) | The action fails and writes nothing: `503` with `Close Anki desktop first`. Closing Anki desktop and retrying works. |
-| The app running, Anki desktop opened | It opens normally, unless an app action is running at that instant: then Anki desktop says the collection is already open, and a retry works. |
+| The app running, Anki desktop opened | It opens normally, unless an app action or the AnkiWeb sync after it is running at that instant: then Anki desktop says the collection is already open, and a retry works. |
 | A phone sync while Anki desktop is open | Fails like any action; the phone keeps its pending actions for the next sync. |
+
+### AnkiWeb sync
+
+The app and Anki desktop sync with AnkiWeb as **one device**: they share one file, and the sync state (which changes are uploaded, when the last sync ran) lives in that file. Anki marks each change it writes as not yet uploaded, and whoever syncs the file next sends the marked changes and clears the marks, so the two never conflict with each other.
+
+The **AnkiWeb sync** is the sync the app itself runs after an action that wrote (a validation, a flag, a phone sync's replays), so that the other devices get the change within seconds with Anki desktop closed: one `sync_collection` on the still-open collection, then its media, in the background after the reply, then the file is closed. A failed sync (no network, AnkiWeb down) leaves the changes marked; the next sync, the app's or Anki desktop's, sends them, so nothing is lost.
+
+The login is not in the file (Anki desktop keeps its own in its profile). The app logs in once with `uv run anki login`, which keeps the key AnkiWeb returns in `.env` as `ANKIWEB_HKEY` (and `ANKIWEB_ENDPOINT` when AnkiWeb names one), never the password. Without `ANKIWEB_HKEY` the app runs no AnkiWeb sync, and Anki desktop sends the app's changes at its next sync.
+
+A **full sync** replaces one side's whole collection with the other's; Anki requires one after a schema change, such as the note-type change a validation or its undo can make. The app reads whether the file's schema changed since the last sync when it opens the file, before writing:
+
+| What the sync answers | What the app does |
+|---|---|
+| no changes, normal sync | Done. |
+| full upload (AnkiWeb holds nothing) | Uploads: nothing to lose. |
+| full sync, schema unchanged at open and changed by the app's write | Uploads: the Mac's file wins; answers given on other devices since the last sync are lost. |
+| full sync otherwise (Anki desktop changed the schema and did not sync, or another device forced it), full download | Sends nothing, and records « AnkiWeb needs a full sync: open Anki desktop to choose » as the sync's status; the app's writes stay in the file, unsent, until Anki desktop settles it. |
+
+The outcome of the last AnkiWeb sync is kept in memory and a failure is logged in the server's output.
+
+### Undo
 
 The workspace's « Undo last validation » stays the app's own snapshot ([workspace.md § Undo](./workspace.md#undo)): Anki's own undo list lives in the open collection and is lost at each close.
 

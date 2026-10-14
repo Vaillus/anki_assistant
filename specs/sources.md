@@ -98,7 +98,7 @@ Each source is a row:
 
 **Adding a source.** « + add a source » opens a form: target (a vault note with autocompletion, a PDF path with autocompletion from PDFs under the vault, or a URL), kind (auto-detected from the target, overridable), pages (PDF only, hidden otherwise); annotation. Saving adds the source to the selected deck's own list. A source can also be added from the conversation: Claude's `propose_add_source` ([chat.md § Source proposals](./chat.md#source-proposals)) is an inline card with « Apply ».
 
-**Removing a source.** « remove » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list. When notes are anchored to the source, the confirmation says how many and that their anchors will be removed.
+**Removing a source.** « remove » appears only on the deck's own sources, not on inherited ones. It removes the source from the deck's own list; a shared source stays listed by its other decks. Anchors to the source go only once no deck lists it ([Anchors](#anchors)); then, when notes are anchored to it, the confirmation says how many and that their anchors will be removed.
 
 **Anchoring.** On the selected note in column 2: one chip per anchor (« ⚓ differentiability », × removes it) and « ⚓ anchor… », a menu of the effective corpus's sources the note is not yet anchored to. A dangling anchor shows as « ⚓ source outside corpus ».
 

@@ -26,7 +26,7 @@ Shows **"Priority"** and a count badge. Hidden when the count is zero; always vi
 
 ## Queue behaviour
 
-A flat cross-deck list. Each note shows its deck name on the identity line. Same [decisions](./review.md#decisions) as a regular queue (Keep, Skip, Open); after a decision the queue refreshes. The Source tab is inactive.
+A flat cross-deck list, notes ordered by their deck's place in the [app's tree](./review.md#tree-parent-and-the-app-deck-order) read top to bottom, then by note id (creation order). Each note shows its deck name on the identity line. Same [decisions](./review.md#decisions) as a regular queue (Keep, Skip, Open); after a decision the queue refreshes. The Source tab is inactive.
 
 ## API
 

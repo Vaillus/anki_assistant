@@ -13,7 +13,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 | File | Concept |
 |---|---|
 | [notes.md](./notes.md) | Note, card, note type, field, reason, field syntax |
-| [review.md](./review.md) | The three-column page: deck tree, queue, decisions, rendering, keyboard |
+| [review.md](./review.md) | The three-column page: deck tree (app deck order, labels), queue, decisions, rendering, keyboard |
 | [priority.md](./priority.md) | Priority queue: urgency criteria, study-deck budget filtering, deck tree row |
 | [sources.md](./sources.md) | Corpus, source, anchors, extracted text, vault writes, Source tab |
 | [workspace.md](./workspace.md) | The overlay: cards, versions, split, flag toggle, validation, undo |
@@ -37,9 +37,9 @@ graph LR
     Gate --> Client
 ```
 
-**Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; `guidelines.md` is the store for the chat's [guidelines](./chat.md#guidelines); `review_log.jsonl` and `mobile_actions.jsonl` hold the phone's [review log](./mobile.md#review-log) and the action ids already synced; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
+**Where things are stored.** Anki is the store for notes; `sources.json` is the store for corpora and anchors; `guidelines.md` is the store for the chat's [guidelines](./chat.md#guidelines); `deck_order.json` is the store for the [app deck order and the labels](./review.md#where-the-app-stores-it); `review_log.jsonl` and `mobile_actions.jsonl` hold the phone's [review log](./mobile.md#review-log) and the action ids already synced; the workspace and its conversation live in browser memory and are dropped when the workspace closes. No database.
 
-**Who writes to Anki.** Three paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)); a phone [sync](./mobile.md#sync) replays answers, sets or clears the orange flag, suspends, and re-dates replayed cards. The server keeps one snapshot for « Undo last validation ».
+**Who writes to Anki.** Four paths only: « Keep » in the queue clears a flag ([review.md § Decisions](./review.md#decisions)); turning a group into a label moves the group's own cards to a `misc` sub-deck ([review.md § Labels](./review.md#labels)); the workspace's « Apply » writes all its changes or none, with snapshot and rollback ([workspace.md § Validation](./workspace.md#validation)); a phone [sync](./mobile.md#sync) replays answers, sets or clears the orange flag, suspends, and re-dates replayed cards. The server keeps one snapshot for « Undo last validation ».
 
 **How the app reaches Anki.** See [Anki](#anki) below.
 
@@ -98,6 +98,7 @@ The workspace's « Undo last validation » stays the app's own snapshot ([worksp
 | `src/anki_assistant/models.py` | `Card`, `Note` dataclasses | — |
 | `src/anki_assistant/sources/` | `SourceStore`, corpora, anchors, text extraction, vault writes | [sources.md](./sources.md) |
 | `src/anki_assistant/pdf_cache.py` | Sidecar cache, structural index, Docling extraction | [sources.md](./sources.md) |
+| `src/anki_assistant/deck_order.py` | The app's tree: app deck order, labels, number prefixes, `deck_order.json` | [review.md](./review.md#deck-tree-column-1) |
 | `src/anki_assistant/review.py` | Note-level view of a deck, primitive writes, priority queue | [review.md](./review.md), [priority.md](./priority.md) |
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |

@@ -24,6 +24,8 @@ The [Source tab](#source-tab) shows the corpus; the chat makes it available to C
 
 A deck's **effective corpus** is its own sources followed by each ancestor's, nearest first: `a::b::c`'s own, then `a::b`'s, then `a`'s. A deck with no own sources sees only the inherited ones. Each source remembers the deck it was written on, so the UI can distinguish own from inherited.
 
+A group turned into a [label](./review.md#labels) never holds a corpus: its sources are copied onto each of its sub-decks, after each one's own sources, ids kept, then removed from the group. Every deck under it sees the same sources as before, and each sub-deck can now edit its copy from its own row.
+
 ### Text
 
 A vault note resolves to `<vault>/<target>.md` and opens in Obsidian through an `obsidian://` link; a PDF resolves to its path and opens in Zotero's reader through a `zotero://open-pdf` URI looked up from the Zotero SQLite database (`POST /api/sources/{id}/open`); when the lookup fails, falls back to the system default app; a web page opens in a new tab at its URL. A source whose file does not exist is **missing**: still listed, marked as such, with no text.

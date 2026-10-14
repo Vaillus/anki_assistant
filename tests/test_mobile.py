@@ -261,8 +261,9 @@ def test_batch_every_day_is_rebuilt_day0_included(anki: PhoneAnki) -> None:
     anki.new_card(deck="other", rel_due=-90)  # another deck
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
-    # Day 0 is cut at its own quota like the next days, not taken from Anki's study queue
-    # (where two reviews would leave no room for a new card today).
+    # Day 0 is cut at its own quota like the next days, not taken from Anki's study queue.
+    # Each day's new quota is independent of its review quota: two reviews fill the review
+    # quota and the day still takes a new card (Anki's study queue would leave no room).
     assert got == [
         (learn, 0, "learn"),
         (r_overdue, 0, "review"),

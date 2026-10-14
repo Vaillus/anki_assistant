@@ -252,8 +252,9 @@ def _select(
 
     Every day, day 0 included, is rebuilt: its cards not taken by an earlier day are gathered
     in the order settings' order, then cut at its quota. Anki's study queue is not used, so
-    sub-deck limits and sibling burying do not apply. Without order settings, every option
-    keeps its default. `deck_key` sorts deck names in the deck order.
+    sub-deck limits and sibling burying do not apply, and the new quota is independent of the
+    review quota (Anki caps new cards by what the reviews left). Without order settings, every
+    option keeps its default. `deck_key` sorts deck names in the deck order.
     """
     order = order or OrderSettings()
     days = range(len(quotas))

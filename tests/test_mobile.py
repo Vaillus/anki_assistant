@@ -470,8 +470,8 @@ def move_deck(
     after: str | None = None,
 ) -> None:
     """Drag `deck` right before or after a deck of its tree parent, as column 1 does."""
-    ids = anki.deck_names_and_ids()
-    tree = deck_order.build_tree(list(ids.items()), store)
+    ids = dict(anki.all_decks())
+    tree = deck_order.build_tree(anki.all_decks(), store)
     deck_order.move(
         store,
         tree,

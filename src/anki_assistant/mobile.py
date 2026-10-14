@@ -216,7 +216,7 @@ def deck_order_key(anki: AnkiClient, store: DeckOrderStore | None) -> DeckKey:
     Anki's deck order, case ignored."""
     if store is None:
         return anki_key
-    return build_tree(list(anki.deck_names_and_ids().items()), store).position
+    return build_tree(anki.all_decks(), store).position
 
 
 _T = TypeVar("_T")

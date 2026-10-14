@@ -83,6 +83,25 @@ def test_entries_written_per_deck_are_read_as_one_shared_source(tmp_path: Path) 
     assert raw["decks"] == {"g::a": ["wwwwww"], "g::b": ["wwwwww"]}
 
 
+def test_differing_copies_of_an_id_keep_the_first_and_warn(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An older file listing one id on two decks with different pages (specs/sources.md)."""
+    store_path = tmp_path / "sources.json"
+    pdf = {"id": "ffffff", "kind": "pdf", "target": "~/lbdl.pdf"}
+    store_path.write_text(
+        json.dumps({"decks": {"g::a": [pdf], "g::b": [{**pdf, "pages": "10-20"}], "g::c": [pdf]}}),
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="anki_assistant.sources.store"):
+        store = SourceStore(path=store_path)
+    b = store.find("g::b", "ffffff")
+    assert b is not None and b.pages == "", "the first read is kept"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, "an identical copy (g::c) warns nothing"
+    assert "ffffff" in warnings[0] and "g::a" in warnings[0] and "g::b" in warnings[0]
+
+
 def test_a_shared_source_is_stored_once_and_edited_for_every_deck(tmp_path: Path) -> None:
     store = SourceStore(path=tmp_path / "sources.json")
     w = Source(deck="g", kind="web", target="https://w.example", id="wwwwww")

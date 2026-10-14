@@ -29,8 +29,8 @@ book of deep learning` sees its own sources then those of `courant::01-AI`, then
 source is looked up by deck and id (`find`), through that effective corpus.
 
 Older files are read too: a deck value holding whole entries (before sharing), or a single
-object (0.1). An id met again on another deck lists the source already read; an entry without
-`id` gets one on load. The next save writes the format above.
+object (0.1). An id met again on another deck lists the source first read (a differing copy is
+logged as a warning); an entry without `id` gets one on load. The next save writes the format above.
 
 `anchors` maps an Anki note id (JSON key, so a string) to the ids of the sources the note was
 made from. Nothing is written into Anki: only this file knows a note is anchored.
@@ -339,7 +339,14 @@ class SourceStore:
             for item in items:
                 if isinstance(item, dict):
                     src = Source.from_dict(deck, item)
-                    sources.setdefault(src.id, src)
+                    first = sources.setdefault(src.id, src)
+                    if replace(first, deck=deck) != src:
+                        log.warning(
+                            "source %s differs on %s from %s; the first read is kept",
+                            src.id,
+                            deck,
+                            first.deck or "sources",
+                        )
                     sid = src.id
                 else:
                     sid = str(item)

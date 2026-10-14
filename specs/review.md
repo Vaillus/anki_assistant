@@ -65,9 +65,9 @@ A deck covered by a label set above it, or by a group's label, shows that label 
 **Turning a group into a label.** A group can hold two things of its own, filed under its full name and reached only from its row: cards that sit directly in it, and a corpus. Both get a new home first:
 
 - **Its own cards** move, in Anki, to a sub-deck named `misc` (`courant::04-maths::misc`), created with the group's preset and shown first among the label's decks, or to the group's existing `misc` sub-deck. Each card keeps its note, reviews and flag. This is a write to Anki, synced as after any write the app makes. A filtered deck searching the group still finds the cards, since its search covers the sub-decks.
-- **Its corpus** is copied onto each of its sub-decks (the new `misc` included), after each sub-deck's own sources, ids kept so every [anchor](./sources.md#anchors) stays valid, and removed from the group ([sources.md § Inheritance](./sources.md#inheritance)). A deck created under the group later gets none.
+- **Its corpus** becomes [shared](./sources.md#corpus) with each of its sub-decks (the new `misc` included): each source, stored once, is listed after each sub-deck's own sources, then taken off the group. Nothing is copied, ids stay, so every [anchor](./sources.md#anchors) stays valid ([sources.md § Inheritance](./sources.md#inheritance)). A deck created under the group later gets none.
 
-One `confirm()` dialog states every effect (the number of cards moved and the sub-deck they go to, the sources copied) and the group turns only once confirmed; a group with neither turns at once. In Anki every deck keeps its full name, and so does everything keyed by it.
+One `confirm()` dialog states every effect (the number of cards moved and the sub-deck they go to, the sources shared) and the group turns only once confirmed; a group with neither turns at once. In Anki every deck keeps its full name, and so does everything keyed by it.
 
 **Changes made in Anki.** The app brings its labels in line with the collection each time it lists the decks:
 

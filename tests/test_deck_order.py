@@ -259,3 +259,21 @@ def test_deleted_group_takes_its_label(store: DeckOrderStore):
     t = tree(store, [n for n in NAMES if not n.startswith("courant::01-AI")])
     assert store.labels == {}
     assert t.labels == []
+
+
+def test_a_groups_label_removed_in_anki_stays_on_decks_it_is_set_on(store: DeckOrderStore):
+    t = tree(store)
+    ai, orr = IDS["courant::01-AI"], IDS["courant::03-OR"]
+    lid = do.turn_into_label(store, t, ai, sub_decks=[r.id for r in t.rows if r.parent_id == ai])
+    t = tree(store)
+    do.set_label(store, t, IDS["courant::02-code::python"], label_id=lid)
+    t = tree(store)
+    do.turn_into_label(store, t, orr, sub_decks=[r.id for r in t.rows if r.parent_id == orr])
+    # In Anki, 01-AI is put under 03-OR: the higher group's label wins.
+    moved = [(n.replace("courant::01-AI", "courant::03-OR::01-AI"), IDS[n]) for n in NAMES]
+    t = build_tree(moved, store)
+    assert next(r for r in t.rows if r.id == ai).label is not None, "covered by OR"
+    python = next(r for r in t.rows if r.id == IDS["courant::02-code::python"])
+    assert python.label is not None
+    assert (python.label.name, python.label.how) == ("AI", "set"), "a label of its own"
+    assert store.labels[lid].group is None, "no longer follows the group"

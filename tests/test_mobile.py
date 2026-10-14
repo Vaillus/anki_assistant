@@ -645,6 +645,24 @@ def test_sync_failure_midway_keeps_what_was_done(anki: PhoneAnki, log: MobileLog
     assert anki.writes() == ["answer_card"]
 
 
+def test_sync_failure_midway_reports_the_first_error(anki: PhoneAnki, log: MobileLog) -> None:
+    """A late replay was counted, then the sync stops: the give-back still runs, and when it
+    fails too the error raised is the one that stopped the sync."""
+    a, b = anki.new_card(rel_due=-3), anki.new_card()
+    late = NOW - timedelta(days=2)
+    anki.fail_on["answer_card"] = 2
+    gave_back: list[str] = []
+
+    def broken(deck: str, *, new: int = 0, review: int = 0) -> None:
+        gave_back.append(deck)
+        raise AnkiError("give-back: boom")
+
+    anki.extend_limits = broken  # ty: ignore[invalid-assignment]
+    with pytest.raises(AnkiError, match="answer_card: boom"):
+        run(anki, [answer("a", a, late), answer("b", b, NOW)], log)
+    assert gave_back == [DECK]
+
+
 def test_sync_rejects_answer_without_ease(anki: PhoneAnki, log: MobileLog) -> None:
     a = anki.new_card()
     bad = Action(id="1", kind="answer", card_id=a, at=ms(NOW))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from urllib.parse import unquote
 from anki_assistant.client import AnkiClient, Outcomes, _quote
 from anki_assistant.models import Card
 from anki_assistant.web.render import render_field
+
+_log = logging.getLogger(__name__)
 
 WINDOW_DAYS = 3
 DEFAULT_DECK = "courant"
@@ -604,18 +607,23 @@ def apply_actions(
             record = Dropped(id=action.id, reason=reason) if reason else None
             if record is None and card is not None:
                 late = _apply(anki, action, rollover_hour, today)
-                if late is not None:
+                if late is not None:  # never negative: a give-back must not raise a counter
                     total = counted.setdefault(card.deck_name, DayQuota(review=0, new=0))
-                    total.review += late.review
-                    total.new += late.new
+                    total.review += max(0, late.review)
+                    total.new += max(0, late.new)
                 applied.append(action.id)
             elif record is not None:
                 dropped.append(record)
             log.record(action, record, synced_at)
             if action.kind == "answer":
                 log.log_answer(action, record, synced_at, card.type == 0 if card else None)
-    finally:
-        give_back_limits(anki, counted)
+    except BaseException:
+        try:  # the room is given back even when the sync stops midway
+            give_back_limits(anki, counted)
+        except Exception as exc:  # noqa: BLE001 — the first failure is the one to report
+            _log.warning("giving back today's limits failed: %s", exc)
+        raise
+    give_back_limits(anki, counted)
     return applied, dropped
 
 

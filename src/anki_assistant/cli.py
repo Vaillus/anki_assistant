@@ -211,7 +211,8 @@ def cmd_login(client: AnkiClient, args: argparse.Namespace) -> None:
     username = args.username or input("AnkiWeb email: ")
     password = getpass.getpass("AnkiWeb password: ")
     auth = client.login(username, password)
-    env = find_dotenv(usecwd=True) or ".env"
+    # the .env that `main`'s load_dotenv() reads: found upward from this package, not the cwd
+    env = find_dotenv() or str(Path(__file__).resolve().parents[2] / ".env")
     Path(env).touch(exist_ok=True)
     set_key(env, "ANKIWEB_HKEY", auth.hkey, quote_mode="never")
     if auth.endpoint:

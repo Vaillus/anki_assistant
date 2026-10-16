@@ -171,6 +171,8 @@ class Batch:
     media: list[str] = field(default_factory=list)
     #: The preset's review order: `deck` (deck first, then due day) or `due` (due day).
     review_order: Literal["due", "deck"] = "due"
+    #: Anki's learn-ahead limit: how early a same-day return is shown once nothing else is left.
+    learn_ahead_secs: int = 1200
 
 
 def daily_quotas(anki: AnkiClient, deck: str) -> list[DayQuota]:
@@ -384,6 +386,7 @@ def build_batch(
         cards=cards,
         media=media,
         review_order="deck" if order.review_by_deck else "due",
+        learn_ahead_secs=anki.learn_ahead_secs(),
     )
 
 

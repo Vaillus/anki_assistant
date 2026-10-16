@@ -120,7 +120,7 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
 
 1. **Today's share of the batch**, in batch order: the cards whose day's date (`days[day]`) is on or before the phone's today — today's cards and the earlier days' cards not reached. The phone's today is computed with the batch's `rollover_hour` in the phone's local time. A card already answered on the phone leaves this share.
 2. **Plus returning cards**: a **returning card** is a card answered on the phone, once, that comes back when its outcome says so:
-   - outcome under one day → at *answered time + outcome*, in the same session, at the queue's head when that time has passed;
+   - outcome under one day → at *answered time + outcome*, in the same session, at the queue's head when that time has passed, or earlier through learn-ahead (rule 5);
    - outcome of one day or more → on the Anki day *answer's Anki day + round(outcome / 1 day)*, if that day is in the window, after today's share;
    - otherwise (past the window, second answer, `null` outcome) → not until the next sync.
 3. **Cut at the day's limit.** Each day shows at most that day's quota (`quota[k]` for `days[k]`) of reviews and of new cards, minus what was answered on the phone that day, returning and unreached cards included:
@@ -132,8 +132,9 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
 
    What does not fit moves to the next window day, where it competes again by the same order; past the window's last day it waits for the next sync, still due in Anki.
 4. **Minus buried cards**: a card buried today is hidden until the next Anki day. Burying sends nothing to Anki.
+5. **Learn-ahead**: when rules 1–4 leave the queue empty, the same-day returns whose time falls within the batch's `learn_ahead_secs` of now are shown at once, soonest first, as Anki shows learning cards early when nothing else is left.
 
-**Left today** is the number of cards the phone app still shows today: the phone queue now, plus the same-day returns whose time falls before the next rollover. It splits like Anki's counts; each card of it is in exactly one part:
+**Left today** is the number of cards the phone app still shows today: the phone queue now, plus the same-day returns not in it whose time falls before the next rollover. It splits like Anki's counts; each card of it is in exactly one part:
 
 | Part | Cards |
 |---|---|
@@ -228,7 +229,7 @@ The page the phone app is made of. Vanilla JS like the main app; the phone-queue
 - **Notice**: a bar under the header, hidden when there is nothing to say, dismissed with « ok ». It shows the actions a sync dropped (count and reasons), an HTTP error from a sync, and, as a warning, that the phone store is unavailable or a write to it failed.
 - **Card**: a line with the card's deck, its kind and « ⚑ flagged » when its current state is flagged; then the question fields, without names; on a cloze card, cloze `c<cloze number>` hidden as `[…]`/`[hint]`. Once revealed: the question again with every cloze shown, then the non-empty answer fields, each under its name. Math is typeset after each render. Pictures fit the width.
 - **Action bar**, fixed at the bottom: « show answer » (a tap anywhere on the card does the same); once revealed, the four answer buttons, each labelled with its `outcome_labels` entry, or « — » on a card already answered on the phone (its answer has no outcome); below, flag, undo, bury, suspend. The flag button shows the card's current state — the batch's flag, overridden by the card's last pending flag/unflag — and toggles it: a flagged card (any colour) gets `unflag`, an unflagged one `flag`. Buttons are at least 44 px high. Under the buttons, the last line of the screen: the number of answers in the phone's review log (and whether it is kept on the phone or in memory only), and the date and time of the last successful sync.
-- **Empty queue**: « done for today », with the time the next same-day return comes back when there is one; « sync to get more cards » when today is past the window's last day; « no cards yet: sync with the Mac » before the first batch.
+- **Empty queue**: « done for today » when no same-day return falls before the next rollover; else the number of same-day returns still to come today and the time the next one comes back; « sync to get more cards » when today is past the window's last day; « no cards yet: sync with the Mac » before the first batch.
 
 Keys are a convenience for testing on the Mac: `Space` shows the answer, `1`–`4` answer, `u` undoes.
 
@@ -273,6 +274,7 @@ The page itself is served outside `/api`: `GET /m` (the page), `GET /m/manifest.
   "deck": "courant",
   "generated_at": 1759734120000,
   "rollover_hour": 4,
+  "learn_ahead_secs": 1200,
   "days": ["2026-10-06", "2026-10-07", "2026-10-08"],
   "quota": [{"review": 20, "new": 5}, {"review": 20, "new": 5}, {"review": 20, "new": 5}],
   "cards": [
@@ -294,7 +296,7 @@ The page itself is served outside `/api`: `GET /m` (the page), `GET /m/manifest.
 }
 ```
 
-`days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `due_day` is the Anki day a review or interday-learning card is due (`null` otherwise); `deck_rank` is the place of the card's deck among the batch's decks in the [deck order](#deck-order) (the app's tree read top to bottom); `review_order` is the preset's review order, `deck` (`reviewOrder` `2`) or `due`. The phone queue sorts reviews with them ([Phone queue](#phone-queue)). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
+`learn_ahead_secs` is Anki's « Learn ahead limit » preference of the collection, read when the batch is made ([Phone queue](#phone-queue), rule 5). `days[k]` is the date of window day `k`. `cards` is in batch order (day 0 first). `due_day` is the Anki day a review or interday-learning card is due (`null` otherwise); `deck_rank` is the place of the card's deck among the batch's decks in the [deck order](#deck-order) (the app's tree read top to bottom); `review_order` is the preset's review order, `deck` (`reviewOrder` `2`) or `due`. The phone queue sorts reviews with them ([Phone queue](#phone-queue)). `outcomes` is `[again, hard, good, easy]` in seconds, each possibly `null`; `outcome_labels` are the same delays as Anki displays them, isolation marks removed. `html` values point pictures at `/api/mobile/media/`.
 
 **Sync** (`POST /api/mobile/sync`), request:
 

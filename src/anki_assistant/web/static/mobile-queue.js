@@ -17,6 +17,8 @@
   const HOUR_MS = 3600 * 1000;
   /* Time spent on one answer is capped like Anki's default maximum answer time. */
   const MAX_TIME_MS = 60 * 1000;
+  /* Anki's default learn-ahead limit, for a batch made before it carried its own. */
+  const DEFAULT_LEARN_AHEAD_S = 1200;
 
   function pad(n) {
     return String(n).padStart(2, "0");
@@ -148,7 +150,7 @@
 
   /* The phone queue now.
        queue    cards to show, in order (queue[0] is the current card)
-       later    same-day returns not due yet: [{ card, at }], soonest first
+       later    same-day returns not shown yet: [{ card, at }], soonest first
        leftToday  queue + the `later` returns due before the next rollover
        counts   leftToday split like Anki: { new, learn, review }, summing to leftToday
        expired  today is past the window's last day
@@ -218,6 +220,12 @@
       kept === null || (c.kind === "learn" && !isInterday(c)) || kept.has(c.card_id);
     const shown = share.filter(fits);
     const back = returning.filter((r) => kept === null || kept.has(r.card.card_id));
+    /* Learn-ahead (specs/mobile.md#phone-queue, rule 5): with nothing else left, the same-day
+       returns due within the batch's learn-ahead limit are shown now, as in Anki. */
+    if (soon.length + shown.length + back.length === 0) {
+      const ahead = batch.learn_ahead_secs ?? DEFAULT_LEARN_AHEAD_S;
+      while (later.length && later[0].at <= now + ahead * 1000) soon.push(later.shift());
+    }
 
     let queue = soon.map((s) => s.card).concat(shown, back.map((r) => r.card));
     if (head !== undefined && head !== null) {

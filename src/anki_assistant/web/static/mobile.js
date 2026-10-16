@@ -284,15 +284,20 @@ function statusLine() {
 function emptyHtml(q) {
   if (!STATE.batch) return `<div class="m-empty"><b>No cards yet</b>sync with the Mac.</div>`;
   if (q.expired) return `<div class="m-empty"><b>Batch used up</b>sync to get more cards.</div>`;
-  const next = q.later.length ? `next card back at ${hhmm(q.later[0].at)}` : "";
-  return `<div class="m-empty"><b>Done for today</b>${next}</div>`;
+  // Empty queue: what is left today is the same-day returns not due yet.
+  if (q.leftToday === 0) return `<div class="m-empty"><b>Done for today</b></div>`;
+  const cards = q.leftToday === 1 ? "1 card" : `${q.leftToday} cards`;
+  return (
+    `<div class="m-empty"><b>${cards} still to come today</b>` +
+    `next one back at ${hhmm(q.later[0].at)}</div>`
+  );
 }
 
 function renderCard(q, card) {
   const flag = card ? MQ.flagOf(STATE, card) : 0;
   const key = card
     ? `${card.card_id}|${UI.revealed}|${flag}`
-    : `empty|${!!STATE.batch}|${q.expired}|${q.later.length ? q.later[0].at : ""}`;
+    : `empty|${!!STATE.batch}|${q.expired}|${q.leftToday}|${q.later.length ? q.later[0].at : ""}`;
   if (key === UI.cardKey) return;
   UI.cardKey = key;
   const el = document.getElementById("m-card");

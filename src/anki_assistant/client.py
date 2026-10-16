@@ -358,6 +358,12 @@ class AnkiClient:
         with self._use() as col:
             return dict(col.decks.config_dict_for_deck_id(self._deck_id(col, deck)))
 
+    def learn_ahead_secs(self) -> int:
+        """Anki's « Learn ahead limit » preference: how early a learning card is shown when
+        nothing else is left to study."""
+        with self._use() as col:
+            return int(col.get_preferences().scheduling.learn_ahead_secs)
+
     def deck_limits(self, deck: str) -> DeckLimits:
         """The effective deck limit of `deck` and its studied-today counter."""
         with self._use() as col:

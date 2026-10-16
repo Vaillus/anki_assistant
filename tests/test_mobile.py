@@ -917,8 +917,10 @@ def test_route_batch(http: TestClient, anki: PhoneAnki) -> None:
         "cards",
         "media",
         "review_order",
+        "learn_ahead_secs",
     }
     assert body["quota"][0] == {"review": 20, "new": 5}
+    assert body["learn_ahead_secs"] == 1200, "Anki's default learn-ahead limit"
     card = body["cards"][0]
     assert card["card_id"] == cid
     assert card["question"][0]["name"] == "Front"

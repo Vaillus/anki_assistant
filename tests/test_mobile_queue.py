@@ -115,3 +115,25 @@ def test_interday_learning_takes_the_review_quota_first() -> None:
     # the last one, so the overdue review waits; the intraday card is never cut.
     assert ids == [3, 4]
     assert counts == {"new": 0, "learn": 2, "review": 0}
+
+
+def test_learn_ahead_shows_returns_early_once_nothing_else_is_left() -> None:
+    cards = [card(1, 0, "review", "2026-10-12"), card(2, 0, "review", "2026-10-12")]
+    cards.append(card(3, 0, "learn"))
+    answers = [
+        {"action_id": "a", "card_id": 1, "at": at(0, 9), "ease": 1, "outcome": 600},
+        {"action_id": "b", "card_id": 2, "at": at(0, 9), "ease": 1, "outcome": 3600},
+    ]
+    state = {"batch": batch(cards), "answers": answers, "pending": [], "burials": []}
+    one_minute_later = at(0, 9) + 60_000
+    ids, _ = queue_ids(state, one_minute_later)
+    assert ids == [3], "a card is still left: returns wait for their time"
+
+    state["batch"]["cards"] = cards[:2]
+    ids, counts = queue_ids(state, one_minute_later)
+    assert ids == [1], "nothing else left: the 10 min return is within the 20 min learn-ahead"
+    assert counts == {"new": 0, "learn": 2, "review": 0}, "the 1 h return still counts today"
+
+    state["batch"]["learn_ahead_secs"] = 0
+    ids, _ = queue_ids(state, one_minute_later)
+    assert ids == [], "learn-ahead off"

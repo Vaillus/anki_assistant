@@ -20,6 +20,7 @@ The user flags a card during an Anki review when something is wrong with it (too
 | [chat.md](./chat.md) | The conversation: system prompt, guidelines, read tools, proposal tools, source proposals |
 | [theme.md](./theme.md) | Visual identity: terminal look, Omarchy palettes, two-layer colour architecture, picker, logo |
 | [mobile.md](./mobile.md) | Phone app: batch, Anki day, precomputed outcomes, phone queue, pending actions, sync, review log, tailnet gate |
+| [study.md](./study.md) | Study days: the mobile deck's reviewed and planned cards per Anki day, for other local apps |
 
 ## Architecture
 
@@ -103,6 +104,7 @@ The workspace's « Undo last validation » stays the app's own snapshot ([worksp
 | `src/anki_assistant/workspace.py` | Validation: plan, snapshot, ordered writes, rollback, undo | [workspace.md](./workspace.md) |
 | `src/anki_assistant/chat/` | Prompt assembly, Anthropic call, tools, SSE streaming | [chat.md](./chat.md) |
 | `src/anki_assistant/mobile.py` | Anki day, batch building, sync (replay, re-dating, dropped actions, review log) | [mobile.md](./mobile.md) |
+| `src/anki_assistant/study.py` | Reviewed and planned cards per Anki day | [study.md](./study.md) |
 | `src/anki_assistant/cli.py` | CLI over the same client (debugging tool, not specced) | — |
 | `src/anki_assistant/web/main.py` | App factories (main app, phone app), static mount, router includes, port dispatch, entry point serving both ports | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/routes_review.py` | `/api/decks`, `/api/notes…`, `/api/notes/priority` | [review.md](./review.md#api), [priority.md](./priority.md#api) |
@@ -110,6 +112,7 @@ The workspace's « Undo last validation » stays the app's own snapshot ([worksp
 | `src/anki_assistant/web/routes_sources.py` | `/api/sources…`, `/api/vault/notes` | [sources.md](./sources.md#api) |
 | `src/anki_assistant/web/routes_chat.py` | `/api/chat` (SSE) | [chat.md](./chat.md#api) |
 | `src/anki_assistant/web/routes_mobile.py` | `/api/mobile/batch`, `/api/mobile/sync`, `/api/mobile/media/{filename}`, the page under `/m`, the phone port's shell files | [mobile.md](./mobile.md#api) |
+| `src/anki_assistant/web/routes_study.py` | `/api/study/reviews` | [study.md](./study.md#api) |
 | `src/anki_assistant/web/gate.py` | Tailnet gate middleware (phone app only) | [mobile.md](./mobile.md#tailnet-gate) |
 | `src/anki_assistant/web/render.py` | Field display transform | [review.md](./review.md#rendering) |
 | `src/anki_assistant/web/errors.py` | Error mapping; holds the collection for one request | [review.md](./review.md#api) |

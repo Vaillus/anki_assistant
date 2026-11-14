@@ -34,6 +34,7 @@ from anki.scheduler.v3 import Scheduler
 from anki.scheduler_pb2 import CardAnswer, QueuedCards, SchedulingState, SchedulingStates
 from anki.sync import SyncAuth
 from anki.sync_pb2 import SyncCollectionResponse
+from anki.utils import ids2str
 
 from anki_assistant.models import Card, Note, NoteType
 
@@ -423,6 +424,21 @@ class AnkiClient:
                 col.decks.select(previous)
             kinds = {QueuedCards.NEW: "new", QueuedCards.LEARNING: "learn"}
             return [QueuedCard(int(q.card.id), kinds.get(q.queue, "review")) for q in queued.cards]
+
+    def review_answers(self, deck: str, since_ms: int) -> list[tuple[int, int]]:
+        """The answers to review cards (revlog type 1, ease 1-4) of `deck`, sub-decks included,
+        given at or after `since_ms`: (instant ms, card id), oldest first."""
+        with self._use() as col:
+            assert col.db is not None
+            card_ids = col.find_cards(f"deck:{_quote(deck)}")
+            if not card_ids:
+                return []
+            rows = col.db.all(
+                "select id, cid from revlog where type = 1 and ease between 1 and 4"
+                f" and id >= ? and cid in {ids2str(card_ids)} order by id",
+                since_ms,
+            )
+            return [(int(at), int(cid)) for at, cid in rows]
 
     def today(self) -> int:
         """Anki's day number for today (what a review card's `due` counts in)."""

@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
         routes_mobile,
         routes_review,
         routes_sources,
+        routes_study,
         routes_workspace,
     )
 
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_chat.router, prefix="/api")
     app.include_router(routes_workspace.router, prefix="/api")
     app.include_router(routes_mobile.router, prefix="/api")
+    app.include_router(routes_study.router, prefix="/api")
     app.include_router(routes_mobile.page_router)
 
     @app.get("/", response_class=HTMLResponse)

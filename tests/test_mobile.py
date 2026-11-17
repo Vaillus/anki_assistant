@@ -258,6 +258,8 @@ def test_batch_every_day_is_rebuilt_day0_included(anki: PhoneAnki) -> None:
     n_third = anki.new_card(queue=0, due=9)
     anki.new_card(queue=-1)  # suspended
     anki.new_card(queue=-2)  # buried
+    anki.new_card(rel_due=-90, flags=2)  # flagged
+    anki.new_card(queue=0, due=1, flags=7)  # flagged, another colour
     anki.new_card(deck="other", rel_due=-90)  # another deck
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
@@ -407,7 +409,7 @@ def test_batch_card_content(anki: PhoneAnki) -> None:
     nid = anki.add(
         DECK,
         model="Cloze",
-        flags=(0, 2),
+        flags=(0, 0),
         fields={"Text": '{{c1::A}} {{c2::B}} <img src="paste-1.png">', "Back Extra": "why"},
         queue=2,
         card_type=2,
@@ -420,7 +422,7 @@ def test_batch_card_content(anki: PhoneAnki) -> None:
     cid = anki.card_ids_of(nid)[1]
     batch = build(anki)
     card = next(c for c in batch.cards if c.card_id == cid)
-    assert (card.model, card.ord, card.cloze, card.flag) == ("Cloze", 1, 2, 2)
+    assert (card.model, card.ord, card.cloze, card.flag) == ("Cloze", 1, 2, 0)
     assert [f.name for f in card.question] == ["Text"]
     assert 'data-n="2"' in card.question[0].html
     assert [(f.name, f.html) for f in card.answer] == [("Back Extra", "why")]

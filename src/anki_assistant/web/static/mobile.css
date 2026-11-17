@@ -84,7 +84,6 @@ body.mobile button {
 .m-card .field-val { font-size: 17px; line-height: 26px; margin-bottom: 12px; }
 .m-card .field-val .context { font-size: 14px; }
 .m-card .m-meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-.m-card .m-meta .m-flag { color: var(--flag); font-weight: 600; }
 .m-card hr { border: 0; border-top: 1px dashed var(--line-strong); margin: 14px 0; }
 .m-card .m-hint { color: var(--dim); font-size: 12px; text-align: center; margin-top: 20px; }
 .m-card mjx-container[display="true"] { overflow-x: auto; overflow-y: hidden; max-width: 100%; }
@@ -118,4 +117,3 @@ body.mobile button {
   color: var(--muted);
   text-align: center;
 }
-.m-bar button.m-tool.on { background: var(--flag); border-color: var(--flag); color: var(--on-flag); }

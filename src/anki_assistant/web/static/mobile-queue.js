@@ -74,13 +74,13 @@
 
   /* The card's flag as the phone sees it: the batch's, overridden by its last flag/unflag. */
   function flagOf(state, card) {
-    let flag = card.flag || 0;
+    let value = card.flag || 0;
     for (const p of state.pending || []) {
       if (p.card_id !== card.card_id) continue;
-      if (p.kind === "flag") flag = 2;
-      else if (p.kind === "unflag") flag = 0;
+      if (p.kind === "flag") value = 2;
+      else if (p.kind === "unflag") value = 0;
     }
-    return flag;
+    return value;
   }
 
   /* Where an answered card stands (specs/mobile.md#phone-queue, rule 2):
@@ -168,7 +168,8 @@
     const t = today(state, now);
     const days = batch.days || [];
     const expired = days.length > 0 && t > days[days.length - 1];
-    const visible = (c) => !isSuspended(state, c.card_id) && !isBuried(state, c.card_id, t);
+    const visible = (c) =>
+      !isSuspended(state, c.card_id) && !isBuried(state, c.card_id, t) && !flagOf(state, c);
 
     const soon = [];
     const later = [];
@@ -283,10 +284,9 @@
     return { action_id: actionId, card_id: card.card_id, ease: ease, answered_at: now, time_ms: timeMs };
   }
 
-  /* Flag or unflag, whichever changes the card's current state. Returns the action. */
-  function toggleFlag(state, card, now, id) {
-    const kind = flagOf(state, card) ? "unflag" : "flag";
-    const action = { id: id || newId(), kind: kind, card_id: card.card_id, at: now };
+  /* Flag the card: it leaves the queue (specs/mobile.md#phone-queue). Returns the action. */
+  function flag(state, card, now, id) {
+    const action = { id: id || newId(), kind: "flag", card_id: card.card_id, at: now };
     state.pending.push(action);
     return action;
   }
@@ -364,7 +364,7 @@
     buildQueue,
     newId,
     answer,
-    toggleFlag,
+    flag,
     suspend,
     bury,
     lastUndoable,

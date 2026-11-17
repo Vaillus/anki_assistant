@@ -260,7 +260,7 @@ def _select(
     """
     order = order or OrderSettings()
     days = range(len(quotas))
-    scope = f"deck:{_quote(deck)} -is:suspended -is:buried"
+    scope = f"deck:{_quote(deck)} -is:suspended -is:buried flag:0"
     due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in days}
     new_ids = anki.find_card_ids(f"{scope} is:new")
     wanted = set().union(*due_by.values(), new_ids)

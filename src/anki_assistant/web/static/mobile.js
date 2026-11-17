@@ -294,9 +294,8 @@ function emptyHtml(q) {
 }
 
 function renderCard(q, card) {
-  const flag = card ? MQ.flagOf(STATE, card) : 0;
   const key = card
-    ? `${card.card_id}|${UI.revealed}|${flag}`
+    ? `${card.card_id}|${UI.revealed}`
     : `empty|${!!STATE.batch}|${q.expired}|${q.leftToday}|${q.later.length ? q.later[0].at : ""}`;
   if (key === UI.cardKey) return;
   UI.cardKey = key;
@@ -306,9 +305,7 @@ function renderCard(q, card) {
     return;
   }
   const meta =
-    `<div class="m-meta">${escText(card.deck)} · ${escText(card.kind)}` +
-    (flag ? ` · <span class="m-flag">⚑ flagged</span>` : "") +
-    `</div>`;
+    `<div class="m-meta">${escText(card.deck)} · ${escText(card.kind)}</div>`;
   let html;
   if (!UI.revealed) {
     const question = (card.question || []).map((f) => ({
@@ -353,12 +350,11 @@ function renderBar(card) {
 }
 
 function toolsRow(card) {
-  const flagged = card ? MQ.flagOf(STATE, card) : 0;
   const canUndo = !!MQ.lastUndoable(STATE) && !UI.syncing;
   const dis = card ? "" : " disabled";
   return (
     `<div class="m-row four">` +
-    `<button class="m-tool${flagged ? " on" : ""}" data-act="flag"${dis}>⚑ ${flagged ? "flagged" : "flag"}</button>` +
+    `<button class="m-tool" data-act="flag"${dis}>⚑ flag</button>` +
     `<button class="m-tool" data-act="undo"${canUndo ? "" : " disabled"}>↶ undo</button>` +
     `<button class="m-tool" data-act="bury"${dis}>bury</button>` +
     `<button class="m-tool" data-act="suspend"${dis}>suspend</button>` +
@@ -386,7 +382,8 @@ async function onAnswer(ease) {
 async function onFlag() {
   const card = currentCard();
   if (!card) return;
-  MQ.toggleFlag(STATE, card, Date.now());
+  MQ.flag(STATE, card, Date.now());
+  UI.currentId = null;
   await persist(["pending"]);
   render();
 }

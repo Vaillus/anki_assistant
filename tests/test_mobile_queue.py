@@ -137,3 +137,19 @@ def test_learn_ahead_shows_returns_early_once_nothing_else_is_left() -> None:
     state["batch"]["learn_ahead_secs"] = 0
     ids, _ = queue_ids(state, one_minute_later)
     assert ids == [], "learn-ahead off"
+
+
+def test_a_flagged_card_leaves_the_queue_and_undo_brings_it_back() -> None:
+    cards = [card(i, 0, "review", "2026-10-12") for i in (1, 2, 3)]
+    state = {"batch": batch(cards), "answers": [], "pending": [], "burials": []}
+    now = at(0, 10)
+    flagged = run_js(
+        f"(MQ.flag(state, state.batch.cards[0], {now}), MQ.buildQueue(state, {now}).queue)", state
+    )
+    assert [c["card_id"] for c in flagged] == [2, 3], "the next card takes its place in the quota"
+    undone = run_js(
+        f"(MQ.flag(state, state.batch.cards[0], {now}), MQ.undo(state),"
+        f" MQ.buildQueue(state, {now}).queue)",
+        state,
+    )
+    assert [c["card_id"] for c in undone] == [1, 2]

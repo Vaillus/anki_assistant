@@ -34,7 +34,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REVIEW_LOG = _ROOT / "review_log.jsonl"
 DEFAULT_ACTIONS_LOG = _ROOT / "mobile_actions.jsonl"
 
-ActionKind = Literal["answer", "flag", "unflag", "suspend"]
+ActionKind = Literal["answer", "flag", "suspend"]
 DropReason = Literal["card_missing", "left_deck", "suspended"]
 
 # ------------------------------------------------------------------- Anki day
@@ -260,7 +260,7 @@ def _select(
     """
     order = order or OrderSettings()
     days = range(len(quotas))
-    scope = f"deck:{_quote(deck)} -is:suspended -is:buried"
+    scope = f"deck:{_quote(deck)} -is:suspended -is:buried flag:0"
     due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in days}
     new_ids = anki.find_card_ids(f"{scope} is:new")
     wanted = set().union(*due_by.values(), new_ids)
@@ -605,8 +605,6 @@ def _apply(anki: AnkiClient, action: Action, rollover_hour: int, today: date) ->
         return DayQuota(review=replayed.counted_review, new=replayed.counted_new)
     if action.kind == "flag":
         anki.set_flag([cid], ORANGE)
-    elif action.kind == "unflag":
-        anki.set_flag([cid], 0)
     elif action.kind == "suspend":
         anki.suspend([cid])
     else:

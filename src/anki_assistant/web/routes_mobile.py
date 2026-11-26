@@ -78,7 +78,7 @@ def _log(request: Request) -> mobile.MobileLog:
 
 class ActionBody(BaseModel):
     id: str = Field(min_length=1)
-    kind: Literal["answer", "flag", "unflag", "suspend"]
+    kind: Literal["answer", "flag", "suspend"]
     card_id: int
     at: int  # ms since epoch
     ease: int | None = Field(default=None, ge=1, le=4)

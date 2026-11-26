@@ -569,10 +569,9 @@ def test_sync_replay_keeps_the_answers_instant_and_time(anki: PhoneAnki, log: Mo
 
 def test_sync_same_instant_keeps_sent_order(anki: PhoneAnki, log: MobileLog) -> None:
     a = anki.new_card()
-    run(anki, [act("f", "flag", a), act("u", "unflag", a)], log)
-    assert anki.cards[a]["flags"] == 0
-    run(anki, [act("u2", "unflag", a), act("f2", "flag", a)], log)
+    run(anki, [act("f", "flag", a), act("s", "suspend", a)], log)
     assert anki.cards[a]["flags"] == 2
+    assert anki.cards[a]["queue"] == -1
 
 
 @pytest.mark.parametrize(("days_ago", "interval"), [(1, 10), (2, 10), (5, 30), (4, 1)])
@@ -640,13 +639,12 @@ def test_sync_no_redating_for_today_or_learning(anki: PhoneAnki, log: MobileLog)
     assert anki.cards[today]["due"] - anki.anki_today() == anki.cards[today]["interval"]
 
 
-def test_sync_flag_unflag_suspend(anki: PhoneAnki, log: MobileLog) -> None:
-    a, b, c = anki.new_card(), anki.new_card(flags=2), anki.new_card()
-    result = run(anki, [act("1", "flag", a), act("2", "unflag", b), act("3", "suspend", c)], log)
+def test_sync_flag_suspend(anki: PhoneAnki, log: MobileLog) -> None:
+    a, c = anki.new_card(), anki.new_card()
+    result = run(anki, [act("1", "flag", a), act("3", "suspend", c)], log)
     assert anki.cards[a]["flags"] == 2
-    assert anki.cards[b]["flags"] == 0
     assert anki.cards[c]["queue"] == -1
-    assert result.applied == ["1", "2", "3"]
+    assert result.applied == ["1", "3"]
     assert c not in {card.card_id for card in result.batch.cards}
 
 
@@ -977,6 +975,7 @@ def test_route_batch_later_same_day_keeps_the_given_back_limits(
         {"id": "a", "kind": "answer", "card_id": 1, "at": 0},  # no ease
         {"id": "a", "kind": "answer", "card_id": 1, "at": 0, "ease": 5},
         {"id": "a", "kind": "bury", "card_id": 1, "at": 0},
+        {"id": "a", "kind": "unflag", "card_id": 1, "at": 0},
         {"id": "", "kind": "flag", "card_id": 1, "at": 0},
     ],
 )

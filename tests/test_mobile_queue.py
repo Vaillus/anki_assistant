@@ -153,3 +153,37 @@ def test_a_flagged_card_leaves_the_queue_and_undo_brings_it_back() -> None:
         state,
     )
     assert [c["card_id"] for c in undone] == [1, 2]
+
+
+def test_deck_priority_holds_new_cards_back_on_the_phone() -> None:
+    code = card(1, 0, "review", "2026-10-12", rank=0)
+    n_ro = card(2, 1, "new", rank=1)  # planned on day 1, when code had nothing due
+    n_code = card(3, 1, "new", rank=0)
+    state = {"batch": batch([code, n_ro, n_code]), "pending": [], "burials": []}
+
+    # Code answered Good on day 0, back on day 1: code is in play, ro's new card waits.
+    state["answers"] = [
+        {"action_id": "a", "card_id": 1, "at": at(0, 9), "ease": 3, "outcome": 86_400}
+    ]
+    ids, counts = queue_ids(state, at(1, 9))
+    assert ids == [3, 1]
+    assert counts == {"new": 1, "learn": 0, "review": 1}
+
+    # Still held back once code's cards of the day are answered: they were answered today.
+    state["answers"] += [
+        {"action_id": "b", "card_id": 1, "at": at(1, 9), "ease": 3, "outcome": 864_000},
+        {"action_id": "c", "card_id": 3, "at": at(1, 9), "ease": 3, "outcome": 864_000},
+    ]
+    ids, _ = queue_ids(state, at(1, 10))
+    assert ids == []
+
+    # Code not reached on day 0, nothing answered: the unreached card holds ro back.
+    state["answers"] = []
+    ids, _ = queue_ids(state, at(1, 9))
+    assert 2 not in ids
+
+    # Code suspended on the phone: it holds nothing back.
+    state["batch"]["cards"] = [code, n_ro]
+    state["pending"] = [{"id": "s", "kind": "suspend", "card_id": 1, "at": at(0, 9)}]
+    ids, _ = queue_ids(state, at(1, 9))
+    assert ids == [2]

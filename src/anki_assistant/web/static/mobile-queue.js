@@ -151,7 +151,8 @@
      Each day shows at most its quota of reviews and of new cards, minus what was answered
      that day: the share's interday learning cards take the review quota first; then the
      share's reviews, the earlier days' reviews not reached and the cards
-     returning that day are sorted in Anki's review order and cut; new cards in batch order.
+     returning that day are sorted in Anki's review order and cut; new cards in batch order,
+     minus those held back by deck priority.
      `head` (optional card id) is put first when it is in the queue (undo). */
   function buildQueue(state, now, head) {
     const batch = state.batch;
@@ -185,6 +186,20 @@
     later.sort((a, b) => a.at - b.at);
     returning.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.at - b.at));
 
+    /* Deck priority (specs/mobile.md#phone-queue, rule 3): a new card is held back while a deck
+       before its own holds a card of the share, a card returning today or a card answered
+       today. `lead` is the first such deck's rank. */
+    let lead = Infinity;
+    const inPlay = (c) => (lead = Math.min(lead, c.deck_rank || 0));
+    share.forEach(inPlay);
+    returning.forEach((r) => inPlay(r.card));
+    soon.concat(later).forEach((s) => inPlay(s.card));
+    for (const a of state.answers || []) {
+      const c = cardById(state, a.card_id);
+      if (c && visible(c) && ankiDay(a.at, rollover(state)) === t) inPlay(c);
+    }
+    const held = (c) => c.kind === "new" && (c.deck_rank || 0) > lead;
+
     /* The day's limits: kept holds the review and new cards that fit. */
     const k = days.indexOf(t);
     const quota = k >= 0 && batch.quota ? batch.quota[k] : null;
@@ -203,7 +218,7 @@
         .map((c) => ({ card: c, due: c.due_day || days[c.day], rank: rankOf.get(c.card_id) }))
         .concat(returning.map((r) => ({ card: r.card, due: r.day, rank: r.rank })));
       reviews.sort(reviewOrder(state));
-      const news = share.filter((c) => c.kind === "new");
+      const news = share.filter((c) => c.kind === "new" && !held(c));
       kept = new Set(
         learning
           .concat(reviews.slice(0, room - learning.length))
@@ -212,7 +227,7 @@
       );
     }
     const fits = (c) =>
-      kept === null || (c.kind === "learn" && !isInterday(c)) || kept.has(c.card_id);
+      !held(c) && (kept === null || (c.kind === "learn" && !isInterday(c)) || kept.has(c.card_id));
     const shown = share.filter(fits);
     const back = returning.filter((r) => kept === null || kept.has(r.card.card_id));
     /* Learn-ahead (specs/mobile.md#phone-queue, rule 5): with nothing else left, the same-day

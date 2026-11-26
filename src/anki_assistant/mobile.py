@@ -255,15 +255,17 @@ def _select(
     Every day, day 0 included, is rebuilt: its cards not taken by an earlier day are gathered
     in the order settings' order, then cut at its quota. Anki's study queue is not used, so
     sub-deck limits and sibling burying do not apply, and the new quota is independent of the
-    review quota (Anki caps new cards by what the reviews left). Without order settings, every
-    option keeps its default. `deck_key` sorts deck names in the deck order.
+    review quota (Anki caps new cards by what the reviews left). A day's new cards come from
+    its new-card deck only (deck priority). Without order settings, every option keeps its
+    default. `deck_key` sorts deck names in the deck order.
     """
     order = order or OrderSettings()
     days = range(len(quotas))
     scope = f"deck:{_quote(deck)} -is:suspended -is:buried flag:0"
     due_by = {k: set(anki.find_card_ids(f"{scope} -is:new prop:due<={k}")) for k in days}
     new_ids = anki.find_card_ids(f"{scope} is:new")
-    wanted = set().union(*due_by.values(), new_ids)
+    answered_today = set(anki.find_card_ids(f"{scope} rated:1"))
+    wanted = set().union(*due_by.values(), new_ids, answered_today)
     infos = {c.card_id: c for c in anki.cards_info(sorted(wanted))}
 
     def new_key(c: Card) -> tuple[Any, ...]:
@@ -287,6 +289,10 @@ def _select(
         interday = sorted((c for c in pool if c.queue == 3), key=interday_key)
         reviews = sorted((c for c in pool if c.queue == 2), key=review_key)
         news = [c for c in new_cards if c.card_id not in taken]
+        in_play = {c.deck_name for c in pool}
+        if day == 0:
+            in_play |= {infos[c].deck_name for c in answered_today if c in infos}
+        news = _from_new_card_deck(news, in_play, deck_key)
         # Interday learning takes the review quota before the reviews (Anki's v3 scheduler).
         room = max(quota.review, 0)
         intra: list[tuple[Card, CardKind]] = [(c, "learn") for c in intraday]
@@ -300,6 +306,17 @@ def _select(
             taken.add(card.card_id)
             chosen.append((card, day, kind))
     return chosen
+
+
+def _from_new_card_deck(news: list[Card], in_play: set[str], deck_key: DeckKey) -> list[Card]:
+    """The new cards of the day's new-card deck (specs/mobile.md#deck-priority): the first
+    deck in the deck order holding one of `news`, unless a deck before it is in play."""
+    if not news:
+        return []
+    first = min((c.deck_name for c in news), key=deck_key)
+    if any(deck_key(d) < deck_key(first) for d in in_play):
+        return []
+    return [c for c in news if c.deck_name == first]
 
 
 def _templates(anki: AnkiClient, models: Iterable[str]) -> dict[str, dict[str, dict[str, str]]]:

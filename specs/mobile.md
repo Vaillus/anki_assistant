@@ -56,6 +56,7 @@ Anki's **study queue** of a deck is the ordered cards Anki's scheduler would sho
 | Which cards | Anki's scheduler's | due by that day, not taken by an earlier day |
 | Review and new limit | the effective deck limit of the deck and of each sub-deck, minus what Anki counts as studied today; new cards also capped by what the reviews left of the review limit | the day's daily quota (table above); sub-deck limits ignored; the new quota independent of the review quota |
 | Order | every display-order option, sibling burying, Anki's deck order | the four display-order options below, in the app's [deck order](#deck-order); no sibling burying |
+| New cards | from every deck, by the preset's new-card order | from one deck at most, the day's [new-card deck](#deck-priority) |
 | Suspended and buried cards | left out by Anki | left out by the search filter `-is:suspended -is:buried` (Anki's `is:new` and `prop:due` match them too) |
 | Flagged cards | shown | left out by the search filter `flag:0` |
 
@@ -72,11 +73,13 @@ A rebuilt day's cards are gathered in order, then cut at the quota, so the order
 
 <a id="deck-order"></a>**Deck order** is the [app deck order](./review.md#deck-tree-column-1): the app's deck tree read top to bottom, the decks under each tree parent in the order the app stores and each deck's sub-decks right after it. With nothing reordered, it is Anki's deck order (a parent before its sub-decks, siblings by name with case ignored). It sets a study order only when the mobile deck's preset honours one of the first two rows; a [label](./review.md#deck-tree-column-1) changes no study order, only a deck's place does. Anki desktop and AnkiMobile never see it: they keep Anki's deck order. **Review order** and **new order** are the orders the first two rows give.
 
+<a id="deck-priority"></a>**Deck priority** makes the decks learnt one after the other, whatever the preset says. A deck **comes before** another when it is earlier in the deck order, so a parent deck comes before its sub-decks. A deck is **in play** on a rebuilt day when it holds a card due by that day not taken by an earlier day (review, interday or intraday learning card), or, on day 0, a card answered today (Anki's `rated:1`, with the same search filters). The day's **new-card deck** is the first deck in the deck order holding a new card not taken by an earlier day; when a deck before it is in play, the day has no new-card deck and takes no new card, its new quota left unused. So a deck's new cards wait for a day on which no deck before it has anything left: no due card, no card answered today, no new card. Since a day's new cards share one deck, the new order comes down to position within it, whatever the first row of the order settings says. Anki desktop and AnkiMobile apply no deck priority.
+
 Within each rebuilt day:
 
 1. **interday learning cards** due by that day, not taken by an earlier day, in review order, the first up to the day's review quota;
 2. **review cards** (queue 2) due by that day, not taken by an earlier day, in review order (ties by card id), the first up to what step 1 left of the review quota;
-3. **new cards** not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota, whatever steps 1 and 2 took of the review quota;
+3. **new cards** of the day's [new-card deck](#deck-priority) not taken by an earlier day, in new order (ties by card ordinal), the first up to the day's new quota, whatever steps 1 and 2 took of the review quota; none when the day has no new-card deck;
 4. **intraday learning cards** due by that day, by due, not counted in any quota.
 
 The day's cards are then laid out: intraday learning first; then interday learning mixed into the reviews; then the new cards mixed into that. **Mixing** a shorter list into a longer one spreads it evenly, each list keeping its own order (Anki's intersperser). Where an option keeps its default, the lists follow each other instead of mixing.
@@ -127,7 +130,7 @@ The **phone queue** is what the phone app shows now. Rules the phone app impleme
 3. **Cut at the day's limit.** Each day shows at most that day's quota (`quota[k]` for `days[k]`) of reviews and of new cards, minus what was answered on the phone that day, returning and unreached cards included:
    - the **interday learning cards** of the share come first, in Anki's review order, and use up the review quota before the reviews, as in Anki;
    - the **reviews** of the share and the cards returning on a later day are merged, sorted in the batch's **review order** — due day first, or deck first (by `deck_rank`, the [deck order](#deck-order)) then due day when the batch's `review_order` is `deck`; ties keep batch order — and the first ones up to what the interday learning cards left of the review quota are kept. A share card's due day is its `due_day`; a returning card's due day is the day it comes back, so with a backlog a return sorts after the older overdue cards and is the first one cut, as Anki desktop would cut it;
-   - the **new cards** of the share, in batch order, are kept up to the new quota, whatever the reviews used of the review quota;
+   - the **new cards** of the share, in batch order, are kept up to the new quota, whatever the reviews used of the review quota, except the **held-back** new cards: the [deck priority](#deck-priority) as the phone sees it. A new card is held back on a day when a deck before its own (lower `deck_rank`) holds a card of the share (new cards included), a card returning that day (same-day returns included) or a card answered on the phone that day; a suspended, flagged or buried card holds nothing back. The batch never puts new cards after a deck in play, but the phone sees cards the batch did not plan for that day: cards not reached on an earlier day and the returns of the phone's answers. A held-back card uses none of the quota;
    - intraday learning cards of the share and same-day returns are never cut, as in Anki;
    - **answered that day**: a card's first answer counts as a review for a review or interday learning card, as a new card for a new card, as nothing for an intraday learning card; a later answer counts as a review when the previous outcome brought the card back on a later day, as nothing when it was a same-day return.
 

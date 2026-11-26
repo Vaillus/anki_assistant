@@ -319,14 +319,16 @@ def test_batch_deck_order_decides_which_cards_are_taken(anki: PhoneAnki) -> None
     n_ax = anki.new_card(deck="courant::A::x", queue=0, due=3)
 
     got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
+    # Day 1 takes no new card: the parent deck `courant`, before its sub-decks, is in play.
+    # On day 2 the new-card deck is `courant::A`, first in the deck order (n_ax is lower).
     assert got == [
         (r_root, 1, "review"),
         (r_a_early, 1, "review"),
-        (n_a, 1, "new"),
         (r_a_late, 2, "review"),
         (r_b, 2, "review"),
-        (n_ax, 2, "new"),
+        (n_a, 2, "new"),
     ]
+    assert n_ax not in {c for c, _, _ in got}
 
 
 def test_batch_interday_learning_by_deck_order(anki: PhoneAnki) -> None:
@@ -370,6 +372,47 @@ def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnk
     ]
 
 
+def test_new_cards_wait_while_a_deck_before_is_in_play(anki: PhoneAnki) -> None:
+    rebuilt_days_only(anki, 10, 5)
+    code = anki.new_card(deck="courant::code", rel_due=1)
+    learn = anki.new_card(deck="courant::code", queue=3, rel_due=2)
+    n_code = anki.new_card(deck="courant::code", queue=0, due=9)
+    n_ro = [anki.new_card(deck="courant::ro", queue=0, due=d) for d in (1, 2)]
+    n_zz = anki.new_card(deck="courant::zz", queue=0, due=3)
+    anki.new_card(deck="courant::ro", rel_due=1)  # a review of a later deck blocks nothing
+
+    got = [(c.card_id, c.day, c.kind) for c in build(anki).cards]
+    # Day 1: code is in play and has a new card, ro's new cards wait. Day 2: code is still in
+    # play (interday learning). The new quota of 5 stays unused.
+    assert [(c, d) for c, d, k in got if k == "new"] == [(n_code, 1)]
+    assert {code, learn} <= {c for c, _, _ in got}
+    assert not set(n_ro) & {c for c, _, _ in got}
+    assert n_zz not in {c for c, _, _ in got}
+
+
+def test_new_cards_come_in_once_the_decks_before_are_done(anki: PhoneAnki) -> None:
+    rebuilt_days_only(anki, 10, 5)
+    anki.new_card(deck="courant::code", rel_due=1)
+    n_ro = [anki.new_card(deck="courant::ro", queue=0, due=d) for d in (2, 1)]
+    n_zz = anki.new_card(deck="courant::zz", queue=0, due=0)
+
+    got = [(c.card_id, c.day, c.kind) for c in build(anki).cards if c.kind == "new"]
+    # Day 2: code has nothing left, ro is the new-card deck; zz waits behind ro's new cards.
+    assert got == [(n_ro[1], 2, "new"), (n_ro[0], 2, "new")]
+    assert n_zz not in {c for c, _, _ in got}
+
+
+def test_new_cards_wait_on_day0_after_a_deck_before_was_studied_today(anki: PhoneAnki) -> None:
+    anki.set_limits(DECK, review=10, new=5)
+    code = anki.new_card(deck="courant::code", rel_due=0)
+    n_ro = anki.new_card(deck="courant::ro", queue=0, due=1)
+    anki.answer_card(code, 3, answered_at=ms(datetime.now()), time_ms=1000)
+
+    got = [(c.card_id, c.day) for c in build(anki).cards]
+    assert (n_ro, 0) not in got, "code was answered today: ro's new cards wait"
+    assert (n_ro, 1) in got
+
+
 @pytest.mark.parametrize(
     "order",
     [
@@ -378,17 +421,15 @@ def test_batch_mixes_interday_learning_and_new_cards_into_reviews(anki: PhoneAnk
     ],
 )
 def test_batch_order_defaults_when_options_other(anki: PhoneAnki, order: dict[str, int]) -> None:
-    rebuilt_days_only(anki, 4, 1, **order)
+    rebuilt_days_only(anki, 4, 0, **order)
     r_b = anki.new_card(deck="courant::b", rel_due=-40)
     r_a = anki.new_card(deck="courant::a", rel_due=-30)
     anki.new_card(deck="courant", rel_due=-1)
-    n_b = anki.new_card(deck="courant::b", queue=0, due=1)
-    anki.new_card(deck="courant::a", queue=0, due=5)
     i_b = anki.new_card(deck="courant::b", queue=3, rel_due=0)
     i_a = anki.new_card(deck="courant::a", queue=3, rel_due=1)
 
     got = [c.card_id for c in build(anki).cards if c.day == 1]
-    assert got == [i_b, i_a, r_b, r_a, n_b]
+    assert got == [i_b, i_a, r_b, r_a]
 
 
 @pytest.mark.parametrize(
